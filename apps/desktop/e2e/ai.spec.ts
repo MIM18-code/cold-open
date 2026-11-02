@@ -366,3 +366,43 @@ test("with the script editor: marks are drawn, Accept is undone by the editor's 
   expect(errors).toEqual([]);
   await closeApp(electronApp, page);
 });
+
+test("a whole-speech cut: proposed through tools, applied, undone in one step; answers render Markdown; continuity needs a capable model", async () => {
+  const mock = await mockOllama();
+  const { electronApp, page } = await launch();
+  await useMock(page, mock);
+  await loadScript(page, KITCHEN);
+  await openPanel(page, "assistant");
+  // The local model may not check continuity across the script.
+  await expect(page.getByRole("button", { name: /Check continuity across the script/ })).toBeDisabled();
+  await expect(page.locator(".assistant-needs")).toHaveText("Needs ChatGPT or an API key");
+
+  const turn = (message: Record<string, unknown>) => (res: http.ServerResponse) => res.end(JSON.stringify({ message: { role: "assistant", content: "", ...message }, done: true }));
+  mock.reply = (res) => {
+    const tools = mock.chats.at(-1).messages.filter((m: { role: string }) => m.role === "tool").length;
+    const next = tools === 0 ? turn({ tool_calls: [{ function: { name: "read_scene", arguments: { scene: "1" } } }] })
+      : tools === 1 ? turn({ tool_calls: [{ function: { name: "propose_edit", arguments: { scene: "1", find: "Anyone?", replace: "", why: "Says nothing new." } } }] })
+      : turn({ content: "**Proposed** a cut:\n\n- MAYA's *Anyone?*" });
+    next(res);
+  };
+  await page.getByLabel("Ask about the script").fill("Trim scene 1.");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.locator(".assistant-suggestion-label")).toHaveText("Cut speech, scene 1");
+  await expect(page.locator(".assistant-text strong")).toHaveText("Proposed");
+  await expect(page.locator(".assistant-text li em")).toHaveText("Anyone?");
+  await expect(page.locator(".assistant-note").last()).toContainText("Read 1 of 2 scenes");
+  expect(mock.chats[0].tools.map((tool: { function: { name: string } }) => tool.function.name)).toContain("propose_edit");
+  expect(mock.chats[0].think).toBe(true);
+
+  const ids = () => page.evaluate(() => (window as any).__app.session.script().paragraphs.map((p: { id: string }) => p.id));
+  expect(await ids()).toContain("c2");
+  await page.getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByRole("button", { name: "Applied" })).toBeDisabled();
+  expect(await ids()).not.toContain("c2");
+  expect(await ids()).not.toContain("d2");
+  await page.evaluate(() => (window as any).__app.session.undo.undo());
+  expect(await ids()).toEqual(expect.arrayContaining(["c2", "d2"]));
+  expect(await textOf(page, "d2")).toBe("Anyone?");
+  await closeApp(electronApp, page);
+  await mock.close();
+});

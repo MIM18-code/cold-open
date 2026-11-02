@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { CHANNELS } from "../../../shared/api.ts";
 import { AI_CHANNELS, AI_SETTINGS, CHATGPT_USAGE_URL, judgesWholeScript, PROVIDER_LABELS, type AiStatus, WHOLE_SCRIPT_NEEDS } from "../../../shared/channels/ai.ts";
@@ -8,6 +8,7 @@ import { desktop } from "../../core/platform.ts";
 import { hasSelection as selectionExists } from "../format-draft/target.ts";
 import { applySuggestion } from "./apply.ts";
 import { type ChatMessage, Chat } from "./chat.ts";
+import { parseMarkdown, type Span } from "./markdown.ts";
 import { splitAnswer, type Suggestion } from "./suggestions.ts";
 
 let chat: Chat | null = null;
@@ -19,6 +20,29 @@ function useChat(): Chat {
   const current = getChat();
   useSyncExternalStore(current.subscribe, current.getVersion);
   return current;
+}
+
+function Inline({ spans }: { spans: Span[] }) {
+  return <>{spans.map((span, i) => span.code ? <code key={i}>{span.text}</code>
+    : span.bold ? <strong key={i}>{span.text}</strong> : span.italic ? <em key={i}>{span.text}</em> : <Fragment key={i}>{span.text}</Fragment>)}</>;
+}
+
+function Markdown({ text }: { text: string }) {
+  return <>{parseMarkdown(text).map((block, i) => {
+    if (block.type === "heading") return <p key={i} className="assistant-heading"><Inline spans={block.spans} /></p>;
+    if (block.type === "paragraph") return <p key={i}><Inline spans={block.spans} /></p>;
+    if (block.type === "list") {
+      const items = block.items.map((item, j) => <li key={j}><Inline spans={item} /></li>);
+      return block.ordered ? <ol key={i} start={block.start}>{items}</ol> : <ul key={i}>{items}</ul>;
+    }
+    if (block.type === "code") return <pre key={i} className="assistant-code">{block.text}</pre>;
+    return (
+      <div key={i} className="assistant-table"><table>
+        <thead><tr>{block.header.map((cell, j) => <th key={j}><Inline spans={cell} /></th>)}</tr></thead>
+        <tbody>{block.rows.map((row, r) => <tr key={r}>{row.map((cell, j) => <td key={j}><Inline spans={cell} /></td>)}</tr>)}</tbody>
+      </table></div>
+    );
+  })}</>;
 }
 
 function SuggestionCard({ suggestion }: { suggestion: Suggestion }) {
@@ -53,7 +77,7 @@ function Message({ message }: { message: ChatMessage }) {
         ? <div className="assistant-steps">{steps}</div>
         : <details className="assistant-steps"><summary>Script lookup</summary>{steps}</details> : null}
       {pieces.map((piece, i) => piece.type === "text"
-        ? <div key={i} className="assistant-text">{piece.text}</div>
+        ? <div key={i} className="assistant-text"><Markdown text={piece.text} /></div>
         : <SuggestionCard key={i} suggestion={piece.suggestion} />)}
       {message.proposals?.map((suggestion, index) => <SuggestionCard key={`proposal-${index}`} suggestion={suggestion} />)}
       {message.streaming && !message.text ? <div className="assistant-wait">Thinking</div> : null}

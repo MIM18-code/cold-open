@@ -53,7 +53,7 @@
   },
   {
     "path": "apps/desktop/e2e/ai.spec.ts",
-    "sha256": "efb21b193bbc114ba38fd462e50c0bd45813c4129a88f2c826322921bdd12f2c"
+    "sha256": "09411b09126e2ddb41f94a07d8b61d9daf2e8931a665e4afb2edd6591f2ce9ac"
   },
   {
     "path": "apps/desktop/e2e/autocomplete.spec.ts",
@@ -181,7 +181,7 @@
   },
   {
     "path": "apps/desktop/package.json",
-    "sha256": "917d393c4e0e9a7d88d3f7e080895dcda0855f9c0fa4251b0650152147fd6851"
+    "sha256": "9c7bb2fd4a436a29f0096daf2436e4b68d17760104a3bbfb58d6c3969c893dac"
   },
   {
     "path": "apps/desktop/playwright.config.ts",
@@ -565,7 +565,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/Panel.tsx",
-    "sha256": "793f2fd16cbf3e6bc3271301dd0cc6b1735649f42b18d6cb99f55f4b6799e7d7"
+    "sha256": "f253c752ed7be5fcb63341f64b71b9dbfbe4e2bb3b63a5a970f1dbbaa0353823"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/Settings.tsx",
@@ -581,7 +581,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/assistant.css",
-    "sha256": "fa9dcfbb7109b56b489ed9f908451d08a0eed8a56693de132968d815c49545ee"
+    "sha256": "08d71c07295ee05ff12cb7441d0d08bd2b4367ba4df4f844b6faafb8743d4e64"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/brand/README.md",
@@ -610,6 +610,10 @@
   {
     "path": "apps/desktop/src/renderer/features/assistant/index.tsx",
     "sha256": "9c0578f246cfd0d5868d0af122fdcc5e25d2bee0d0c78b07b14540db53f1fbde"
+  },
+  {
+    "path": "apps/desktop/src/renderer/features/assistant/markdown.ts",
+    "sha256": "cb5369bae878d84373c253a21cd30b54c2cb7949b6f51cd6b2bf07b64fe78006"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/provider.ts",
@@ -1358,6 +1362,10 @@
   {
     "path": "apps/desktop/test/assistant-cuts.test.ts",
     "sha256": "355e27cc3237e7f3c6ed66e569390dd02351e466fc951c7c5454ef8e5ce1c784"
+  },
+  {
+    "path": "apps/desktop/test/assistant-markdown.test.ts",
+    "sha256": "4344249c15c5618ac317d2dfa4c9cb8f5eeb696a8f9237a43de77706cfc75367"
   },
   {
     "path": "apps/desktop/test/autocomplete.test.ts",
@@ -2437,7 +2445,7 @@
   },
   {
     "path": "package-lock.json",
-    "sha256": "27a3c6e550348ce1630c72a5e6af0d36a67c1dd25cc346bb1c87e680bf28e856"
+    "sha256": "7dc143327adb6f5e81148a48c3cd3e2649e350cd99611561663fdffc7cd9587c"
   },
   {
     "path": "package.json",
