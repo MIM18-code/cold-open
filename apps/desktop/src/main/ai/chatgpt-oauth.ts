@@ -435,20 +435,27 @@ export class ChatgptOAuth {
         throw new AiError("unreachable", this.redact(`ChatGPT could not renew access (HTTP ${response.status}${code ? `, ${code}` : ""}${trace}). Try again later.`, previous.refresh));
       }
       const data = await boundedJson(response, signal);
-      const identity = typeof data.id_token === "string"
-        ? await this.identity(data.id_token, profile.clientId, undefined, metadata, signal) : undefined;
-      signal.throwIfAborted();
-      if (identity && identity.subject !== profile.subject) throw new AiError("unauthorized", "ChatGPT returned a different account during renewal.");
       const tokens = this.tokens(data, previous);
+      if (profile.tokens !== previous) throw new AiError("cancelled", "ChatGPT access changed during renewal.");
+      // Saved the moment the answer arrives, before any further check or wait: OpenAI has already rotated the refresh
+      // token, so losing this response to a timeout or a key outage would strand the account. Saved even during
+      // sign-out, because a rotated refresh token is exactly what sign-out then has to revoke.
+      profile.tokens = tokens;
+      this.save();
       if (!tokens.access || !tokens.scopes.includes(DIRECT_SCOPE)) {
         this.invalidate();
         throw new AiError("unauthorized", "ChatGPT plan permission changed. Sign in again.");
       }
-      signal.throwIfAborted();
-      // Saved even during sign-out: a rotated refresh token is exactly what sign-out then has to revoke.
-      if (profile.tokens !== previous) throw new AiError("cancelled", "ChatGPT access changed during renewal.");
-      profile.tokens = tokens;
-      this.save();
+      if (typeof data.id_token === "string") {
+        try {
+          const identity = await this.identity(data.id_token, profile.clientId, undefined, metadata, signal);
+          if (identity.subject !== profile.subject) throw new AiError("unauthorized", "ChatGPT returned a different account during renewal.");
+        } catch (error) {
+          // Keys that could not be loaded say nothing about the token; the renewed access stands. A token that fails
+          // verification, or a different account, still ends the session (the catch below invalidates).
+          if (!(error instanceof AiError && error.code === "unreachable")) throw error;
+        }
+      }
       return tokens.access;
     } catch (error) {
       if (!signal.aborted && error instanceof AiError && error.code === "unauthorized") this.invalidate();

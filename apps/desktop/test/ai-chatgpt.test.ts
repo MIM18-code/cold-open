@@ -606,16 +606,30 @@ test("an opaque token echoed back in a header or a code is redacted from the mes
   assert.equal(h.account.redact("saw refresh-secret and access-secret"), "saw [redacted] and [redacted]");
 });
 
-test("a temporary failure fetching OpenAI's signing keys keeps the credentials and leaves revocation unconfirmed", async (t) => {
+test("a renewal with the signing keys down keeps the session and the rotated refresh token", async (t) => {
   const h = await harness(t); await h.account.signIn();
   let keysDown = false;
   const flaky: FetchLike = async (url, init) => keysDown && String(url).endsWith("/jwks") ? new Response("busy", { status: 503 }) : h.transport(url, init);
   const account = new ChatgptOAuth({ store: h.store, fetch: flaky, openBrowser: h.openBrowser, issuer: h.issuer, listen: h.listen });
   account.expireAccess(); keysDown = true;
-  await assert.rejects(account.accessToken(new AbortController().signal), /signing keys could not be fetched/);
-  assert.equal(account.status().signedIn, true, "a 503 is not an identity failure");
-  const renewing = account.accessToken(new AbortController().signal).catch(() => undefined);
-  await account.signOut(); await renewing;
-  assert.ok(h.forms.some((form) => form.has("token_type_hint")), "sign-out still tries to revoke");
-  assert.match(account.status().note ?? "", /Remote revocation was not confirmed/);
+  assert.equal(await account.accessToken(new AbortController().signal), "access-refreshed-secret");
+  assert.equal(account.status().signedIn, true, "a key outage is not an identity failure");
+  assert.equal(h.store.read().profiles[0]!.tokens!.refresh, "refresh-rotated-secret", "the rotated token was saved");
+});
+
+test("a renewal whose ID token fails verification ends the session", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  h.badSignature();
+  h.advance(3_550_000);
+  await assert.rejects(h.account.accessToken(new AbortController().signal), /identity could not be verified/);
+  assert.equal(h.account.status().signedIn, false);
+});
+
+test("sign-in with the signing keys down asks to try again and saves nothing", async (t) => {
+  const h = await harness(t);
+  const account = new ChatgptOAuth({ store: h.store, fetch: async (url, init) => String(url).endsWith("/jwks") ? new Response("busy", { status: 503 }) : h.transport(url, init),
+    openBrowser: h.openBrowser, issuer: h.issuer, listen: h.listen });
+  await assert.rejects(account.signIn(), /signing keys could not be fetched/);
+  assert.equal(account.status().signedIn, false);
+  assert.ok(!h.store.read().profiles.some((p) => p.tokens), "no tokens were saved");
 });

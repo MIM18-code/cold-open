@@ -177,7 +177,7 @@
   },
   {
     "path": "apps/desktop/package.json",
-    "sha256": "0a021ccbccd65be43eade524809a84b56610d9fdd3777ed8481594b9613eb58c"
+    "sha256": "9d9cc2970e0a7eeefb3ce45d21775af37587a7c2e88c3bb037bbd9702a37d419"
   },
   {
     "path": "apps/desktop/playwright.config.ts",
@@ -229,7 +229,7 @@
   },
   {
     "path": "apps/desktop/src/main/ai/chatgpt-oauth.ts",
-    "sha256": "279a45588b35c6f06bdb5e6d12e3ff40cedf4b2cb901b437a9162a934a496c6c"
+    "sha256": "54096e9c9d6e8cfbb8fa8d3eda3bcf731c76e982d62c54abe98ca30f4b6f4763"
   },
   {
     "path": "apps/desktop/src/main/ai/keys.ts",
@@ -1301,7 +1301,7 @@
   },
   {
     "path": "apps/desktop/test/ai-chatgpt.test.ts",
-    "sha256": "e68f50540f1233c1edafc4e5f7bf6ba3ed86627d1e56f12207560551f59a6194"
+    "sha256": "7a7d8ba27d47c5c3a2fa427e17443d129db65c7f9421fa6a68a92e77701a79bc"
   },
   {
     "path": "apps/desktop/test/ai-live.test.ts",
@@ -2397,7 +2397,7 @@
   },
   {
     "path": "package-lock.json",
-    "sha256": "412ab702f72b86b275366c882d233f53d594c2de3dfb9b35b2aeba876d0c79d8"
+    "sha256": "1aca8782c2fdf8a27ed3f593dadb1f4252d330f65a83bf55ad20f0943807b0cf"
   },
   {
     "path": "package.json",
@@ -2801,7 +2801,7 @@
   },
   {
     "path": "scripts/homebrew-cask.mjs",
-    "sha256": "7f439a485e12c351a002147b35aee219384057729e86b71e7a8b777aebb9a04c"
+    "sha256": "f3f59071ab4e06ea965db483c5662daf547f0d91cf17d5bb3f1323819a7713d3"
   },
   {
     "path": "scripts/prepare-licenses.mjs",
