@@ -1,0 +1,7 @@
+.writing-tools-toolbar { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.writing-tools-toolbar .button.on { background: var(--accent-soft); }
+.writing-shortcuts > input { width: 100%; }
+.writing-shortcuts table { width: 100%; }
+.writing-shortcuts td:last-child { text-align: right; white-space: nowrap; }
+.writing-shortcuts small { display: block; color: var(--ink-3); }
+.editor-typewriter { padding-bottom: 48vh !important; }

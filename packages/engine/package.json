@@ -1,0 +1,26 @@
+{
+  "name": "@screenplay/engine",
+  "version": "0.1.0",
+  "description": "Collaborative screenplay document model (Yjs) with stable scene and paragraph IDs, plus FDX and Fountain import and export",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test --test-timeout=120000 test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "corpus": "node test/corpus.ts"
+  },
+  "dependencies": {
+    "saxes": "^6.0.0",
+    "yjs": "^13.6.33"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3"
+  }
+}

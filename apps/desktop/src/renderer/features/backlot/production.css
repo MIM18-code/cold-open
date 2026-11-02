@@ -1,0 +1,9 @@
+.production-changes { height: 100%; overflow: auto; }
+.production-changes-actions { padding: 12px; }
+.production-changes .empty-note { margin: 0; padding: 12px; }
+.production-changes-list { display: flex; flex-direction: column; }
+.production-change { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit; overflow-wrap: anywhere; }
+.production-change:hover, .production-change:focus-visible { background: var(--bg-hover); }
+.production-change:disabled { opacity: .7; cursor: default; }
+.production-change span { font-size: 12px; }
+.production-review { font-weight: 600; }

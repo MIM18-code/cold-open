@@ -1,0 +1,14 @@
+.rename-list {
+  max-height: 200px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--paper); margin-bottom: 14px; box-shadow: var(--shadow-1);
+}
+.rename-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; border-radius: 0;
+  padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: var(--text-s);
+}
+.rename-row:last-child { border-bottom: 0; }
+.rename-row:hover { background: var(--bg-hover); }
+.rename-row.on { background: var(--accent-soft); font-weight: 500; }
+.rename-count { color: var(--ink-3); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.rename-preview { color: var(--ink-2); min-height: 40px; font-size: var(--text-s); line-height: 1.45; }
+.rename-warn { color: var(--ink-2); margin-top: 6px; font-size: var(--text-s); font-weight: 500; }

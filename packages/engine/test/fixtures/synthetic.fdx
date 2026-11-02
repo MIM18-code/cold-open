@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<FinalDraft DocumentType="Script" Template="No" Version="6">
+  <Content>
+    <Paragraph Type="Scene Heading" Number="1" id="0f8a3c1e-2b7d-4c55-9e10-6a1d2f3b4c5d">
+      <SceneProperties Length="1 1/8" Page="1" Title="Opening">
+        <SceneArcBeats>
+          <CharacterArcBeat Name="NELL">
+            <Paragraph Alignment="Left" FirstIndent="0.00" Leading="Regular" LeftIndent="0.00" RightIndent="1.39" SpaceBefore="0" Spacing="1" StartsNewPage="No">
+              <Text>Wants the keys back.</Text>
+            </Paragraph>
+          </CharacterArcBeat>
+        </SceneArcBeats>
+      </SceneProperties>
+      <Text>EXT. SALVAGE YARD - DAWN</Text>
+    </Paragraph>
+    <Paragraph Type="Action" id="1a2b3c4d-0000-4000-8000-000000000001">
+      <Text>Rows of crushed sedans. A forklift idles with nobody in it. NELL (40s, grease to the elbow) </Text>
+      <Text Style="Bold+Underline">kicks</Text>
+      <Text> the tire.</Text>
+    </Paragraph>
+    <Paragraph Type="Character" id="1a2b3c4d-0000-4000-8000-000000000002">
+      <Text>NELL</Text>
+    </Paragraph>
+    <Paragraph Type="Parenthetical" id="1a2b3c4d-0000-4000-8000-000000000003">
+      <Text>(to the forklift)</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue" id="1a2b3c4d-0000-4000-8000-000000000004">
+      <Text>You and me had a deal. </Text>
+      <Text Style="Italic">You</Text>
+      <Text> &amp; me &#8212; &lt;signed&gt;.</Text>
+      <UserParagraphData>
+      </UserParagraphData>
+    </Paragraph>
+    <Paragraph Type="Action" id="1a2b3c4d-0000-4000-8000-000000000005"/>
+    <Paragraph Alignment="Center" Type="Action" id="1a2b3c4d-0000-4000-8000-000000000006">
+      <Text AdornmentStyle="0" Background="#FFFFFFFFFFFF" Color="#000000000000" Font="Courier Final Draft" RevisionID="2" Size="12" Style="AllCaps+Shadow">the end of the beginning</Text>
+    </Paragraph>
+    <Paragraph Type="General" id="1a2b3c4d-0000-4000-8000-000000000007">
+      <DualDialogue>
+        <SpellCheckIgnoreLists>
+          <IgnoredRanges/>
+          <IgnoredWords/>
+        </SpellCheckIgnoreLists>
+        <Paragraph Type="Character" id="1a2b3c4d-0000-4000-8000-000000000008">
+          <Text>NELL</Text>
+        </Paragraph>
+        <Paragraph Type="Dialogue" id="1a2b3c4d-0000-4000-8000-000000000009">
+          <Text>Start.</Text>
+        </Paragraph>
+        <Paragraph Type="Character" id="1a2b3c4d-0000-4000-8000-000000000010">
+          <Text>FORKLIFT (V.O.)</Text>
+        </Paragraph>
+        <Paragraph Type="Parenthetical" id="1a2b3c4d-0000-4000-8000-000000000011">
+          <Text>(electronic)</Text>
+        </Paragraph>
+        <Paragraph Type="Dialogue" id="1a2b3c4d-0000-4000-8000-000000000012">
+          <Text>No.</Text>
+        </Paragraph>
+      </DualDialogue>
+      <Text></Text>
+    </Paragraph>
+    <Paragraph Type="Transition" id="1a2b3c4d-0000-4000-8000-000000000013">
+      <Text>SMASH CUT TO:</Text>
+    </Paragraph>
+    <Paragraph Number="2A" StartsNewPage="Yes" Type="Scene Heading" id="1a2b3c4d-0000-4000-8000-000000000014">
+      <SceneProperties Length="2/8" Page="2"/>
+      <Text>INT. YARD OFFICE - CONTINUOUS</Text>
+    </Paragraph>
+    <Paragraph Type="Shot" id="1a2b3c4d-0000-4000-8000-000000000015">
+      <Text>CLOSE ON THE KEY HOOK</Text>
+    </Paragraph>
+    <Paragraph Type="Lyrics" id="1a2b3c4d-0000-4000-8000-000000000016">
+      <Text>Hang them up, hang them high</Text>
+    </Paragraph>
+    <Paragraph Type="Montage Item" id="scene-one">
+      <Text Font="Courier Prime" Style="">Custom element type from a template</Text>
+    </Paragraph>
+    <Paragraph Type="End of Act" Id="1a2b3c4d-0000-4000-8000-000000000017">
+      <Text>END OF ACT ONE</Text>
+    </Paragraph>
+    <Paragraph Type="Action" id="1a2b3c4d-0000-4000-8000-000000000001">
+      <Text Font="Courier Final Draft"></Text>
+    </Paragraph>
+  </Content>
+  <TitlePage>
+    <Content>
+      <Paragraph Alignment="Center" FirstIndent="0.00" Leading="Regular" LeftIndent="1.00" RightIndent="7.50" SpaceBefore="0" Spacing="1" StartsNewPage="No">
+        <Text Style="Underline">KEYS</Text>
+      </Paragraph>
+    </Content>
+  </TitlePage>
+  <ElementSettings Type="Action">
+    <FontSpec AdornmentStyle="0" Background="#FFFFFFFFFFFF" Color="#000000000000" Font="Courier Final Draft" RevisionID="0" Size="12" Style=""/>
+    <ParagraphSpec Alignment="Left" FirstIndent="0.00" Leading="Regular" LeftIndent="1.50" RightIndent="7.50" SpaceBefore="12" Spacing="1" StartsNewPage="No"/>
+    <Behavior PaginateAs="Action" ReturnKey="Action" Shortcut="1"/>
+  </ElementSettings>
+  <Revisions ActiveSet="1" Location="7.75" RevisionMode="No" RevisionsShown="Active" ShowAllMarks="No" ShowAllSets="No" ShowPageColor="No">
+    <Revision Color="#000000000000" FullRevision="No" ID="1" Mark="*" Name="First Revision" PageColor="#FFFFFFFFFFFF" Style=""/>
+  </Revisions>
+</FinalDraft>

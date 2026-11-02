@@ -1,0 +1,167 @@
+/* The Script view. Sizes follow the printed page: 1in is 96px times the zoom, and a line of 12pt Courier
+   is 16px times the zoom (6 lines to the inch). Element margins come from the engine's layout and are
+   written by view.tsx; this file covers everything else. */
+
+.editor-view {
+  --editor-in: calc(96px * var(--editor-zoom, 1));
+  --editor-line: calc(16px * var(--editor-zoom, 1));
+  --editor-note: color-mix(in srgb, var(--warn) 20%, var(--paper));
+  position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg);
+}
+
+.editor-scroll { flex: 1; overflow: auto; padding: 28px 24px 120px; cursor: text; }
+/* Custom scrollbars remain visible on macOS when a fixed-size page overflows. */
+.editor-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.editor-scroll::-webkit-scrollbar-track,
+.editor-scroll::-webkit-scrollbar-corner { background: var(--bg); }
+.editor-scroll::-webkit-scrollbar-thumb {
+  background: var(--ink-3); border: 2px solid var(--bg); border-radius: var(--radius);
+}
+@media (max-width: 1000px) {
+  .editor-scroll { padding-left: 8px; padding-right: 8px; }
+}
+.editor-sheet {
+  width: calc(var(--editor-in) * var(--editor-paper-width, 8.5));
+  min-height: calc(var(--editor-in) * var(--editor-paper-height, 11));
+  margin: 0 auto;
+  padding: calc(var(--editor-in) * var(--editor-top, 1)) 0 calc(var(--editor-in) * var(--editor-bottom, 1));
+  background: var(--paper);
+  box-shadow: var(--paper-shadow);
+  border-radius: 2px;
+}
+
+.editor-pm {
+  outline: none;
+  font-family: var(--script-font);
+  font-size: calc(16px * var(--editor-zoom, 1));
+  line-height: var(--editor-line);
+  color: var(--ink);
+  caret-color: var(--ink);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-variant-ligatures: none;
+  -webkit-font-smoothing: antialiased;
+}
+.editor-pm:focus, .editor-pm:focus-visible { outline: none; }
+.editor-pm ::selection { background: color-mix(in srgb, var(--focus) 26%, transparent); }
+/* Each paragraph takes its direction from its first strong letter, so Hebrew and Arabic lines read right to left;
+   alignment stays the element's own (left, right or center). */
+.editor-p { margin: 0; position: relative; min-height: var(--editor-line); unicode-bidi: plaintext; }
+.editor-pm > .editor-p:first-child, .editor-pm > .editor-dual:first-child { margin-top: 0; }
+
+/* Scene numbers sit in both margins, as Final Draft prints them. */
+.editor-p[data-scene-number]::before,
+.editor-p[data-scene-number]::after {
+  content: attr(data-scene-number); position: absolute; top: 0; color: var(--ink-2); pointer-events: none; user-select: none;
+}
+.editor-p[data-scene-number]::before { left: calc(var(--editor-in) * (0.75 - var(--editor-left, 1.5))); }
+.editor-p[data-scene-number]::after { left: calc(var(--editor-in) * (7.8 - var(--editor-left, 1.5))); }
+
+/* Non-printing elements look like annotations, not script. */
+.editor-t-section { color: var(--ink-3); font-family: var(--ui-font); font-weight: 600; letter-spacing: 0.01em; }
+.editor-t-section::before { content: "#"; position: absolute; left: calc(var(--editor-in) * -0.3); color: var(--line-strong); }
+.editor-t-synopsis { color: var(--ink-3); }
+.editor-t-synopsis::before { content: "="; position: absolute; left: calc(var(--editor-in) * -0.3); color: var(--line-strong); }
+/* The highlight reaches out sideways only: a line directly below (lyrics have no space before) stays clear. */
+.editor-t-note {
+  background: var(--editor-note); color: var(--ink-2); border-radius: 3px;
+  box-shadow: calc(var(--editor-in) * -0.08) 0 0 0 var(--editor-note), calc(var(--editor-in) * 0.08) 0 0 0 var(--editor-note);
+}
+.editor-note { background: var(--editor-note); color: var(--ink-2); border-radius: 2px; box-shadow: 0 0 0 1px var(--editor-note); }
+.editor-allcaps { text-transform: uppercase; }
+
+/* Dual dialogue: two speeches side by side. */
+.editor-dual {
+  display: flex; gap: calc(var(--editor-in) * 0.25);
+  margin-left: calc(var(--editor-in) * 1.5); width: calc(var(--editor-in) * 6); margin-top: var(--editor-line);
+}
+.editor-column { flex: 1 1 0; min-width: 0; }
+.editor-dual .editor-p { margin-left: 0; width: auto; }
+.editor-column > .editor-p:first-child { margin-top: 0; }
+.editor-dual .editor-t-character { padding-left: calc(var(--editor-in) * 0.9); }
+.editor-dual .editor-t-parenthetical { padding-left: calc(var(--editor-in) * 0.45); padding-right: calc(var(--editor-in) * 0.3); }
+.editor-dual .editor-t-dialogue { padding-right: calc(var(--editor-in) * 0.1); }
+
+/* Page breaks: the foot of one page, the desk between sheets, and the head of the next. */
+.editor-pagebreak {
+  display: block; position: relative; width: calc(var(--editor-in) * var(--editor-paper-width, 8.5));
+  margin-top: var(--editor-line); user-select: none; cursor: default;
+  font-style: normal; font-weight: normal; text-decoration: none; text-align: left; text-transform: none;
+}
+.editor-pagebreak > span { display: block; }
+.editor-pagebreak-more, .editor-pagebreak-contd { padding-left: calc(var(--editor-in) * 3.5); color: var(--ink-2); }
+.editor-pagebreak-contd { text-transform: uppercase; }
+.editor-pagebreak-end { height: calc(var(--editor-in) * 0.5); }
+.editor-pagebreak-gap {
+  height: 22px; margin: 0 -1px; background: var(--bg);
+  box-shadow: inset 0 7px 7px -7px rgb(0 0 0 / 0.22), inset 0 -7px 7px -7px rgb(0 0 0 / 0.22);
+}
+.editor-pagebreak-number {
+  height: calc(var(--editor-in) * 0.5); padding-top: calc(var(--editor-in) * 0.25);
+  padding-right: calc(var(--editor-in) * 1); text-align: right; color: var(--ink-2);
+}
+.editor-pagebreak-inline { margin-top: 0; }
+
+/* Co-writers. */
+.editor-remote-caret { position: relative; border-left: 2px solid; margin: 0 -1px; pointer-events: none; }
+.editor-remote-label {
+  position: absolute; bottom: 100%; left: -2px; padding: 0 4px; border-radius: 3px 3px 3px 0;
+  font: 600 10px/1.5 var(--ui-font); color: #fff; white-space: nowrap; text-transform: none; font-style: normal; user-select: none;
+}
+
+/* Find. */
+.editor-find-match { background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 2px; }
+.editor-find-current { background: color-mix(in srgb, var(--accent) 38%, transparent); border-radius: 2px; box-shadow: 0 0 0 1px var(--accent); }
+.editor-find { display: grid; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--bg-raised); }
+.editor-find-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.editor-find .editor-find-input { width: 260px; flex: none; font-size: var(--text-s); }
+.editor-find .button, .editor-find .icon-button { white-space: nowrap; font-size: var(--text-s); }
+.editor-find-count { min-width: 72px; color: var(--ink-3); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.editor-find-option { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-2); font-size: var(--text-xs); white-space: nowrap; }
+
+/* SmartType. */
+.editor-smarttype {
+  position: fixed; z-index: 50; margin: 0; padding: 4px; list-style: none; min-width: 200px; max-height: 260px; overflow: auto;
+  background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-2);
+  font: 13px/1.5 var(--script-font); color: var(--ink);
+}
+.editor-smarttype li { padding: 3px 8px; border-radius: var(--radius-s); white-space: pre; cursor: default; }
+.editor-smarttype li.on { background: var(--accent); color: var(--accent-ink); }
+
+/* Title bar and status bar. */
+.editor-element-picker {
+  border: 1px solid var(--line); background-color: var(--paper); border-radius: var(--radius); padding: 3px 24px 3px 9px;
+  font-size: var(--text-s); font-weight: 500; color: var(--ink); min-width: 132px; height: 26px;
+  box-shadow: 0 1px 1px rgb(20 24 30 / 0.04); transition: border-color 120ms var(--ease);
+}
+.editor-element-picker:hover { border-color: var(--line-strong); }
+.editor-status { color: var(--ink-2); }
+.editor-settings .data select { width: 100%; }
+.editor-settings table.data td { padding: 4px 10px; }
+.editor-settings table.data td:first-child { color: var(--ink-2); }
+
+/* An empty script: the first heading shows an example, and a line above the page explains Enter and Tab. */
+.editor-placeholder::after {
+  content: attr(data-placeholder); position: absolute; left: 0; top: 0; color: var(--ink-3); pointer-events: none; user-select: none;
+}
+.editor-hint {
+  margin: 0; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--bg-raised);
+  color: var(--ink-2); font-size: var(--text-s); text-align: center;
+}
+.editor-hint kbd, .editor-banner kbd {
+  font: 500 var(--text-xs)/1 var(--ui-font); padding: 2px 6px; border-radius: var(--radius-s);
+  background: var(--paper); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-strong), 0 1px 0 var(--line-strong);
+}
+.editor-banner {
+  padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--bg-sunken); color: var(--ink); font-size: var(--text-s); text-align: center;
+}
+
+.editor-marks { display: flex; gap: 1px; margin-left: 2px; }
+.titlebar .editor-mark { width: 26px; font: 700 13px/1 var(--script-font); }
+.editor-mark-italic { font-style: italic; }
+.editor-mark-underline { text-decoration: underline; text-underline-offset: 2px; }
+.titlebar .editor-mark.on { color: var(--accent-ink); background: var(--accent); }
+.editor-mark:disabled { opacity: 0.45; }
+/* A sentence completion: grey text after the caret until → accepts it. */
+.editor-ghost { color: var(--ink-2); opacity: 0.6; pointer-events: none; user-select: none; white-space: pre-wrap; }
+.editor-ghost-pending { opacity: 0.45; }

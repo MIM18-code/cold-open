@@ -1,0 +1,48 @@
+.outline { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--bg); }
+.outline-toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 7px 16px; border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
+}
+.outline-toolbar .button { font-size: var(--text-s); padding: 3px 10px; }
+.outline-scroll { flex: 1; overflow: auto; padding: 12px 20px 36px; }
+
+/* Sections: Acts and sequences */
+.outline-section { padding: 12px 6px 4px 2px; margin-top: 10px; border-bottom: 1px solid var(--line); }
+.outline-section:first-child { margin-top: 0; }
+.outline-section-line { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 6px; }
+.outline-title { font-weight: 700; font-size: var(--text-l); letter-spacing: -0.01em; color: var(--ink); }
+.outline-section-2 .outline-title { font-size: var(--text-m); font-weight: 600; }
+.outline-section-3 .outline-title { font-size: var(--text-s); color: var(--ink-2); font-weight: 600; }
+
+.outline-chevron { padding: 4px; color: var(--ink-3); transition: color 120ms var(--ease); }
+.outline-chevron:hover { color: var(--ink); }
+.outline-action {
+  opacity: 0; font-size: 14px; line-height: 1; padding: 3px 6px; border-radius: var(--radius-s);
+  color: var(--ink-3); transition: opacity 120ms var(--ease), color 120ms var(--ease);
+}
+.outline-section:hover .outline-action, .outline-action:focus-visible { opacity: 1; }
+.outline-action:hover { color: var(--ink); background: var(--bg-hover); }
+
+.outline-section .outline-synopsis { margin-left: 28px; width: calc(100% - 28px); font-size: var(--text-s); }
+
+/* Scene rows in the outline */
+.outline-scene {
+  padding: 6px 10px 6px 12px; border-radius: var(--radius); margin: 2px 0;
+  transition: background-color 120ms var(--ease);
+}
+.outline-scene:hover { background: var(--bg-hover); }
+.outline-scene.on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent-line); }
+.outline-scene.on .structure-number { color: var(--ink); font-weight: 600; }
+
+.outline-scene-line { display: grid; grid-template-columns: 2em auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.outline-heading {
+  border: 0; background: transparent; padding: 0; text-align: left; font-weight: 600; font-size: var(--text-s);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; color: var(--ink);
+  transition: color 120ms var(--ease);
+}
+.outline-heading:hover { color: var(--ink); }
+.outline-scene .outline-synopsis {
+  margin-left: calc(2em + 8px + 14px + 8px); width: calc(100% - 2em - 30px);
+  font-size: var(--text-s);
+}
+.outline-action:disabled { display: none; }

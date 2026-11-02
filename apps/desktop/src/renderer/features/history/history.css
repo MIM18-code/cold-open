@@ -1,0 +1,9 @@
+.history-browser > p { color: var(--ink-2); }
+.history-create { display: flex; gap: 8px; margin: 12px 0; }
+.history-create input { flex: 1; min-width: 0; padding: 7px 9px; color: var(--ink); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 5px; }
+.history-list { max-height: 32vh; overflow: auto; }
+.history-list article { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.history-list article > :first-child { flex: 1; text-align: left; white-space: normal; }
+.history-preview pre { max-height: 30vh; overflow: auto; white-space: pre-wrap; background: var(--paper); padding: 12px; font: 13px/1.5 var(--script-font); user-select: text; }
+.history-preview select { width: 100%; }
+@media (max-width: 650px) { .history-create { flex-wrap: wrap; } .history-create input { flex-basis: 100%; } }

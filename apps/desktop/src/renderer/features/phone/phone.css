@@ -1,0 +1,19 @@
+.phone-panel { padding: var(--panel-pad); gap: var(--panel-gap); min-width: 0; }
+.phone-panel h3 { margin: 0; font-size: var(--text-m); font-weight: 600; }
+.phone-lede { margin: 0; color: var(--ink); }
+.phone-note { margin: 0; color: var(--ink-2); font-size: var(--text-s); }
+.phone-setup { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); }
+.phone-setup-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.setup-steps { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 10px; }
+.setup-steps li { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: start; }
+.setup-steps li > div { display: grid; gap: 6px; justify-items: start; min-width: 0; }
+.setup-title { color: var(--ink); }
+.setup-steps li.done .setup-title { color: var(--ink-2); }
+.setup-detail { color: var(--ink-2); font-size: var(--text-s); }
+/* A filled check when done, an empty ring to do, a dashed ring when optional. */
+.setup-mark { width: 16px; height: 16px; margin-top: 2px; border-radius: 50%; box-sizing: border-box;
+  border: 1.5px solid var(--ink-2); }
+.setup-steps li.done .setup-mark { border: 0; background: var(--ok)
+  url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 8.2l2.3 2.3 4.7-4.9' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/16px no-repeat; }
+.setup-steps li.todo .setup-mark { border-color: var(--accent); }
+.setup-steps li.optional .setup-mark { border-style: dashed; }

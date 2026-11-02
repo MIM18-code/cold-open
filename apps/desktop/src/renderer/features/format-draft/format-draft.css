@@ -1,0 +1,18 @@
+.draft-format-toolbar { display: flex; align-items: center; gap: 5px; }
+.draft-format-button { border-color: var(--line-strong); color: var(--ink); white-space: nowrap; }
+.draft-format-button kbd { font: 10px var(--ui-font); opacity: .7; margin-left: 6px; }
+.draft-format-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.draft-format-columns section { min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: var(--paper); }
+.draft-format-columns h3 { margin: 0 0 12px; font-size: 12px; color: var(--ink-2); }
+.draft-format-columns pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.6 var(--script-font); margin: 0; }
+.draft-format-element { margin: 0 0 12px; font: 13px/1.5 var(--script-font); }
+.draft-format-element > span { display: block; font: 10px var(--ui-font); color: var(--ink-3); margin-bottom: 2px; }
+.draft-format-element p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.draft-format-character { margin-left: 35%; }
+.draft-format-dialogue { margin-left: 18%; margin-right: 12%; }
+.draft-format-parenthetical { margin-left: 25%; margin-right: 18%; }
+.draft-format-warnings { padding: 10px 12px; border-left: 3px solid var(--line-strong); background: var(--bg-sunken); margin-bottom: 16px; }
+.draft-format-warnings ul { margin: 6px 0 0; padding-left: 18px; }
+@media (max-width: 800px) { .draft-format-columns { grid-template-columns: 1fr; } .draft-format-button kbd { display: none; } }
+
+.draft-target-label { color:var(--ink-2); font-size:11px; }

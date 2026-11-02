@@ -1,0 +1,40 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Dependencies and builds
+node_modules/
+dist/
+build/
+out/
+.next/
+coverage/
+__pycache__/
+*.pyc
+.venv/
+venv/
+target/
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Swift build output
+.build/
+
+# Playwright
+test-results/
+playwright-report/
+release/
+.claude/worktrees/
+!apps/desktop/build/

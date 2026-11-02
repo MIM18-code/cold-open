@@ -1,0 +1,58 @@
+/* Widgets shared by the navigator, index cards and outline. */
+
+.structure-text {
+  min-width: 0; width: 100%; border: 1px solid transparent; background: transparent; border-radius: var(--radius-s); padding: 1px 4px;
+  margin: 0 -4px; text-overflow: ellipsis; transition: border-color 120ms var(--ease), background-color 120ms var(--ease);
+}
+.structure-text:hover { border-color: var(--line); }
+.structure-text:focus { border-color: var(--focus); background: var(--paper); outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 22%, transparent); }
+
+.structure-synopsis {
+  display: block; width: 100%; resize: none; overflow: hidden; border: 1px solid transparent; background: transparent;
+  border-radius: var(--radius-s); padding: 2px 4px; margin: 0 -4px; line-height: 1.35; color: var(--ink-2);
+  transition: border-color 120ms var(--ease), background-color 120ms var(--ease);
+}
+.structure-synopsis::placeholder { color: var(--ink-3); opacity: 0; }
+.structure-synopsis:hover { border-color: var(--line); }
+.structure-synopsis:hover::placeholder, .structure-synopsis:focus::placeholder { opacity: 1; }
+.structure-synopsis:focus { border-color: var(--focus); background: var(--paper); color: var(--ink); outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 22%, transparent); }
+
+.structure-color { position: relative; display: inline-flex; flex: none; }
+.structure-swatch {
+  width: 14px; height: 14px; padding: 0; border-radius: 50%; border: 1.5px dashed var(--line-strong); background: transparent;
+  cursor: default; flex: none; transition: border-color 120ms var(--ease), transform 120ms var(--ease);
+}
+.structure-swatch.set { border: 1px solid rgb(0 0 0 / 0.2); }
+.structure-swatch:hover { border-color: var(--ink-2); transform: scale(1.1); }
+.structure-swatch.on { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3.5px var(--accent); }
+.structure-palette {
+  position: absolute; top: 20px; left: -6px; z-index: 20; display: flex; align-items: center; gap: 6px; padding: 8px 10px;
+  background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-2);
+  width: max-content; max-width: 220px; flex-wrap: wrap;
+}
+.structure-palette-none { border: 0; background: transparent; color: var(--ink-2); padding: 0 4px; font-size: var(--text-xs); }
+.structure-palette-none:hover { color: var(--ink); }
+
+.structure-length { color: var(--ink-3); font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.structure-number { color: var(--ink-3); font-variant-numeric: tabular-nums; font-size: var(--text-xs); min-width: 1.6em; }
+
+.structure-drop-before, .structure-drop-after { position: relative; }
+.structure-drop-before::before, .structure-drop-after::after {
+  content: ""; position: absolute; background: var(--accent); border-radius: 2px; pointer-events: none; z-index: 5;
+}
+/* Drawn inside the item, so a list or grid that clips its items still shows them. */
+.structure-axis-y.structure-drop-before::before { left: 0; right: 0; top: 0; height: 3px; }
+.structure-axis-y.structure-drop-after::after { left: 0; right: 0; bottom: 0; height: 3px; }
+.structure-axis-x.structure-drop-before::before { top: 0; bottom: 0; left: 0; width: 4px; }
+.structure-axis-x.structure-drop-after::after { top: 0; bottom: 0; right: 0; width: 4px; }
+.structure-dragging { opacity: 0.45; }
+
+.structure-notice {
+  margin: 0; padding: 7px 16px; font-size: var(--text-s); color: var(--ink-2);
+  background: var(--bg-sunken); border-bottom: 1px solid var(--line);
+}
+
+/* A read-only script: fields show their text but can't be edited, and nothing drags. */
+.structure-text:disabled, .structure-synopsis:disabled { color: var(--ink-2); border-color: transparent; background: transparent; }
+.structure-swatch:disabled { opacity: 0.55; }
+.structure-swatch:disabled:hover { border-color: var(--line-strong); transform: none; }

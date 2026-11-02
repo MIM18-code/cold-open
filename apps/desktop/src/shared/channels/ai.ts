@@ -1,0 +1,139 @@
+// Channels and payloads for the AI service. The renderer never sees an API key: it sends a request, the
+// main process picks the provider from settings, adds the key and streams text back with the request ID.
+
+export const AI_CHANNELS = {
+  /** renderer → main: start a streamed request. Payload: AiRequest. The reply is AiStarted; text arrives on `event`. */
+  start: "ai:start",
+  /** renderer → main: stop a request. Payload: request ID. */
+  cancel: "ai:cancel",
+  /** main → renderer: AiEvent for a request. */
+  event: "ai:event",
+  status: "ai:status",
+  setKey: "ai:set-key",
+  clearKey: "ai:clear-key",
+  test: "ai:test",
+  models: "ai:models",
+  backlot: "ai:backlot",
+  pickBacklot: "ai:pick-backlot",
+  clearBacklot: "ai:clear-backlot",
+  chatgptLogin: "ai:chatgpt-login",
+  chatgptCancelLogin: "ai:chatgpt-cancel-login",
+  chatgptLogout: "ai:chatgpt-logout",
+  chatgptSelect: "ai:chatgpt-select",
+  chatgptResume: "ai:chatgpt-resume",
+} as const;
+
+export const PROVIDERS = ["ollama", "anthropic", "google", "openai", "chatgpt"] as const;
+export type ProviderId = (typeof PROVIDERS)[number];
+
+export const PROVIDER_LABELS: Record<ProviderId, string> = {
+  ollama: "Local model (Ollama)",
+  anthropic: "Anthropic (Claude)",
+  google: "Google (Gemini)",
+  openai: "OpenAI (API key)",
+  chatgpt: "Sign in with ChatGPT",
+};
+
+/** Providers that need an API key from the user. */
+export const KEYED_PROVIDERS = ["anthropic", "google", "openai"] as const;
+export type KeyedProvider = (typeof KEYED_PROVIDERS)[number];
+
+/** Setting names, shared so both sides agree. All live in settings.json except keys. */
+export const AI_SETTINGS = {
+  provider: "ai.provider",
+  ollamaEndpoint: "ai.ollama.endpoint",
+  model: (provider: ProviderId) => `ai.model.${provider}`,
+  proofreadKind: (kind: string) => `ai.proofread.${kind}`,
+  /** The project the writer chose in the main process's dialog. Main-owned (grants.*): pages can read it, not set it. */
+  backlotPath: "grants.backlotProject",
+} as const;
+
+export const DEFAULT_OLLAMA_ENDPOINT = "http://127.0.0.1:11434";
+
+/** What a request is for: "fast" suits proofreading, "smart" suits answers about the script. */
+export type AiTier = "fast" | "smart";
+
+export interface AiMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AiRequest {
+  /** Chosen by the renderer so it can listen before the request starts. */
+  id: string;
+  tier: AiTier;
+  system: string;
+  messages: AiMessage[];
+  /** Ask for a JSON object as the whole answer. */
+  json?: boolean;
+  maxTokens?: number;
+  /** Add the summary of the Backlot project (breakdown, cast, schedule) to the system prompt. */
+  backlot?: boolean;
+  /** Use this provider instead of the one chosen in Settings. Casting picks a signed-in or keyed provider this way. */
+  provider?: ProviderId;
+}
+
+export interface AiStarted {
+  id: string;
+  provider: ProviderId;
+  model: string;
+}
+
+export type AiEvent =
+  | { id: string; type: "delta"; text: string }
+  | { id: string; type: "done"; text: string }
+  | { id: string; type: "error"; message: string; code: AiErrorCode };
+
+export type AiErrorCode = "not-configured" | "unauthorized" | "rate-limited" | "plan-limit" | "unreachable" | "bad-response" | "cancelled" | "failed";
+
+/** Where ChatGPT shows plan usage. OpenAI's guidelines make it the main action when a plan limit is reached. */
+export const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
+/** How every plan-limit error starts, so the renderer can offer Manage usage even when only the message survives IPC. */
+export const PLAN_LIMIT_MESSAGE = "Your ChatGPT plan's usage limit was reached";
+
+export interface ProviderStatus {
+  provider: ProviderId;
+  /** Ready to use: a key is set, the endpoint is known, or ChatGPT plan usage is granted. */
+  ready: boolean;
+  /** Keyed providers: whether a key is stored. */
+  keySet?: boolean;
+  /** Why it is not ready, in plain words. */
+  note?: string;
+}
+
+export interface ChatgptStatus {
+  available: boolean;
+  signedIn: boolean;
+  plan?: string;
+  email?: string;
+  planUsageGranted?: boolean;
+  paused?: boolean;
+  activeProfile?: string;
+  profiles?: { id: string; label: string }[];
+  /** A browser sign-in is waiting for the user. */
+  pending: boolean;
+  note?: string;
+}
+
+export interface AiStatus {
+  /** Whether keys can be stored encrypted on this Mac. */
+  encryption: boolean;
+  providers: ProviderStatus[];
+  chatgpt: ChatgptStatus;
+  /** The provider in use. `model` is empty when Settings leaves it on the default. `contextChars` is how much script text a request can carry. */
+  active: { provider: ProviderId; model: string; contextChars: number };
+}
+
+export interface AiTestResult {
+  ok: boolean;
+  message: string;
+  model?: string;
+}
+
+export interface BacklotInfo {
+  ok: boolean;
+  path?: string;
+  title?: string;
+  scenes?: number;
+  error?: string;
+}

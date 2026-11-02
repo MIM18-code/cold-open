@@ -1,0 +1,70 @@
+/* Index cards look like the 3x5 cards writers pin to a board: white stock, a red rule under the heading and pale
+   blue lines for the synopsis. A scene color shows as a tab along the top edge. */
+
+.cards {
+  --card-width: 228px; --card-height: 156px; --card-lh: 18px;
+  display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--bg);
+}
+.cards[data-size="small"] { --card-width: 168px; --card-height: 116px; --card-lh: 16px; }
+.cards[data-size="large"] { --card-width: 304px; --card-height: 212px; --card-lh: 20px; }
+
+.cards-toolbar {
+  display: flex; align-items: center; justify-content: space-between; padding: 7px 16px; border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
+}
+.cards-count { color: var(--ink-2); font-size: var(--text-s); font-variant-numeric: tabular-nums; }
+.cards-toolbar .segmented button { font-size: var(--text-s); padding: 2px 10px; }
+.cards-scroll { flex: 1; overflow: auto; padding: 8px 24px 32px; }
+.cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card-width), 1fr)); gap: 18px 16px; align-items: start; }
+
+.cards-card {
+  position: relative; display: flex; flex-direction: column; min-height: var(--card-height); padding: 0 12px 9px;
+  background: var(--paper); border-radius: 3px; box-shadow: var(--shadow-1), 0 3px 8px rgb(20 24 30 / 0.05);
+  transition: box-shadow 140ms var(--ease), transform 140ms var(--ease);
+}
+.cards-card:hover { box-shadow: var(--shadow-1), 0 8px 18px rgb(20 24 30 / 0.1); }
+.cards-card.on { box-shadow: 0 0 0 2px var(--accent), 0 8px 18px rgb(20 24 30 / 0.1); }
+.cards-stripe { height: 5px; margin: 0 -12px; background: transparent; border-radius: 3px 3px 0 0; }
+.cards-head {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 6px;
+  padding: 8px 0 6px; border-bottom: 1.5px solid var(--card-rule);
+}
+.cards-head .structure-number { font-family: var(--script-font); font-size: var(--text-s); color: var(--ink-3); padding-top: 1px; }
+.cards-card.on .cards-head .structure-number { color: var(--ink); font-weight: 700; }
+.cards-head h3 {
+  margin: 0; font: 700 var(--text-s)/1.35 var(--script-font); text-transform: uppercase; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden;
+}
+.cards-head .structure-color { padding-top: 1px; }
+
+/* The synopsis writes on the card's blue lines. The lines are drawn on the field so they scroll with its text. */
+.cards-card .cards-synopsis, .cards-card .cards-synopsis:focus, .cards-card .cards-synopsis:hover {
+  flex: 1; min-height: calc(var(--card-lh) * 3); margin: 0 -4px; padding: 0 4px; border-radius: 0; border-color: transparent;
+  font-size: var(--text-s); line-height: var(--card-lh); color: var(--ink);
+  background-color: transparent;
+  background-image: repeating-linear-gradient(to bottom, transparent 0 calc(var(--card-lh) - 1px), var(--card-line) calc(var(--card-lh) - 1px) var(--card-lh));
+  background-attachment: local;
+}
+.cards-card .cards-synopsis:focus { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--focus) 45%, transparent); border-radius: 2px; }
+.cards-card .cards-synopsis::placeholder { opacity: 0; }
+.cards-card:hover .cards-synopsis::placeholder, .cards-card .cards-synopsis:focus::placeholder { opacity: 1; color: var(--ink-3); }
+
+.cards-foot {
+  display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; color: var(--ink-3); font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.cards-characters { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0.02em; }
+.cards[data-size="small"] .cards-card .cards-synopsis { font-size: var(--text-xs); min-height: calc(var(--card-lh) * 2); }
+.cards[data-size="small"] .cards-characters { display: none; }
+.cards[data-size="large"] .cards-card .cards-synopsis { font-size: var(--text-m); }
+
+/* Acts and sequences: a title on the board with a rule running to the edge. */
+.cards-divider { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 18px 0 0; }
+.cards-divider::after { content: ""; flex: 1; height: 1px; background: var(--line-strong); }
+.cards-divider .structure-text { width: auto; field-sizing: content; min-width: 8ch; max-width: 70%; }
+.cards-divider-title { font-weight: 700; font-size: var(--text-xl); letter-spacing: -0.01em; }
+.cards-divider-1 { padding-top: 22px; }
+.cards-divider-2 .cards-divider-title { font-size: var(--text-l); color: var(--ink-2); }
+.cards-divider-3 .cards-divider-title { font-size: var(--text-m); color: var(--ink-2); font-weight: 600; }
+.cards-divider-2::after, .cards-divider-3::after { background: var(--line); }
+.cards-grid > .cards-divider:first-child { padding-top: 8px; }

@@ -1,0 +1,23 @@
+.shortcut-settings { display: grid; gap: 10px; }
+.shortcut-settings > select, .shortcut-settings > input { width: 100%; background: var(--paper); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 5px; padding: 7px; }
+.preference-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.smarttype-settings textarea { font-family: var(--mono-font); }
+:root[data-density="comfortable"] .button, :root[data-density="comfortable"] .icon-button, :root[data-density="comfortable"] .panel-tab { min-height: 36px; padding-top: 7px; padding-bottom: 7px; }
+:root[data-density="comfortable"] .shell-workspace { grid-template-rows: 54px 54px minmax(0,1fr) 32px; }
+:root[data-ui-size="large"] .titlebar, :root[data-ui-size="large"] .writingbar, :root[data-ui-size="large"] .sidepanel, :root[data-ui-size="large"] .modal, :root[data-ui-size="large"] .workspace-settings { font-size: 16px; }
+:root[data-ui-size="large"] .titlebar-name, :root[data-ui-size="large"] .navigator-heading, :root[data-ui-size="large"] .button, :root[data-ui-size="large"] .field > span, :root[data-ui-size="large"] .panel-tab { font-size: 15px; }
+:root[data-high-contrast="true"] { --ink-3: var(--ink); --line-strong: var(--ink-2); --line: var(--ink-2); }
+:root[data-high-contrast="true"] :focus-visible { outline-width: 3px; outline-offset: 2px; }
+:root[data-paper="white"] .editor-sheet { --paper: #fff; --ink: #151515; --ink-2: #393939; --ink-3: #505050; }
+:root[data-paper="sepia"] .editor-sheet { --paper: #f5edda; --ink: #272016; --ink-2: #514632; --ink-3: #62543c; }
+:root[data-continuous="true"] .editor-sheet { width: min(100%, 950px); min-height: 100%; padding: 30px 28px 90px; }
+:root[data-continuous="true"] .editor-pm { font-size: max(16px, calc(16px * var(--editor-zoom,1))); line-height: 1.55; }
+:root[data-continuous="true"] .editor-p { width: auto; margin-left: 0; min-height: 1.55em; }
+:root[data-continuous="true"] .editor-t-character { margin-left: 20%; }
+:root[data-continuous="true"] .editor-t-dialogue, :root[data-continuous="true"] .editor-t-lyrics { margin-left: 10%; margin-right: 10%; }
+:root[data-continuous="true"] .editor-t-parenthetical { margin-left: 15%; margin-right: 15%; }
+:root[data-continuous="true"] .editor-dual { width: auto; margin-left: 0; gap: 20px; }
+:root[data-continuous="true"] .editor-pagebreak { display: none; }
+:root[data-continuous="true"] .editor-p[data-scene-number]::before, :root[data-continuous="true"] .editor-p[data-scene-number]::after { display: none; }
+.editor-find-row { flex-wrap: wrap; }
+@media (max-width: 680px) { .editor-find .editor-find-input { max-width: 100%; } :root[data-continuous="true"] .editor-sheet { padding: 24px 14px 70px; } }

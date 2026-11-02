@@ -1,0 +1,19 @@
+export const STARTER_TRANSCRIPT = "The station was almost empty when I arrived. Someone had left a blue umbrella by the door. I waited a moment, then called across the room. Are you coming with us, or should we leave the light on?";
+export const STARTER_VOICES = [
+  ["American alto", "An adult feminine voice in her thirties, General American English, warm low alto, plain conversational delivery.", ["feminine", "30–40", "American English", "warm", "low alto"]],
+  ["American baritone", "An adult masculine voice in his forties, General American English, dry resonant baritone, unhurried conversational delivery.", ["masculine", "40–50", "American English", "dry", "baritone"]],
+  ["Young American bright", "A young adult feminine voice in her early twenties, General American English, bright and light, quick but intelligible conversational delivery.", ["feminine", "20–25", "American English", "bright", "light"]],
+  ["Young American tenor", "A young adult masculine voice in his early twenties, General American English, light tenor with a slight rasp, conversational delivery.", ["masculine", "20–25", "American English", "light tenor", "raspy"]],
+  ["Older American soft", "An older feminine voice in her seventies, General American English, soft grainy mid register, steady conversational delivery.", ["feminine", "65–80", "American English", "soft", "grainy"]],
+  ["Older American bass", "An older masculine voice in his seventies, General American English, low gravelly bass, relaxed conversational delivery.", ["masculine", "65–80", "American English", "gravelly", "bass"]],
+  ["Southern American", "An adult feminine voice in her forties, a mild Southern United States English accent, rounded vowels and a smoky mid register, natural conversation.", ["feminine", "35–50", "Southern American English", "smoky", "rounded"]],
+  ["New York American", "An adult masculine voice in his thirties, a mild New York City English accent, forward nasal resonance and clipped consonants, natural conversation.", ["masculine", "30–40", "New York English", "forward", "nasal"]],
+  ["English clear", "An adult feminine voice in her thirties, contemporary standard Southern English accent, clear mid register, restrained conversational delivery.", ["feminine", "30–40", "Southern English", "clear", "mid register"]],
+  ["English textured", "An adult masculine voice in his fifties, contemporary standard Southern English accent, textured low register, quiet conversational delivery.", ["masculine", "45–60", "Southern English", "textured", "low"]],
+  ["Northern English", "A young adult feminine voice in her late twenties, Northern English accent from Manchester, brisk clear tone with a light edge, natural conversation.", ["feminine", "25–35", "Northern English", "brisk", "edged"]],
+  ["Scottish", "An adult masculine voice in his forties, a mild Edinburgh Scottish English accent, mellow tenor, natural conversational delivery.", ["masculine", "35–50", "Scottish English", "mellow", "tenor"]],
+  ["Irish", "An adult feminine voice in her fifties, a mild Dublin Irish English accent, husky low register, measured natural conversation.", ["feminine", "45–60", "Irish English", "husky", "low"]],
+  ["Australian", "An adult masculine voice in his thirties, a mild Australian English accent, open bright mid register, easy conversational delivery.", ["masculine", "30–40", "Australian English", "open", "bright"]],
+  ["Indian English", "An adult feminine voice in her forties, fluent urban Indian English accent, smooth mid register with precise consonants, natural conversational delivery.", ["feminine", "35–50", "Indian English", "smooth", "precise"]],
+  ["Androgynous American", "An adult androgynous voice in their thirties, General American English, narrow mid register with a dry soft edge, natural conversational delivery.", ["androgynous", "25–40", "American English", "dry", "soft"]]
+] as const;

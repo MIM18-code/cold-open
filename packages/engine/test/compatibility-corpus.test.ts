@@ -1,0 +1,7 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { parseFdx, writeFdx, parseFountain, writeFountain, ScreenplayDoc, scriptNotes, tagDefinitions, plainText } from "../src/index.ts";
+const fixture = (name: string) => readFileSync(new URL(`./fixtures/compatibility/${name}`, import.meta.url), "utf8");
+test("synthetic FDX compatibility corpus preserves notes, tag references, unknown note data and Unicode", () => { const parsed = parseFdx(fixture("notes-tags-unicode.fdx")), doc = ScreenplayDoc.fromScript(parsed); const saved = writeFdx(doc.toScript()); assert.match(saved, /李记/); assert.match(saved, /VendorExtra/); assert.equal(scriptNotes(doc).length, 1); assert.equal(tagDefinitions(parseFdx(saved))[0]?.label, "BRASS KEY"); assert.deepEqual(parseFdx(saved).paragraphs.map(p => plainText(p.runs)), parsed.paragraphs.map(p => plainText(p.runs))); doc.ydoc.destroy(); });
+test("synthetic Fountain corpus preserves simultaneous-dialogue metadata, section and scene number after settling", () => { const parsed = parseFountain(fixture("dual-and-sections.fountain")), first = writeFountain(parsed), second = writeFountain(parseFountain(first)); assert.equal(first, second); assert(parsed.paragraphs.some(p => p.dual)); assert(parsed.paragraphs.some(p => p.type === "section")); assert(parsed.paragraphs.some(p => p.sceneNumber === "12A")); });

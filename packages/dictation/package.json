@@ -1,0 +1,21 @@
+{
+  "name": "@screenplay/dictation",
+  "version": "0.1.0",
+  "description": "Speech-to-screenplay formatting rules and the native speech helper client",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test --test-timeout=120000 test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3"
+  }
+}

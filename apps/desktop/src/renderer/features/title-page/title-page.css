@@ -1,0 +1,7 @@
+/* The Title Page dialog. */
+
+.title-page-form textarea { resize: vertical; font: inherit; }
+.title-page-note { color: var(--ink-3); font-size: var(--text-xs); line-height: 1.45; margin: 8px 0 0; }
+.title-page-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+.title-page-fields:disabled .field input, .title-page-fields:disabled .field textarea { color: var(--ink-2); background: var(--bg-sunken); }
+.title-page-fields .field { margin-bottom: 12px; }

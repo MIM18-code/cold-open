@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Cold Open",
+    "slug": "inklot-remote",
+    "version": "0.1.0",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "platforms": [
+      "ios"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.mindinmotion.inklot.remote",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Connect to Cold Open on your Mac over private Wi-Fi.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        },
+        "NSMicrophoneUsageDescription": "Record a take while you hold the dictate button.",
+        "NSSpeechRecognitionUsageDescription": "Transcribe takes on this iPhone."
+      }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan the pairing code in Cold Open on your Mac."
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/mark.png",
+          "imageWidth": 100,
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "backgroundColor": "#151517"
+          }
+        }
+      ]
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "screenwriting-app",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "dev": "npm run dev -w @screenplay/desktop",
+    "build": "npm run build -w @screenplay/desktop",
+    "start": "npm run start -w @screenplay/desktop",
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test:browser": "npm run test:browser -w @screenplay/desktop",
+    "voices:manifest": "node native/voice-helper/scripts/manifest.ts",
+    "voices:starter-bank": "node native/voice-helper/scripts/starter-bank.ts",
+    "release:prepare": "sh scripts/build-helpers.sh && node scripts/prepare-licenses.mjs && SCREENPLAY_RELEASE=1 SCREENPLAY_SIGN=developer-id npm run package -w @screenplay/desktop && node scripts/release-source.mjs && node scripts/verify-release.mjs"
+  }
+}

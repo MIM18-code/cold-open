@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script" Template="No" Version="3">
+<Content>
+<Paragraph Type="Scene Heading" id="heading"><Text>INT. CAFÉ - NIGHT</Text></Paragraph>
+<Paragraph Type="Action" id="action"><Text>A </Text><Text TagNumber="1" Style="Bold">brass key</Text><Text> sits beneath a sign: 李记.</Text></Paragraph>
+<Paragraph Type="Character" id="cue"><Text>MARA (V.O.)</Text></Paragraph>
+<Paragraph Type="Dialogue" id="speech"><Text>Leave it where you found it.</Text></Paragraph>
+</Content>
+<ScriptNotes><ScriptNote Id="note-1" Range="19,28" Color="#FFFF99990000" Author="Fixture Author"><Paragraph><Text Style="Italic">Confirm the key prop.</Text></Paragraph><VendorExtra Keep="Yes"/></ScriptNote></ScriptNotes>
+<TagData><TagCategories><TagCategory Id="props" Name="Props"/></TagCategories><TagDefinitions><TagDefinition Id="key" CatId="props" Label="BRASS KEY" Number="1"/></TagDefinitions><Tags><Tag Number="1"><DefId>key</DefId></Tag></Tags></TagData>
+</FinalDraft>

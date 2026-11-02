@@ -1,0 +1,13 @@
+Cold Open
+Copyright 2026 Joshua Land and Cold Open contributors.
+
+Cold Open is licensed under the GNU General Public License, version 3 only.
+SPDX-License-Identifier: GPL-3.0-only
+
+The screenplay engine, relay and dictation packages (packages/engine, packages/relay,
+packages/dictation) are licensed under the MIT License; see the LICENSE file in each.
+
+You may redistribute and modify Cold Open under the terms in LICENSE.
+Cold Open comes without warranty, including implied warranties of
+merchantability or fitness for a particular purpose, to the extent
+permitted by law. See LICENSE for the full terms.
