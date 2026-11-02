@@ -17,11 +17,18 @@ const cask = `cask "cold-open" do
 
   url "https://github.com/MIM18-code/cold-open/releases/download/v#{version}/ColdOpen-#{version}.dmg"
   name "Cold Open"
-  desc "Free, open-source screenwriting app with Final Draft files, co-writing and dictation"
+  desc "Screenwriting app that opens and saves Final Draft files"
   homepage "https://github.com/MIM18-code/cold-open"
 
+  # Beta versions: the default GitHub strategies read only plain x.y.z tags.
+  livecheck do
+    url "https://github.com/MIM18-code/cold-open/releases/latest"
+    regex(%r{/tag/v?(\\d+(?:\\.\\d+)+(?:-beta\\.\\d+)?)$}i)
+    strategy :header_match
+  end
+
   depends_on arch: :arm64
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "Cold Open.app"
 
