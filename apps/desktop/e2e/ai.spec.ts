@@ -435,3 +435,36 @@ test("an applied rewrite is taken back by the Edit menu's Undo, word for word", 
   await closeApp(electronApp, page);
   await mock.close();
 });
+
+test("an answer's table keeps names whole at the panel's default width", async () => {
+  // Terra beta 6: "CHARLIE" broke across two lines in the first column.
+  const mock = await mockOllama();
+  const { electronApp, page } = await launch();
+  await useMock(page, mock);
+  await page.evaluate(() => (window as any).__app.setSetting("ai.assistant.wholeScript", false));
+  await loadScript(page, KITCHEN);
+  await openPanel(page, "assistant");
+  const row = (name: string) => `| ${name} | Scene 10 (EXT. WASTELAND - DAY - OVERCAST) | First speaks after the truck leaves and the others scatter across the ridge. |`;
+  mock.reply = (res) => res.end(JSON.stringify({ message: { role: "assistant", content: ["| Character | First appearance | Notes |", "|---|---|---|", row("CHARLIE"), row("MAYA SANTOS")].join("\n") }, done: true }));
+  await page.getByLabel("Ask about the script").fill("Where do the leads first appear?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  const cell = page.locator(".assistant-table td").first();
+  await expect(cell).toHaveText("CHARLIE");
+  const lines = await cell.evaluate((td) => { const range = document.createRange(); range.selectNodeContents(td); return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size; });
+  expect(lines).toBe(1);
+  await expect(page.locator(".assistant-note").last()).toContainText("whole script sent");
+
+  // A table too wide for the panel scrolls inside it instead of stretching the answer past the panel's edge.
+  const wide = `| ${Array.from({ length: 6 }, (_, i) => `COLUMN_${i}_WITH_A_LONG_UNBROKEN_NAME`).join(" | ")} |\n|${"---|".repeat(6)}\n| ${Array(6).fill("x").join(" | ")} |`;
+  mock.reply = (res) => res.end(JSON.stringify({ message: { role: "assistant", content: wide }, done: true }));
+  await page.getByLabel("Ask about the script").fill("Make a wide table.");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.locator(".assistant-table")).toHaveCount(2);
+  const fit = await page.locator(".assistant-table").last().evaluate((wrap) => {
+    const box = document.querySelector("[aria-label=\"Ask about the script\"]")!.getBoundingClientRect();
+    return { scrolls: wrap.scrollWidth > wrap.clientWidth, inside: wrap.getBoundingClientRect().right <= box.right + 16 };
+  });
+  expect(fit).toEqual({ scrolls: true, inside: true });
+  await closeApp(electronApp, page);
+  await mock.close();
+});

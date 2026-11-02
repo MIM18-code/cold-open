@@ -4,7 +4,7 @@ import {
 } from "@screenplay/engine";
 import type { AiMessage } from "../../../shared/channels/ai.ts";
 import { isReadEngine, type ReadEngine, type ReadVoice } from "../../../shared/channels/table-read.ts";
-import { assignEnsemble, scriptGender, type EnsembleInput, type Gender } from "./cast-ensemble.ts";
+import { accentName, assignEnsemble, offAccent, scriptGender, type EnsembleInput, type Gender } from "./cast-ensemble.ts";
 
 export interface CastState { version: 1; cast: CastBinding[]; narrator: Record<string, string>; }
 
@@ -72,9 +72,12 @@ export function castGenders(script: Script, registry: CharacterRegistry): Record
   return out;
 }
 
-export function fillCast(state: CastState, engine: ReadEngine, inventory: ReadVoice[], recast = false, genders: Readonly<Record<string, Gender>> = {}): CastState {
+export function fillCast(state: CastState, engine: ReadEngine, inventory: ReadVoice[], recast = false, genders: Readonly<Record<string, Gender>> = {}, accent?: string): CastState {
   const usable = castable(inventory);
-  const english = usable.filter((v) => v.language.startsWith("en")), pool = english.length ? english : usable;
+  const english = usable.filter((v) => v.language.startsWith("en"));
+  // Voices in the cast's accent come first; the others are used once those run out.
+  const home = (v: ReadVoice) => !accent || v.language.toLowerCase() === accent;
+  const pool = english.length ? [...english.filter(home), ...english.filter((v) => !home(v))] : usable;
   if (!pool.length) return state;
   // Manual choices survive even when a writer picks a non-English voice; only automatic picking prefers English.
   const ids = new Set(inventory.map((v) => v.id)), taken = new Set<string>();
@@ -111,6 +114,8 @@ export function voiceMap(state: CastState, engine: ReadEngine): Record<string, s
 export interface CastSuggestion { id: string; voice: string; reason: string; gender: "female" | "male" | "unclear"; }
 
 export interface ProposalContext {
+  /** The cast's accent as a lowercase language ("en-us"), when the writer has one. */
+  accent?: string;
   cast: readonly CastBinding[];
   inventory: readonly ReadVoice[];
   packets: readonly EvidencePacket[];
@@ -213,6 +218,7 @@ const SYSTEM = [
   "Then cast a voice whose tags match that gender; never give a woman a masculine voice or a man a feminine one. Voices with no gender tag fit anyone.",
   "Give every character a different voice when there are enough.",
   "Match explicit vocal facts in the evidence (accent, age, described voice). Do not infer accent or age from a name; if the evidence is silent, say so in the reason.",
+  "When castAccent is given, use voices of that language unless a character's evidence states another accent.",
   "Keep each reason to one sentence of at most 15 words.",
   'Return JSON only: {"assignments":[{"id":"...","voice":"...","gender":"female|male|unclear","reason":"..."}]}',
 ].join(" ");
@@ -233,7 +239,7 @@ function promptRows(context: ProposalContext): unknown {
     characters.push(row);
     budget -= size;
   }
-  return { characters, voices: castable(context.inventory).slice(0, 80).map((voice) => ({ id: voice.id, label: voice.label, language: voice.language,
+  return { ...(context.accent ? { castAccent: `${accentName(context.accent)} (${context.accent})` } : {}), characters, voices: castable(context.inventory).slice(0, 80).map((voice) => ({ id: voice.id, label: voice.label, language: voice.language,
     ...(voice.tags?.length ? { tags: voice.tags.filter((tag) => !/unreviewed$/.test(tag)) } : {}) })) };
 }
 
@@ -278,6 +284,7 @@ export async function requestCastProposal(ask: (request: ModelRequest) => Promis
 export function mergeAiCast(input: EnsembleInput, suggestions: readonly CastSuggestion[]): Record<string, string> {
   const locked: Record<string, string> = { ...input.locked };
   const tags = new Map(input.voices.map((voice) => [voice.id, voice.tags]));
+  const infos = new Map(input.voices.map((voice) => [voice.id, voice]));
   const taken = new Set(Object.values(locked));
   // Keep the narrator's voice for the narrator while there are enough others to go round.
   if (input.narratorVoice && tags.size > input.subjects.length) taken.add(input.narratorVoice);
@@ -286,6 +293,8 @@ export function mergeAiCast(input: EnsembleInput, suggestions: readonly CastSugg
   for (const s of suggestions) {
     const subject = byId.get(s.id);
     if (!subject || locked[s.id] || !tags.has(s.voice) || taken.has(s.voice)) continue;
+    // The model may hand an American lead a British voice; the ensemble then picks one in the cast's accent.
+    if (offAccent(subject, infos.get(s.voice)!, input.accent)) continue;
     const gender = subject.gender ?? (s.gender === "unclear" ? undefined : s.gender);
     const voiceTags = tags.get(s.voice)!;
     if (gender && (voiceTags.includes("female") || voiceTags.includes("male")) && !voiceTags.includes(gender)) continue;

@@ -125,7 +125,7 @@ export class Chat {
       const messages: AiMessage[] = [...history, { role: "user", content: question }];
       const fallback = { tier: "smart" as const, provider: status.active.provider,
         system: assistantSystem({ context, ...(selection ? { selection } : {}) }), messages, maxTokens: 2000, backlot: useBacklot };
-      const contextNote = context.truncated ? `${context.included} of ${context.total} scenes sent` : "whole script sent";
+      const contextNote = context.truncated ? `${context.included} of ${context.total} scenes sent, nearest the caret` : "whole script sent";
       let model = "";
       if (this.app.setting<boolean>(AI_SETTINGS.wholeScript, true) && supportsTools(status.active.provider)) {
         update({ steps: [], proposals: [], toolAnswer: true });

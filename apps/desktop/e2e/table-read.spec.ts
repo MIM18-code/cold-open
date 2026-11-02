@@ -471,3 +471,47 @@ test("automatic casting skips novelty voices, but a locked novelty choice surviv
     await expect(eli).not.toHaveValue("Bells");
   } finally { await close(run.electronApp, run.page); }
 });
+
+test("automatic casting keeps the cast in one accent, and the writer can change it", async () => {
+  // Terra beta 6: MAYA, an American teenager, was cast with a British voice.
+  const run = await launch();
+  try {
+    await run.electronApp.evaluate(({ ipcMain }) => {
+      const voices = [
+        { id: "Bryony", label: "Bryony", language: "en-GB", tags: ["female"] },
+        { id: "Daniel", label: "Daniel", language: "en-GB", tags: ["male"] },
+        { id: "Ava", label: "Ava", language: "en-US", tags: ["female"] },
+        { id: "Samantha", label: "Samantha", language: "en-US", tags: ["female"] },
+        { id: "Tom", label: "Tom", language: "en-US", tags: ["male"] },
+      ];
+      ipcMain.removeHandler("table-read:status");
+      ipcMain.handle("table-read:status", () => ({ cacheBytes: 0, engines: [
+        { id: "system", label: "Mac voices", tier: "Ready now", ready: true, available: true, voices, note: "Fixture" },
+      ] }));
+    });
+    await run.page.evaluate(() => {
+      (window as any).__app.session.doc.load({ titlePage: [], paragraphs: [
+        { id: "s1", sceneId: "s1", type: "sceneHeading", runs: [{ text: "INT. DINER - NIGHT" }] },
+        { id: "a1", type: "action", runs: [{ text: "MAYA (17), a girl in a hoodie, waits. ELI, a boy, joins her." }] },
+        { id: "m1", type: "character", runs: [{ text: "MAYA" }] }, { id: "md", type: "dialogue", runs: [{ text: "Open." }] },
+        { id: "e1", type: "character", runs: [{ text: "ELI" }] }, { id: "ed", type: "dialogue", runs: [{ text: "Closed." }] },
+      ] });
+    });
+    await run.page.evaluate(() => (window as any).__app.setSetting("tableRead.accent", "en-us"));
+    await runCommand(run.page, "tableRead.open");
+    const accent = run.page.getByLabel("Accent for automatic casting");
+    await expect(accent).toHaveValue("en-us");
+    await expect(run.page.getByText(/Voices are American unless the script gives a character another accent\./)).toBeVisible();
+    const maya = run.page.getByLabel("Voice for MAYA", { exact: true }), eli = run.page.getByLabel("Voice for ELI", { exact: true });
+    await run.page.getByRole("button", { name: "Assign distinct voices" }).click();
+    await expect(maya).toHaveValue(/^(Ava|Samantha)$/);
+    await expect(eli).toHaveValue("Tom");
+    await expect(maya.locator("option", { hasText: "Bryony · British" })).toHaveCount(1);
+    await run.page.screenshot({ path: "test-results/accent-american.png" });
+
+    await accent.selectOption("en-gb");
+    await run.page.getByRole("button", { name: "Assign distinct voices" }).click();
+    await expect(maya).toHaveValue("Bryony");
+    await expect(eli).toHaveValue("Daniel");
+  } finally { await close(run.electronApp, run.page); }
+});

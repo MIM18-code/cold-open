@@ -29,16 +29,19 @@
   box-shadow: var(--shadow-1);
 }
 .assistant-reply { align-self: stretch; display: grid; gap: 8px; color: var(--ink); }
-.assistant-text { font-size: var(--text-s); line-height: 1.45; white-space: normal; }
+.assistant-text { font-size: var(--text-s); line-height: 1.45; white-space: normal; min-width: 0; }
 .assistant-text p, .assistant-text ul, .assistant-text ol { margin: 0 0 6px; }
 .assistant-text p { white-space: pre-wrap; }
 .assistant-text ul, .assistant-text ol { padding-left: 18px; }
 .assistant-text code { font-family: var(--mono-font, ui-monospace, monospace); font-size: 0.95em; }
 .assistant-heading { font-weight: 600; }
 .assistant-code { margin: 0 0 6px; padding: 6px 8px; background: var(--bg-sunken); border-radius: var(--radius-s); font-family: var(--mono-font); font-size: var(--text-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
-.assistant-table { overflow-x: auto; margin: 0 0 6px; }
+.assistant-table { overflow-x: auto; max-width: 100%; margin: 0 0 6px; }
 .assistant-table table { border-collapse: collapse; font-size: var(--text-xs); }
-.assistant-table th, .assistant-table td { border: 1px solid var(--line); padding: 3px 5px; text-align: left; vertical-align: top; }
+/* Wrap only between words: the message's overflow-wrap: anywhere let a narrow panel split "CHARLIE" across lines.
+   A table too wide for the panel scrolls sideways instead. */
+.assistant-table th, .assistant-table td { border: 1px solid var(--line); padding: 3px 5px; text-align: left; vertical-align: top;
+  overflow-wrap: normal; word-break: normal; min-width: 6ch; }
 .assistant-wait { color: var(--ink-3); font-style: italic; font-size: var(--text-s); }
 .assistant-steps { color: var(--ink-3); font-size: var(--text-xs); line-height: 1.5; }
 .assistant-steps summary { cursor: pointer; }

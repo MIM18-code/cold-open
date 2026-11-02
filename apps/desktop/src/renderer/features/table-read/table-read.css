@@ -304,3 +304,10 @@
 .voice-pack-state { font-weight: normal; font-size: 0.85em; color: var(--ink-2); margin-left: 6px; }
 .voice-pack-meta { color: var(--ink-2); }
 .voice-pack-license { background: none; border: 0; padding: 0; color: var(--link); text-decoration: underline; cursor: pointer; font: inherit; }
+
+.reader-accent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}

@@ -98,3 +98,48 @@ test("a usable pick survives extra rows for characters that were not sent", asyn
   const answer = JSON.stringify({ assignments: [{ id: "m", voice: "Karen", gender: "female" }, { id: "ghost", voice: "Karen", gender: "female" }] });
   assert.deepEqual(parseCastProposal(answer, context).map((row) => row.id), ["m"]);
 });
+
+test("an American cast keeps leads in American voices, from name matching and from the model", async () => {
+  // Terra beta 6: MAYA, an American teenager, was cast as Bryony (en-GB).
+  const { castAccent } = await import("../src/renderer/features/table-read/cast-ensemble.ts");
+  const { assignEnsemble } = await import("../src/renderer/features/table-read/cast-ensemble.ts");
+  const mixed = voiceInfos([
+    { id: "Bryony", label: "Bryony", language: "en-GB", tags: ["female"] },
+    { id: "Delia", label: "Delia", language: "en-US", tags: ["female"] },
+    { id: "Ava", label: "Ava", language: "en-US", tags: ["female"] },
+    { id: "Fergus", label: "Fergus", language: "en-GB", tags: ["male"] },
+  ], "system");
+  const maya = { ...subject("maya", 9), gender: "female" as const };
+  const accent = castAccent("", ["en-gb", "en-us"], "en-US");
+  assert.equal(accent, "en-us");
+  assert.equal(assignEnsemble({ subjects: [maya], voices: mixed, accent }).maya, "Ava");
+  assert.equal(mergeAiCast({ subjects: [maya], voices: mixed, accent }, [pick("maya", "Bryony", "female")]).maya, "Ava", "the model's British pick is dropped");
+  // The script names her accent: then British is right.
+  const british = { ...maya, evidence: "MAYA (17), British, all elbows." };
+  assert.equal(mergeAiCast({ subjects: [british], voices: mixed, accent }, [pick("maya", "Bryony", "female")]).maya, "Bryony");
+  // A regional accent counts for its language: a Scottish character may have a British voice in an American cast.
+  const sailor = { ...subject("finn", 4), gender: "male" as const, evidence: "FINN, a Scottish sailor, coils rope." };
+  const men = voiceInfos([{ id: "Fergus", label: "Fergus", language: "en-GB", tags: ["male"] }, { id: "Tom", label: "Tom", language: "en-US", tags: ["male"] }], "system");
+  assert.equal(assignEnsemble({ subjects: [sailor], voices: men, accent }).finn, "Fergus");
+  assert.equal(assignEnsemble({ subjects: [{ ...sailor, evidence: "FINN coils rope. His English teacher waves." }], voices: men, accent }).finn, "Tom");
+  // Whole words only: "Americana" doesn't name an accent.
+  const collector = { ...maya, evidence: "MAYA collects Americana." };
+  assert.equal(mergeAiCast({ subjects: [collector], voices: mixed, accent: "en-gb" }, [pick("maya", "Ava", "female")]).maya, "Bryony");
+  // A British Mac defaults to British; "any" turns the preference off; an accent with no voices is ignored.
+  assert.equal(castAccent("", ["en-gb", "en-us"], "en-GB"), "en-gb");
+  assert.equal(castAccent("any", ["en-gb", "en-us"], "en-US"), undefined);
+  assert.equal(castAccent("en-au", ["en-gb", "en-us"], "en-US"), undefined);
+});
+
+test("filling an empty cast takes voices in the cast's accent first", async () => {
+  const { fillCast } = await import("../src/renderer/features/table-read/casting.ts");
+  const state = { version: 1 as const, narrator: {}, cast: [{ id: "m", name: "MAYA", aliases: [], cueIds: [], voices: {}, locked: false }] };
+  const inventory = [
+    { id: "Bryony", label: "Bryony", language: "en-GB", tags: ["female"] },
+    { id: "Delia", label: "Delia", language: "en-US", tags: ["female"] },
+    { id: "Ava", label: "Ava", language: "en-US", tags: ["female"] },
+  ];
+  const filled = fillCast(state as any, "system", inventory, false, { MAYA: "female" }, "en-us");
+  // Both American: the narrator takes the first, MAYA the next; Bryony waits until those run out.
+  assert.deepEqual([filled.narrator.system, filled.cast[0]!.voices.system], ["Delia", "Ava"]);
+});

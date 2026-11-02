@@ -242,7 +242,10 @@ export function AiSettings() {
       </div>
 
       <h3 className="ai-settings-heading">Assistant</h3>
-      <label className="ai-settings-check"><input type="checkbox" checked={wholeScript} onChange={(e) => setWholeScript(e.target.checked)} />Let the assistant look through the whole script</label>
+      <label className="ai-settings-check"><input type="checkbox" checked={wholeScript} onChange={(e) => setWholeScript(e.target.checked)} />Let the assistant look up scenes as it needs them</label>
+      <small className="ai-settings-hint">{wholeScript
+        ? "It reads scenes, searches and looks up characters one step at a time. The note under each answer counts what it used."
+        : "Each question sends the scene at the caret and as many nearby scenes as fit the model, plus a list of every scene. The note under each answer says how many."}</small>
 
       <h3 className="ai-settings-heading">Sentence completion</h3>
       <CompleteSetting />

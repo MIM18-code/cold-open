@@ -2,11 +2,13 @@ import { useMemo } from "react";
 import type { AliasSuggestion, CastBinding } from "@screenplay/engine";
 import type { ReadEngine, ReadVoice } from "../../../shared/channels/table-read.ts";
 import { aliasKey } from "./cast-store.ts";
-import { auditionChoices, voiceInfos, type CastSubject } from "./cast-ensemble.ts";
+import { accentName, auditionChoices, voiceInfos, type CastSubject } from "./cast-ensemble.ts";
 
 export interface CastRowProps {
   binding: CastBinding;
   engine: ReadEngine;
+  /** The cast's accent ("en-us"), so auditions offer it first. */
+  accent?: string;
   voices: readonly ReadVoice[];
   narratorVoice: string;
   subjects: readonly CastSubject[];
@@ -24,17 +26,17 @@ export interface CastRowProps {
 }
 
 /** One speaking character: current voice, lock, a one-role recast and three auditions of their own line. */
-export function CastRow({ binding, engine, voices, narratorVoice, subjects, current, shared, disabled, canAudition, onVoice, onLock, onRecast, onAudition, onDesign, designDisabled, designInstalled }: CastRowProps) {
+export function CastRow({ binding, engine, accent, voices, narratorVoice, subjects, current, shared, disabled, canAudition, onVoice, onLock, onRecast, onAudition, onDesign, designDisabled, designInstalled }: CastRowProps) {
   const choices = useMemo(
-    () => auditionChoices({ subjects, voices: voiceInfos(voices, engine), narratorVoice, current }, binding.id),
-    [subjects, voices, engine, narratorVoice, current, binding.id],
+    () => auditionChoices({ subjects, voices: voiceInfos(voices, engine), narratorVoice, current, accent }, binding.id),
+    [subjects, voices, engine, narratorVoice, current, binding.id, accent],
   );
   const name = binding.name, voice = binding.voices[engine] ?? "";
   return <div className="reader-cast-row">
     <div><strong>{name}</strong>{shared && <small>Shared voice</small>}</div>
     <select aria-label={`Voice for ${name}`} value={voice} disabled={disabled} onChange={(e) => onVoice(e.target.value)}>
       <option value="">Choose voice</option>
-      {voices.map((option) => <option key={option.id} value={option.id}>{option.label} · {option.language}</option>)}
+      {voices.map((option) => <option key={option.id} value={option.id}>{option.label} · {accentName(option.language)}</option>)}
     </select>
     <button className="icon-button" aria-label={`Audition ${name}`} disabled={!canAudition || !voice} onClick={() => onAudition(voice)}>▶</button>
     <button className="button" aria-label={`Recast ${name}`} disabled={disabled} onClick={onRecast}>Recast</button>

@@ -53,7 +53,7 @@
   },
   {
     "path": "apps/desktop/e2e/ai.spec.ts",
-    "sha256": "87e6887ef0bceb1ce2e5099d2968e77c69b420cd83f07c63aa3cdfaa6cb69daf"
+    "sha256": "07f73472f2e4f7c7d208b6a5231d1d21af90a9ee3de14aef5a875a603f01465c"
   },
   {
     "path": "apps/desktop/e2e/autocomplete.spec.ts",
@@ -165,7 +165,7 @@
   },
   {
     "path": "apps/desktop/e2e/table-read.spec.ts",
-    "sha256": "3350eed61e3ec26afb6d65f1276b8c094e8fc1ac69dceefac2c5fd3108270b46"
+    "sha256": "7d2d116f473ec228c990e46e648ca23267e1d20707f244467df1dc48d345874d"
   },
   {
     "path": "apps/desktop/e2e/templates.spec.ts",
@@ -181,7 +181,7 @@
   },
   {
     "path": "apps/desktop/package.json",
-    "sha256": "abb25b0d9695e9aee7085dd59a5408d407d9befa115f59f8cec986db921c6e19"
+    "sha256": "bf5129c34c47aaba1afe8cb8481b57aa05e28bc08947ef56c38948b5bda2c3ed"
   },
   {
     "path": "apps/desktop/playwright.config.ts",
@@ -569,7 +569,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/Settings.tsx",
-    "sha256": "f436eb1534f5be4ddcce32679ec0d8b9ad17e6977fc64a1d66e04e3d5f7f748b"
+    "sha256": "ba56a2a3a200b3cfa53cb997969ec0dfe1151828545e4d05cfb33def093519d5"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/agent.ts",
@@ -581,7 +581,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/assistant.css",
-    "sha256": "08d71c07295ee05ff12cb7441d0d08bd2b4367ba4df4f844b6faafb8743d4e64"
+    "sha256": "7d5d38f5f9670763061d8a7d0b0e35fcca2162192f68361b7ed08e5a3a86f49a"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/brand/README.md",
@@ -597,7 +597,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/chat.ts",
-    "sha256": "90e0da78268e8e1c80abd9c0b0d14d5d3a71eb558f25a06157e77e8d0e3f8a0f"
+    "sha256": "cec3904cb68a456216e3d1ba4d50c44b7d2941f4e12dfd2385d6691129dac90e"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/client.ts",
@@ -1121,11 +1121,11 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/table-read/cast-ensemble.ts",
-    "sha256": "90c80f9b04be96ab631c0c81f7c37e498065f951a34ec8e4f09754852761cef2"
+    "sha256": "c0968d0d8dad8cc8366402a0de1f9e598b96fc8e43980329b81ec9c886c96258"
   },
   {
     "path": "apps/desktop/src/renderer/features/table-read/cast-panel.tsx",
-    "sha256": "906b2c8116dbecb30ba247486b6e76ae1e3f94f687cc4055661817c3430fda2e"
+    "sha256": "58f8580602c735342064dd9a9c46c0563143de398be84080793609ef054d727e"
   },
   {
     "path": "apps/desktop/src/renderer/features/table-read/cast-store.ts",
@@ -1133,7 +1133,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/table-read/casting.ts",
-    "sha256": "b2a1385088874f9c8802fb70545e70928b4fa8b57bb7d2afc74a7e19cee151d3"
+    "sha256": "b2941abdc7d29fdaffb169ad16842aa189819dedd7351c29eb035830e09a4651"
   },
   {
     "path": "apps/desktop/src/renderer/features/table-read/extras.tsx",
@@ -1145,7 +1145,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/table-read/index.tsx",
-    "sha256": "10fc8466ab60c309b88f8163a66428c9d8b39f2ea2f178f61b7170032d0d9db1"
+    "sha256": "3845aafaa0497a96a249024355fbb281a10296ffd4dd1bfb1fd1d6df0fbad659"
   },
   {
     "path": "apps/desktop/src/renderer/features/table-read/notes.ts",
@@ -1173,7 +1173,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/table-read/table-read.css",
-    "sha256": "780524b299db7ab99b37f6e623bbed9d1007b62ec4656771d694c13c4d90e9a2"
+    "sha256": "cd74719560d6f51a16291ebebe0d6ab1eb752dc9326af7b83f7844bc836645fb"
   },
   {
     "path": "apps/desktop/src/renderer/features/table-read/voice-design.tsx",
@@ -1389,7 +1389,7 @@
   },
   {
     "path": "apps/desktop/test/casting-provider.test.ts",
-    "sha256": "13e7731dd7dd964aae95cc0deed4536573e33e2763bfb11e9b87532c08a9612e"
+    "sha256": "596d4261ad6d084bf357857ac5d82a6e64cfef2a2e52d9d47fddadd23c408bdc"
   },
   {
     "path": "apps/desktop/test/compact-sides.test.ts",
@@ -2445,7 +2445,7 @@
   },
   {
     "path": "package-lock.json",
-    "sha256": "9d52445fb52c59c6f39d44d065a71b002d73d462f41aaa631437cc20dd5a538f"
+    "sha256": "4ff5cd2741acd1f05ba646e691b60ed8b3bacafde6a2b8bd63c05a5ba88c2bde"
   },
   {
     "path": "package.json",

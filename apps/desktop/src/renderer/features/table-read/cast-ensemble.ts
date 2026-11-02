@@ -99,21 +99,53 @@ export function subjectFromPacket(packet: EvidencePacket, others: readonly strin
   };
 }
 
+/** Accent names for English voice languages, as the cast list and the accent setting show them. */
+export const ACCENT_NAMES: Readonly<Record<string, string>> = {
+  "en-us": "American", "en-gb": "British", "en-au": "Australian", "en-ie": "Irish", "en-in": "Indian",
+  "en-ca": "Canadian", "en-nz": "New Zealand", "en-za": "South African",
+};
+// Words in a character's description that call for a voice of that language, regional accents included.
+const ACCENT_WORDS: Readonly<Record<string, readonly string[]>> = {
+  "en-us": ["american", "southern", "texan", "new yorker", "brooklyn"],
+  "en-gb": ["british", "scottish", "welsh", "cockney", "yorkshire", "scouse", "geordie", "londoner", "northern irish"],
+  "en-au": ["australian", "aussie"], "en-ie": ["irish"], "en-in": ["indian"], "en-ca": ["canadian"],
+  "en-nz": ["new zealand", "kiwi"], "en-za": ["south african"],
+};
+export const accentName = (language: string) => ACCENT_NAMES[language.toLowerCase()] ?? language;
+
+/**
+ * The accent automatic casting prefers: the writer's choice, else the Mac's English region, else American. "any"
+ * turns the preference off, and so does an accent the engine has no voices for.
+ */
+export function castAccent(choice: string, available: readonly string[], locale = typeof navigator === "undefined" ? "" : navigator.language): string | undefined {
+  if (choice === "any") return undefined;
+  const region = locale.toLowerCase();
+  const wanted = choice || (region !== "en-us" && region in ACCENT_NAMES ? region : "en-us");
+  return available.includes(wanted) ? wanted : undefined;
+}
+
 export function voiceInfos(voices: readonly ReadVoice[], engine: string): VoiceInfo[] {
   return voices.map((voice) => {
     const language = voice.language.toLowerCase();
     const tags = [language];
-    if (language === "en-us") tags.push("american");
-    else if (language === "en-gb") tags.push("british");
-    else if (language === "en-au") tags.push("australian");
-    else if (language === "en-ie") tags.push("irish");
-    else if (language === "en-in") tags.push("indian");
-    else if (language === "en-ca") tags.push("canadian");
-    else if (language === "en-nz") tags.push("new zealand");
-    else if (language === "en-za") tags.push("south african");
+    const accent = ACCENT_NAMES[language];
+    if (accent) tags.push(accent.toLowerCase());
     for (const tag of voice.tags ?? []) if (tag === "female" || tag === "male") tags.push(tag);
     return { id: voice.id, engine, name: voice.label, tags };
   });
+}
+
+/**
+ * A voice outside the cast's accent, for a character whose evidence doesn't name that voice's accent. An American
+ * script shouldn't give an American teenager a British voice just because it was free; "a Scottish sailor" still
+ * gets a Scottish one.
+ */
+export function offAccent(subject: CastSubject, voice: VoiceInfo, accent: string | undefined): boolean {
+  const language = voice.tags[0];
+  if (!accent || !language || !/^[a-z]{2}-[a-z]{2}$/.test(language) || language === accent) return false;
+  const words = ACCENT_WORDS[language];
+  // Whole words: "Americana" is not an accent.
+  return !words || !new RegExp(`(?<![\\p{L}])(?:${words.join("|")})(?![\\p{L}])`, "iu").test(subject.evidence);
 }
 
 export interface EnsembleInput {
@@ -125,6 +157,8 @@ export interface EnsembleInput {
   locked?: Readonly<Record<string, string>>;
   /** A role with at least this many speeches is major; the default is relative to the largest role. */
   majorLineCount?: number;
+  /** The cast's accent as a lowercase language ("en-us"); other accents go only to characters the script describes that way. */
+  accent?: string;
 }
 
 const ACCENTS = [
@@ -172,6 +206,7 @@ interface ChoiceContext {
   byId: ReadonlyMap<string, CastSubject>;
   narratorVoice?: string;
   majorLineCount: number;
+  accent?: string;
   /** Skip these voices entirely; used when an engine cannot offer a distinct option. */
   blocked?: ReadonlySet<string>;
 }
@@ -179,6 +214,8 @@ interface ChoiceContext {
 function score(subject: CastSubject, voice: VoiceInfo, context: ChoiceContext): number {
   if (context.blocked?.has(voice.id)) return Number.NEGATIVE_INFINITY;
   let total = fit(subject, voice);
+  // Below a matching gender (+6) and above a voice two characters in one scene would share (-8 to -11).
+  if (offAccent(subject, voice, context.accent)) total -= 10;
   // A voice of the other gender is a last resort, chosen only when nothing else is left.
   if (subject.gender && (voice.tags.includes("female") || voice.tags.includes("male"))) total += voice.tags.includes(subject.gender) ? 6 : -50;
   const major = subject.lineCount >= context.majorLineCount;
@@ -225,7 +262,7 @@ export function assignEnsemble(input: EnsembleInput): Record<string, string> {
   const assigned = new Map<string, string>();
   // A locked role keeps its voice even when automatic casting would never pick it (a novelty voice, say).
   for (const [id, voice] of Object.entries(input.locked ?? {})) if (byId.has(id) && voice) assigned.set(id, voice);
-  const context: ChoiceContext = { voices, assigned, byId, narratorVoice: input.narratorVoice, majorLineCount: majorThreshold(input) };
+  const context: ChoiceContext = { voices, assigned, byId, narratorVoice: input.narratorVoice, majorLineCount: majorThreshold(input), accent: input.accent };
   // Major roles choose first, so a minor role cannot take the voice a lead needed.
   const order = [...input.subjects].sort((a, b) => b.lineCount - a.lineCount || a.id.localeCompare(b.id));
   for (const subject of order) {
@@ -248,7 +285,7 @@ export function recastCharacter(input: EnsembleInput & { current: Readonly<Recor
   const assigned = new Map(Object.entries(input.current).filter(([id, voice]) => id !== characterId && voices.some((v) => v.id === voice)));
   const context: ChoiceContext = {
     voices, assigned, byId: new Map(input.subjects.map((candidate) => [candidate.id, candidate])),
-    narratorVoice: input.narratorVoice, majorLineCount: majorThreshold(input),
+    narratorVoice: input.narratorVoice, majorLineCount: majorThreshold(input), accent: input.accent,
   };
   // "Recast" must actually offer a different voice when one exists, while still staying deterministic.
   const current = result[characterId];
@@ -266,7 +303,7 @@ export function auditionChoices(input: EnsembleInput & { current?: Readonly<Reco
   const assigned = new Map(Object.entries(input.current ?? input.locked ?? {}).filter(([id, voice]) => id !== characterId && voices.some((v) => v.id === voice)));
   const context: ChoiceContext = {
     voices, assigned, byId: new Map(input.subjects.map((candidate) => [candidate.id, candidate])),
-    narratorVoice: input.narratorVoice, majorLineCount: majorThreshold(input),
+    narratorVoice: input.narratorVoice, majorLineCount: majorThreshold(input), accent: input.accent,
   };
   return voices
     .map((voice) => ({ voice, value: score(subject, voice, context) }))

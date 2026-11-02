@@ -9,7 +9,7 @@ import { desktop, messageBox } from "../../core/platform.ts";
 import { AiClientError, runAi, type AiRun } from "../assistant/client.ts";
 import { preferredProvider as castingProvider, providerName as castingLabel } from "../assistant/provider.ts";
 import { AliasList, CastRow } from "./cast-panel.tsx";
-import { assignEnsemble, recastCharacter, subjectFromPacket, voiceInfos } from "./cast-ensemble.ts";
+import { accentName, assignEnsemble, castAccent, recastCharacter, subjectFromPacket, voiceInfos } from "./cast-ensemble.ts";
 import { castable, castForScript, castGenders, CastingProposalError, currentCast, fillCast, mergeAiCast, requestCastProposal, voiceMap, type CastSuggestion, type ModelRequest, type ProposalContext } from "./casting.ts";
 import { ignoreAlias, mergeStoredCharacters, observeCast, readStoredCast, storedCharacter, storedCharacters, writeCast, writeCastState, type StoredCast } from "./cast-store.ts";
 import { browserAudio, browserAudioGroup, browserGap, ReadPlayer } from "./player.ts";
@@ -109,7 +109,10 @@ function ReaderPanel() {
   const stored = useStoredCast(session);
   const { state: current, registry } = useMemo(() => castForScript(script, stored), [script, stored]);
   const genders = useMemo(() => castGenders(script, registry), [script, registry]);
-  const cast = useMemo(() => fillCast(current, engine, selected?.voices ?? [], false, genders), [current, engine, selected, genders]);
+  const [accentChoice, setAccentChoice] = useSetting<string>("tableRead.accent", "");
+  const accents = useMemo(() => [...new Set(castable(selected?.voices ?? []).map((v) => v.language.toLowerCase()).filter((l) => l.startsWith("en")))].sort(), [selected]);
+  const accent = castAccent(accentChoice, accents);
+  const cast = useMemo(() => fillCast(current, engine, selected?.voices ?? [], false, genders, accent), [current, engine, selected, genders, accent]);
   const roles = useMemo(() => readRoles(script, registry.characters), [script, registry]);
   const subjects = useMemo(() => subjectsFor(script, registry), [script, registry]);
   const currentVoicesByCharacter = useMemo(() => Object.fromEntries(cast.cast.map((c) => [c.id, c.voices[engine] ?? ""])), [cast, engine]);
@@ -154,7 +157,7 @@ function ReaderPanel() {
     }
     const original = session;
     const identities = registry.characters.filter((identity) => open.some((binding) => binding.id === identity.id));
-    const context: ProposalContext = { cast: open, inventory: automaticPool(), packets: evidenceCache.build(original.script(), identities).packets };
+    const context: ProposalContext = { accent, cast: open, inventory: automaticPool(), packets: evidenceCache.build(original.script(), identities).packets };
     const ask = async (request: ModelRequest) => {
       if (op !== castingOp) throw new AiClientError("cancelled", "Cancelled.");
       const run = runAi({ provider, tier: "fast", json: true, maxTokens: 3000, system: request.system, messages: request.messages });
@@ -176,7 +179,7 @@ function ReaderPanel() {
     const original = session;
     const installedIds = new Set((selected.voices ?? []).map((v) => v.id));
     const locked = Object.fromEntries(cast.cast.filter((c) => c.locked && installedIds.has(c.voices[engine] ?? "")).map((c) => [c.id, c.voices[engine]!]));
-    const input = { subjects, voices, narratorVoice: cast.narrator[engine], locked };
+    const input = { subjects, voices, narratorVoice: cast.narrator[engine], locked, accent };
     // The script decides gender where it can (descriptions, role words, pronouns, first names); the model is asked
     // only about the roles it leaves open.
     const open = cast.cast.filter((c) => !(c.id in locked) && !subjects.find((s) => s.id === c.id)?.gender);
@@ -207,7 +210,7 @@ function ReaderPanel() {
   const recast = (binding: CastBinding) => {
     if (!selected) return;
     player.stop();
-    const next = recastCharacter({ subjects, voices: automaticVoices(), narratorVoice: cast.narrator[engine], current: currentVoicesByCharacter }, binding.id);
+    const next = recastCharacter({ subjects, voices: automaticVoices(), narratorVoice: cast.narrator[engine], current: currentVoicesByCharacter, accent }, binding.id);
     const voice = next[binding.id];
     if (voice) writeCharacter(binding, { voices: { [engine]: voice } });
   };
@@ -234,7 +237,7 @@ function ReaderPanel() {
       }
       if (!selected?.ready) throw new Error("Load the selected engine before starting.");
       const castSource = castForScript(source, readStoredCast(session.doc));
-      const resolved = fillCast(castSource.state, engine, selected.voices, false, castGenders(source, castSource.registry));
+      const resolved = fillCast(castSource.state, engine, selected.voices, false, castGenders(source, castSource.registry), accent);
       currentEngine = engine; currentVoices = voiceMap(resolved, engine);
       currentPronunciations = structuredClone(session.doc.meta.get(PRONUNCIATION_KEY) ?? []);
       let savedLocation: ReadLocation | null = null;
@@ -330,12 +333,14 @@ function ReaderPanel() {
     </div></details>
     {(error || player.error) && <div className="reader-error" role="alert">{error || player.error}<button className="button" onClick={() => { setError(""); player.stop(); void refresh(); }}>Retry setup</button></div>}
     <div className="reader-cast-head"><h3>Cast <span>{cast.cast.length}</span></h3><button className="button" disabled={controlsDisabled} onClick={() => void assignAll()}>{casting ? `Casting with ${castingLabel(aiProvider)}…` : "Assign distinct voices"}</button></div>
+    {accents.length > 1 && <label className="reader-accent">Accent <select aria-label="Accent for automatic casting" value={accent ?? "any"} disabled={controlsDisabled} onChange={(e) => setAccentChoice(e.target.value)}>
+      {accents.map((language) => <option key={language} value={language}>{accentName(language)}</option>)}<option value="any">Any accent</option></select></label>}
     {casting && <button className="button" onClick={() => { stopCasting(); setCasting(false); }}>Cancel casting</button>}
-    <p className="reader-note">{castNote || `Gender comes from the script: descriptions, role words, pronouns and first names. Where those say nothing, ${castingLabel(aiProvider)} reads the character's scenes. Locks protect your choices from recasting.`}</p>
+    <p className="reader-note">{castNote || `Gender comes from the script: descriptions, role words, pronouns and first names. Where those say nothing, ${castingLabel(aiProvider)} reads the character's scenes.${accent && accents.length > 1 ? ` Voices are ${accentName(accent)} unless the script gives a character another accent.` : ""} Locks protect your choices from recasting.`}</p>
     <AliasList suggestions={registry.suggestions} names={names} ignored={stored.ignoredAliases} disabled={!writable || preparing || casting} onMerge={mergeAlias} onDifferent={differentAlias}/>
-    <div className="reader-cast-row"><strong>Narrator</strong><select aria-label="Narrator voice" value={cast.narrator[engine] ?? ""} disabled={controlsDisabled} onChange={(e) => chooseNarrator(e.target.value)}><option value="">Choose voice</option>{selected?.voices.map((v) => <option key={v.id} value={v.id}>{v.label} · {v.language}</option>)}</select><button className="icon-button" aria-label="Audition narrator" disabled={!canAudition} onClick={() => audition(NARRATOR, "Interior. A quiet kitchen. Someone has left the back door open.")}>▶</button></div>
+    <div className="reader-cast-row"><strong>Narrator</strong><select aria-label="Narrator voice" value={cast.narrator[engine] ?? ""} disabled={controlsDisabled} onChange={(e) => chooseNarrator(e.target.value)}><option value="">Choose voice</option>{selected?.voices.map((v) => <option key={v.id} value={v.id}>{v.label} · {accentName(v.language)}</option>)}</select><button className="icon-button" aria-label="Audition narrator" disabled={!canAudition} onClick={() => audition(NARRATOR, "Interior. A quiet kitchen. Someone has left the back door open.")}>▶</button></div>
     {cast.cast.length > 6 && <input type="search" aria-label="Filter cast" placeholder="Find a character" value={query} onChange={(e) => setQuery(e.target.value)}/>}
-    <div className="reader-cast-list">{visibleCast.map((c) => <CastRow key={c.id} binding={c} engine={engine} voices={selected?.voices ?? []} narratorVoice={cast.narrator[engine] ?? ""}
+    <div className="reader-cast-list">{visibleCast.map((c) => <CastRow key={c.id} binding={c} engine={engine} accent={accent} voices={selected?.voices ?? []} narratorVoice={cast.narrator[engine] ?? ""}
       subjects={subjects} current={currentVoicesByCharacter} shared={(counts.get(c.voices[engine] ?? "") ?? 0) > 1} disabled={controlsDisabled} canAudition={canAudition}
       designDisabled={!writable || preparing || player.active}
       designInstalled={!!status?.models?.some((p) => p.id === "qwen-design" && p.installed)}
