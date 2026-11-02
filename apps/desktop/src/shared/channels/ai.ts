@@ -14,6 +14,7 @@ export const AI_CHANNELS = {
   test: "ai:test",
   models: "ai:models",
   backlot: "ai:backlot",
+  productionData: "ai:production-data",
   pickBacklot: "ai:pick-backlot",
   clearBacklot: "ai:clear-backlot",
   chatgptLogin: "ai:chatgpt-login",
@@ -41,6 +42,7 @@ export type KeyedProvider = (typeof KEYED_PROVIDERS)[number];
 /** Setting names, shared so both sides agree. All live in settings.json except keys. */
 export const AI_SETTINGS = {
   provider: "ai.provider",
+  wholeScript: "ai.assistant.wholeScript",
   ollamaEndpoint: "ai.ollama.endpoint",
   model: (provider: ProviderId) => `ai.model.${provider}`,
   proofreadKind: (kind: string) => `ai.proofread.${kind}`,
@@ -53,10 +55,48 @@ export const DEFAULT_OLLAMA_ENDPOINT = "http://127.0.0.1:11434";
 /** What a request is for: "fast" suits proofreading, "smart" suits answers about the script. */
 export type AiTier = "fast" | "smart";
 
-export interface AiMessage {
-  role: "user" | "assistant";
-  content: string;
+export interface AiTool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
 }
+
+export interface AiToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  /** Continuation data returned by a provider, sent back with this call. */
+  signature?: string;
+  namespace?: string;
+  /** The provider omitted an ID; do not add our local ID to its signed call on replay. */
+  generatedId?: true;
+}
+
+export interface AiReasoning {
+  id: string;
+  encryptedContent: string;
+  summary: { text: string }[];
+}
+
+export interface AiTurn {
+  text: string;
+  toolCalls?: AiToolCall[];
+  reasoning?: AiReasoning[];
+}
+
+export interface AiMessage {
+  role: "user" | "assistant" | "tool";
+  content: string;
+  toolCalls?: AiToolCall[];
+  toolCallId?: string;
+  name?: string;
+  reasoning?: AiReasoning[];
+}
+
+export const MAX_TOOL_CALLS = 8;
+export const MAX_TOOL_ARGUMENT_CHARS = 32_000;
+
+export const supportsTools = (provider: ProviderId): boolean => PROVIDERS.includes(provider);
 
 export interface AiRequest {
   /** Chosen by the renderer so it can listen before the request starts. */
@@ -64,6 +104,7 @@ export interface AiRequest {
   tier: AiTier;
   system: string;
   messages: AiMessage[];
+  tools?: AiTool[];
   /** Ask for a JSON object as the whole answer. */
   json?: boolean;
   maxTokens?: number;
@@ -81,10 +122,10 @@ export interface AiStarted {
 
 export type AiEvent =
   | { id: string; type: "delta"; text: string }
-  | { id: string; type: "done"; text: string }
+  | ({ id: string; type: "done" } & AiTurn)
   | { id: string; type: "error"; message: string; code: AiErrorCode };
 
-export type AiErrorCode = "not-configured" | "unauthorized" | "rate-limited" | "plan-limit" | "unreachable" | "bad-response" | "cancelled" | "failed";
+export type AiErrorCode = "not-configured" | "unauthorized" | "rate-limited" | "plan-limit" | "unreachable" | "bad-response" | "tool-parse" | "cancelled" | "failed";
 
 /** Where ChatGPT shows plan usage. OpenAI's guidelines make it the main action when a plan limit is reached. */
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
@@ -137,3 +178,5 @@ export interface BacklotInfo {
   scenes?: number;
   error?: string;
 }
+
+export type ProductionData = { ok: true; text: string } | { ok: false; error: string };

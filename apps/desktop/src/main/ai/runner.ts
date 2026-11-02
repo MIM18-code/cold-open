@@ -3,14 +3,15 @@
 // so tests can supply fake transports and account state.
 import {
   AI_SETTINGS, type ChatgptStatus, DEFAULT_OLLAMA_ENDPOINT, PROVIDERS, type AiEvent, type AiRequest, type AiStarted, type AiStatus, type AiTestResult,
-  type AiTier, type ProviderId,
+  type AiTier, type ProviderId, type ProductionData,
 } from "../../shared/channels/ai.ts";
 import { readBacklot } from "./backlot.ts";
 import type { DirectProvider } from "./chatgpt-direct.ts";
 import { isKeyedProvider, type KeyStore } from "./keys.ts";
 import {
-  AiError, DEFAULT_MODELS, type FetchLike, listModels, pickOllamaModel, streamChat,
+  AiError, DEFAULT_MODELS, type FetchLike, listModels, pickOllamaModel, streamChat, toolChat,
 } from "./providers.ts";
+import { validateMessages, validateTools } from "./tool-calls.ts";
 
 export interface RunnerDeps {
   setting<T = unknown>(key: string): T | undefined;
@@ -100,9 +101,9 @@ export class AiRunner {
   async start(owner: string, request: AiRequest, emit: (event: AiEvent) => void): Promise<AiStarted> {
     if (!request || typeof request.id !== "string" || !request.id) throw new AiError("failed", "A request needs an ID.");
     if (typeof request.system !== "string") throw new AiError("failed", "A request needs instructions.");
-    const messages = Array.isArray(request.messages) ? request.messages.filter((m) => !!m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string") : [];
-    if (!messages.length || messages[0]!.role !== "user") throw new AiError("failed", "A request needs a first message from the writer.");
-    if (request.system.length + messages.reduce((n, m) => n + m.content.length, 0) > MAX_CHARS) throw new AiError("failed", "That request is too large to send.");
+    const tools = validateTools(request.tools);
+    const messages = validateMessages(request.messages, tools);
+    if (request.system.length + JSON.stringify({ messages, tools }).length > MAX_CHARS) throw new AiError("failed", "That request is too large to send.");
     const key = `${owner}:${request.id}`;
     if (this.active.has(key)) throw new AiError("failed", "That request is already running.");
     const provider = (PROVIDERS as readonly string[]).includes(request.provider ?? "") ? request.provider! : this.provider();
@@ -122,7 +123,7 @@ export class AiRunner {
       let system = request.system;
       if (request.backlot) system += await this.backlotSection();
       if (controller.signal.aborted) throw new AiError("cancelled", "Cancelled.");
-      const chat = { model, tier, system, messages, maxTokens: clampTokens(request.maxTokens), json: !!request.json } as const;
+      const chat = { model, tier, system, messages, maxTokens: clampTokens(request.maxTokens), json: !!request.json, ...(tools ? { tools } : {}) } as const;
       void this.run(key, provider, chat, apiKey, request.id, emit);
       return { id: request.id, provider, model };
     } catch (error) {
@@ -144,6 +145,13 @@ export class AiRunner {
     }
   }
 
+  async productionData(): Promise<ProductionData> {
+    const path = this.deps.setting<string>(AI_SETTINGS.backlotPath);
+    if (!path) return { ok: false, error: "No Backlot project is set." };
+    try { return { ok: true, text: (await readBacklot(path)).text }; }
+    catch { return { ok: false, error: "The Backlot project could not be read." }; }
+  }
+
   private async run(
     key: string, provider: ProviderId, chat: Parameters<typeof streamChat>[1], apiKey: string | undefined, id: string,
     emit: (event: AiEvent) => void,
@@ -151,6 +159,16 @@ export class AiRunner {
     const controller = this.active.get(key)!;
     const onDelta = (text: string) => emit({ id, type: "delta", text });
     try {
+      if (chat.tools?.length) {
+        const direct = provider === "chatgpt" ? this.direct() : undefined;
+        if (direct && !direct.turn) throw new AiError("failed", "ChatGPT tools are unavailable.");
+        const turn = direct
+          ? await direct.turn!(chat, controller.signal)
+          : await toolChat(provider as Exclude<ProviderId, "chatgpt">, chat, { ollamaEndpoint: this.endpoint(), ...(apiKey ? { apiKey } : {}) }, this.deps.fetch, controller.signal);
+        if (controller.signal.aborted) throw new AiError("cancelled", "Cancelled.");
+        emit({ id, type: "done", ...turn });
+        return;
+      }
       const text = provider === "chatgpt"
         ? await this.direct().stream(chat, controller.signal)
         : await streamChat(provider, chat, { ollamaEndpoint: this.endpoint(), ...(apiKey ? { apiKey } : {}) }, this.deps.fetch, controller.signal, onDelta);

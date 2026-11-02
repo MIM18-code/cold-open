@@ -1,7 +1,7 @@
 // The renderer's side of "ai:start": send a request, get text as it streams, cancel. The provider and the key
 // are the main process's business; this only knows the request ID.
 import { CHANNELS } from "../../../shared/api.ts";
-import { AI_CHANNELS, CHATGPT_USAGE_URL, PLAN_LIMIT_MESSAGE, type AiErrorCode, type AiEvent, type AiRequest, type AiStarted } from "../../../shared/channels/ai.ts";
+import { AI_CHANNELS, CHATGPT_USAGE_URL, PLAN_LIMIT_MESSAGE, type AiErrorCode, type AiEvent, type AiRequest, type AiStarted, type AiTurn } from "../../../shared/channels/ai.ts";
 import { desktop, messageBox } from "../../core/platform.ts";
 
 export class AiClientError extends Error {
@@ -35,33 +35,57 @@ function planLimit(code: AiErrorCode | undefined, message: string): void {
     .then((answer) => { if (answer === 0) void desktop.invoke(CHANNELS.openExternal, CHATGPT_USAGE_URL); }, () => undefined);
 }
 
+export interface AiTurnRun {
+  id: string;
+  started: Promise<AiStarted>;
+  done: Promise<AiTurn>;
+  cancel(): void;
+}
+
 export function runAi(request: Omit<AiRequest, "id">, onDelta?: (text: string) => void): AiRun {
+  const run = runAiTurn(request, onDelta);
+  const done = run.done.then((turn) => turn.text);
+  done.catch(() => undefined);
+  return { ...run, done };
+}
+
+export function runAiTurn(request: Omit<AiRequest, "id">, onDelta?: (text: string) => void): AiTurnRun {
   const id = `ai-${Date.now().toString(36)}-${++counter}`;
   let off: () => void = () => undefined;
   let cancelled = false;
-  const done = new Promise<string>((resolve, reject) => {
+  let rejectDone!: (error: AiClientError) => void;
+  const done = new Promise<AiTurn>((resolve, reject) => {
+    rejectDone = reject;
     off = desktop.on(AI_CHANNELS.event, (raw) => {
       const event = raw as AiEvent;
       if (event.id !== id) return;
       if (event.type === "delta") onDelta?.(event.text);
-      else if (event.type === "done") (off(), resolve(event.text));
-      else (off(), planLimit(event.code, event.message), reject(new AiClientError(event.code, event.message)));
+      else if (event.type === "done") {
+        off();
+        resolve({ text: event.text, ...(event.toolCalls ? { toolCalls: event.toolCalls } : {}), ...(event.reasoning ? { reasoning: event.reasoning } : {}) });
+      } else {
+        off();
+        planLimit(event.code, event.message);
+        reject(new AiClientError(event.code, event.message));
+      }
     });
   });
   done.catch(() => undefined);
   const started = desktop.invoke<AiStarted>(AI_CHANNELS.start, { ...request, id });
-  // A request that never starts has no events coming, so its failure ends the run.
-  const result = started.then(() => done, (error) => {
+  void started.then(() => {
+    // Cancel can precede model discovery in main; cancel again once its request is registered.
+    if (cancelled) void desktop.invoke(AI_CHANNELS.cancel, id).catch(() => undefined);
+  }, (error) => {
     off();
     planLimit(undefined, error instanceof Error ? error.message : String(error));
-    throw new AiClientError(cancelled ? "cancelled" : "failed", error instanceof Error ? error.message : String(error));
+    rejectDone(new AiClientError(cancelled ? "cancelled" : "failed", error instanceof Error ? error.message : String(error)));
   });
-  result.catch(() => undefined);
-  started.catch(() => undefined);
   return {
-    id, started, done: result,
+    id, started, done,
     cancel() {
       cancelled = true;
+      off();
+      rejectDone(new AiClientError("cancelled", "Cancelled."));
       void desktop.invoke(AI_CHANNELS.cancel, id).catch(() => undefined);
     },
   };

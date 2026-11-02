@@ -270,6 +270,51 @@ test("Responses request has only supported fields and returns validated JSON aft
   for (const field of ["tools", "tool_choice", "temperature", "max_output_tokens", "max_tokens"]) assert.ok(!(field in body));
 });
 
+test("ChatGPT function tools use a namespace and resend calls, results and encrypted reasoning", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  const tools = [{ name: "read_scene", description: "Read a scene", parameters: { type: "object", properties: { scene: { type: "string" } }, required: ["scene"] } }];
+  const bodies: Record<string, any>[] = [];
+  const reasoning = { type: "reasoning", id: "rs1", encrypted_content: "encrypted", summary: [] };
+  const functionCall = { type: "function_call", call_id: "call1", namespace: "screenplay", name: "read_scene", arguments: '{"scene":"12"}' };
+  const direct = new ChatgptDirect(h.account, async (_url, init) => {
+    const body = JSON.parse(String(init.body)); bodies.push(body);
+    assert.equal(body.store, false); assert.equal(body.stream, true);
+    assert.deepEqual(body.tools, [{ type: "namespace", name: "screenplay", description: "Read the screenplay and propose edits.", tools: [{ type: "function", ...tools[0], strict: false }] }]);
+    for (const field of ["previous_response_id", "temperature", "max_output_tokens", "max_tool_calls", "conversation", "background"]) assert.ok(!(field in body), field);
+    if (bodies.length === 1) return sse({ type: "response.output_item.added", item: { ...functionCall, arguments: "" } },
+      { type: "response.function_call_arguments.delta", delta: '{"scene":' },
+      { type: "response.completed", response: { status: "completed", output: [reasoning, functionCall] } });
+    return sse(delta("Scene 12."), { type: "response.completed", response: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "Scene 12." }] }] } });
+  });
+  const turn = await direct.turn({ ...chat, json: false, tools }, new AbortController().signal);
+  assert.equal(turn.toolCalls![0]!.name, "read_scene");
+  assert.deepEqual(turn.toolCalls![0]!.arguments, { scene: "12" });
+  const final = await direct.turn({ ...chat, json: false, tools, messages: [...chat.messages,
+    { role: "assistant", content: "", toolCalls: turn.toolCalls, reasoning: turn.reasoning },
+    { role: "tool", name: "read_scene", toolCallId: "call1", content: "Scene text" }] }, new AbortController().signal);
+  assert.equal(final.text, "Scene 12.");
+  assert.deepEqual(bodies[1]!.input.slice(-3), [reasoning, functionCall, { type: "function_call_output", call_id: "call1", output: "Scene text" }]);
+  assert.deepEqual(bodies[0]!.include, ["reasoning.encrypted_content"]);
+});
+
+test("ChatGPT validates function names, arguments and batch size before returning tools", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  const tools = [{ name: "list_scenes", description: "List scenes", parameters: { type: "object", properties: {} } }];
+  const valid = { type: "function_call", call_id: "c", name: "list_scenes", arguments: "{}" };
+  for (const output of [[{ ...valid, name: "read_file" }], [{ ...valid, arguments: "{bad" }], [{ ...valid, arguments: "[]" }],
+    [{ ...valid, arguments: JSON.stringify({ text: "x".repeat(32_000) }) }], Array.from({ length: 9 }, (_, index) => ({ ...valid, call_id: String(index) }))]) {
+    const direct = new ChatgptDirect(h.account, async () => sse({ type: "response.completed", response: { status: "completed", output } }));
+    await assert.rejects(direct.turn({ ...chat, tools, json: false }, new AbortController().signal), (error: Error) => "code" in error && error.code === "tool-parse");
+  }
+});
+
+test("ChatGPT never returns tool calls from an incomplete stream", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  const tools = [{ name: "list_scenes", description: "List scenes", parameters: { type: "object", properties: {} } }];
+  const direct = new ChatgptDirect(h.account, async () => sse({ type: "response.output_item.done", item: { type: "function_call", call_id: "c", name: "list_scenes", arguments: "{}" } }));
+  await assert.rejects(direct.turn({ ...chat, tools, json: false }, new AbortController().signal), /before completion/);
+});
+
 test("partial, malformed, failed, incomplete and invalid-JSON streams never produce a usable result", async (t) => {
   const h = await harness(t); await h.account.signIn();
   for (const response of [sse(delta('{}')), sse(delta('{}'), { type: "response.failed", response: { error: { code: "server_error" } } }),
@@ -395,6 +440,46 @@ test("profiles isolate registrations and cancel work when the active account cha
   assert.ok(h.store.read().profiles.find((p) => p.id === second)!.tokens);
   h.account.select(second);
   assert.equal(h.account.status().signedIn, true);
+});
+
+test("status never asks the keychain when nothing is saved, and saving asks once", async () => {
+  // In the app, asking whether encryption is available reads the macOS keychain, and a keychain prompt holds the main process.
+  const folder = mkdtempSync(join(tmpdir(), "ai-keychain-"));
+  let asked = 0;
+  const counting: Cipher = { ...cipher, available: () => (asked++, true) };
+  const keys = new KeyStore(join(folder, "keys"), counting);
+  const account = new ChatgptOAuth({ store: new ChatgptStore(join(folder, "chatgpt.enc"), counting), fetch: async () => json({}), openBrowser: async () => undefined });
+  const runner = new AiRunner({ setting: () => undefined, keys, fetch: async () => json({}), chatgpt: new ChatgptDirect(account, async () => json({})) });
+  const status = await runner.status();
+  assert.equal(asked, 0);
+  assert.equal(status.encryption, true);
+  assert.equal(status.chatgpt.available, true);
+  keys.set("openai", "sk-test");
+  assert.equal(asked, 1);
+  await runner.status();
+  assert.equal(asked, 1);
+  const refused = new KeyStore(join(folder, "refused"), { ...cipher, available: () => false });
+  assert.throws(() => refused.set("openai", "k"), /can't encrypt/);
+  assert.equal(refused.encryption, false, "after a refusal, status reports it");
+});
+
+test("a saved connection the keychain refuses is asked about once, and signing in asks again", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  let asked = 0, allow = false;
+  const refusing: Cipher = { ...cipher, available: () => (asked++, allow) };
+  const account = new ChatgptOAuth({ store: new ChatgptStore(h.file, refusing), fetch: h.transport, openBrowser: h.openBrowser, issuer: h.issuer, listen: h.listen });
+  assert.match(account.status().note ?? "", /cannot unlock/);
+  account.status(); account.status();
+  assert.equal(asked, 1, "status does not ask the keychain again");
+  await assert.rejects(account.signIn(), /cannot encrypt/);
+  assert.match(account.status().note ?? "", /cannot (encrypt|unlock)/, "the refusal reaches the user");
+  const after = asked; account.status();
+  assert.equal(asked, after);
+  allow = true;
+  assert.ok(await account.access(new AbortController().signal), "a request can unlock it");
+  assert.equal(account.status().signedIn, true, "and status follows");
+  await account.signIn();
+  assert.equal(account.status().signedIn, true);
 });
 
 test("encrypted storage is required; an unavailable cipher never opens the browser", async (t) => {
@@ -632,4 +717,92 @@ test("sign-in with the signing keys down asks to try again and saves nothing", a
   await assert.rejects(account.signIn(), /signing keys could not be fetched/);
   assert.equal(account.status().signedIn, false);
   assert.ok(!h.store.read().profiles.some((p) => p.tokens), "no tokens were saved");
+});
+
+test("while a renewed token's identity check runs, other callers wait for it instead of using the token", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  let releaseKeys: (() => void) | undefined;
+  const slowKeys: FetchLike = async (url, init) => {
+    if (String(url).endsWith("/jwks")) await new Promise<void>((resolve) => { releaseKeys = resolve; });
+    return h.transport(url, init);
+  };
+  const account = new ChatgptOAuth({ store: h.store, fetch: slowKeys, openBrowser: h.openBrowser, issuer: h.issuer, listen: h.listen });
+  account.expireAccess();
+  const first = account.accessToken(new AbortController().signal);
+  for (let tries = 0; !releaseKeys && tries < 200; tries++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(releaseKeys, "the identity check is waiting on the keys");
+  assert.equal(h.store.read().profiles[0]!.tokens!.unverified, true, "saved, but marked unverified");
+  let secondDone = false;
+  const second = account.accessToken(new AbortController().signal).finally(() => { secondDone = true; });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(secondDone, false, "the second caller did not take the unverified token");
+  releaseKeys!();
+  assert.deepEqual(await Promise.all([first, second]), ["access-refreshed-secret", "access-refreshed-secret"]);
+  assert.equal(h.store.read().profiles[0]!.tokens!.unverified, undefined);
+});
+
+test("switching accounts mid-renewal lets the renewal settle, so the account left keeps its rotated token", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  await h.account.signIn({ newProfile: true });
+  const [left, other] = h.store.read().profiles;
+  h.account.select(left!.id);
+  let releaseRefresh: (() => void) | undefined;
+  const slow: FetchLike = async (url, init) => {
+    if (new URLSearchParams(String(init?.body ?? "")).get("grant_type") === "refresh_token") await new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    return h.transport(url, init);
+  };
+  const account = new ChatgptOAuth({ store: h.store, fetch: slow, openBrowser: h.openBrowser, issuer: h.issuer, listen: h.listen });
+  account.expireAccess();
+  const renewing = account.accessToken(new AbortController().signal).catch((error: Error) => error);
+  for (let tries = 0; !releaseRefresh && tries < 200; tries++) await new Promise((resolve) => setTimeout(resolve, 5));
+  account.select(other!.id);
+  releaseRefresh!();
+  await renewing;
+  assert.equal(h.store.read().profiles.find((p) => p.id === left!.id)!.tokens!.refresh, "refresh-rotated-secret");
+});
+
+test("a renewal that comes back terminal after an account switch clears only the account it ran for", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  await h.account.signIn({ newProfile: true });
+  const [left, other] = h.store.read().profiles;
+  h.account.select(left!.id);
+  let releaseRefresh: (() => void) | undefined;
+  const slow: FetchLike = async (url, init) => {
+    if (new URLSearchParams(String(init?.body ?? "")).get("grant_type") === "refresh_token") {
+      await new Promise<void>((resolve) => { releaseRefresh = resolve; });
+      return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+    }
+    return h.transport(url, init);
+  };
+  const account = new ChatgptOAuth({ store: h.store, fetch: slow, openBrowser: h.openBrowser, issuer: h.issuer, listen: h.listen });
+  account.expireAccess();
+  const renewing = account.accessToken(new AbortController().signal).catch((error: Error) => error);
+  for (let tries = 0; !releaseRefresh && tries < 200; tries++) await new Promise((resolve) => setTimeout(resolve, 5));
+  account.select(other!.id);
+  releaseRefresh!();
+  await renewing;
+  const saved = h.store.read().profiles;
+  assert.equal(saved.find((p) => p.id === left!.id)!.tokens, undefined, "the account the renewal ran for is cleared");
+  assert.ok(saved.find((p) => p.id === other!.id)!.tokens, "the account switched to keeps its tokens");
+  assert.equal(account.status().signedIn, true);
+});
+
+test("a usage limit or 401 is applied to the account that sent the request, even after a switch", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  await h.account.signIn({ newProfile: true });
+  const [sender, other] = h.store.read().profiles;
+  h.account.select(sender!.id);
+  const sent = await h.account.access(new AbortController().signal);
+  assert.equal(sent.profileId, sender!.id);
+  h.account.select(other!.id);
+  // A switch also cancels requests in flight; these are the calls a response that slipped through would make.
+  h.account.pause(sent.profileId);
+  assert.equal(h.account.expireAccess(sent.profileId, sent.token), true);
+  const saved = h.store.read().profiles;
+  const a = saved.find((p) => p.id === sender!.id)!, b = saved.find((p) => p.id === other!.id)!;
+  assert.equal(a.paused, true); assert.ok(!b.paused, "the account switched to is not paused");
+  assert.equal(a.tokens!.expiresAt, 0); assert.notEqual(b.tokens!.expiresAt, 0, "the account switched to keeps its token");
+  // A token a later renewal already replaced is left alone.
+  assert.equal(h.account.expireAccess(other!.id, "a-token-already-replaced"), true);
+  assert.notEqual(h.store.read().profiles.find((p) => p.id === other!.id)!.tokens!.expiresAt, 0);
 });

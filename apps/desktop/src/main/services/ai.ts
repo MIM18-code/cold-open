@@ -61,6 +61,7 @@ export function register(ctx: ServiceContext): void {
   ctx.handle(AI_CHANNELS.test, (_event, name: unknown) => runner.test(provider(name)));
   ctx.handle(AI_CHANNELS.models, async (_event, name: unknown) => runner.models(provider(name)));
   ctx.handle(AI_CHANNELS.backlot, () => backlotInfo(ctx.settings.get<string>(AI_SETTINGS.backlotPath)));
+  ctx.handle(AI_CHANNELS.productionData, () => runner.productionData());
   ctx.handle(AI_CHANNELS.pickBacklot, async (event) => {
     const window = ctx.windowOf(event.sender);
     const options: Electron.OpenDialogOptions = { title: "Choose a Backlot project", properties: ["openFile"], filters: [{ name: "Backlot project", extensions: ["json"] }] };

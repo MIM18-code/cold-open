@@ -47,12 +47,17 @@ function SuggestionCard({ suggestion }: { suggestion: Suggestion }) {
 
 function Message({ message }: { message: ChatMessage }) {
   if (message.role === "user") return <div className="assistant-message assistant-user">{message.text}</div>;
-  const pieces = splitAnswer(message.text);
+  const pieces = message.toolAnswer ? [{ type: "text" as const, text: message.text }] : splitAnswer(message.text);
+  const steps = message.steps?.map((line, index) => <div key={index}>{line}</div>);
   return (
     <div className="assistant-message assistant-reply">
+      {steps?.length ? message.streaming
+        ? <div className="assistant-steps">{steps}</div>
+        : <details className="assistant-steps"><summary>Script lookup</summary>{steps}</details> : null}
       {pieces.map((piece, i) => piece.type === "text"
         ? <div key={i} className="assistant-text">{piece.text}</div>
         : <SuggestionCard key={i} suggestion={piece.suggestion} />)}
+      {message.proposals?.map((suggestion, index) => <SuggestionCard key={`proposal-${index}`} suggestion={suggestion} />)}
       {message.streaming && !message.text ? <div className="assistant-wait">Thinking</div> : null}
       {message.error ? <div className="assistant-error">{message.error}</div> : null}
       {message.note ? <div className="assistant-note">{message.note}</div> : null}
@@ -102,7 +107,7 @@ export function AssistantPanel() {
       <div className="assistant-actions">
         <button className="button" disabled={current.busy} onClick={() => void current.quick("notes", options)}>Notes on this scene</button>
         <button className="button" disabled={current.busy} onClick={() => void current.quick("summarize", options)}>Summarize scene</button>
-        <button className="button" disabled={current.busy} onClick={() => void current.quick("continuity", options)}>Find continuity issues</button>
+        <button className="button" disabled={current.busy} onClick={() => void current.quick("continuity", options)}>Check continuity across the script</button>
       </div>
       <div className="assistant-log" role="log" aria-live="polite">
         {current.messages.length === 0 ? (

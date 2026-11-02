@@ -1,9 +1,12 @@
 // The assistant conversation: messages, the running request, and sending. One conversation per open document;
 // it is cleared when another document replaces this one. Kept outside React so it survives the panel closing.
-import { AI_CHANNELS, AI_SETTINGS, type AiMessage, type AiStatus } from "../../../shared/channels/ai.ts";
+import { AI_CHANNELS, AI_SETTINGS, type AiMessage, type AiStatus, type ProductionData, supportsTools } from "../../../shared/channels/ai.ts";
 import type { App } from "../../core/app.ts";
 import { desktop } from "../../core/platform.ts";
 import { AiClientError, runAi, type AiRun } from "./client.ts";
+import { readStoredCast } from "../table-read/cast-store.ts";
+import { FALLBACK_NOTE, runAgent } from "./agent.ts";
+import type { Suggestion } from "./suggestions.ts";
 import { QUICK_ACTIONS, assistantSystem, buildScriptContext, selectedText } from "./context.ts";
 
 export interface ChatMessage {
@@ -15,6 +18,9 @@ export interface ChatMessage {
   error?: string;
   /** What the answer was based on, shown under it. */
   note?: string;
+  steps?: string[];
+  proposals?: Suggestion[];
+  toolAnswer?: boolean;
 }
 
 export interface SendOptions {
@@ -27,6 +33,7 @@ export class Chat {
   busy = false;
   version = 0;
   private run: AiRun | null = null;
+  private controller: AbortController | null = null;
   /** Bumped when the conversation is cleared, so an answer still on its way for the old one is dropped. */
   private generation = 0;
   private nextId = 1;
@@ -51,6 +58,8 @@ export class Chat {
 
   clear(): void {
     this.generation++;
+    this.controller?.abort();
+    this.controller = null;
     this.run?.cancel();
     this.run = null;
     this.messages = [];
@@ -59,6 +68,7 @@ export class Chat {
   }
 
   stop(): void {
+    this.controller?.abort();
     this.run?.cancel();
   }
 
@@ -78,6 +88,8 @@ export class Chat {
     const question = text.trim();
     if (!question || this.busy) return;
     const generation = this.generation;
+    const controller = new AbortController();
+    this.controller = controller;
     const history: AiMessage[] = this.messages.filter((m) => !m.error && m.text).map((m) => ({ role: m.role, content: m.text }));
     this.messages = [...this.messages, { id: this.nextId++, role: "user", text: question }];
     const reply: ChatMessage = { id: this.nextId++, role: "assistant", text: "", streaming: true };
@@ -85,6 +97,7 @@ export class Chat {
     this.busy = true;
     this.emit();
     const update = (change: Partial<ChatMessage>) => {
+      if (generation !== this.generation) return;
       Object.assign(reply, change);
       this.messages = [...this.messages];
       this.emit();
@@ -96,20 +109,51 @@ export class Chat {
       const context = buildScriptContext(script, this.app.editor?.currentParagraphId() ?? null, status.active.contextChars);
       const selection = options.selection ? selectionOf(this.app) : "";
       const useBacklot = !!options.backlot && !!this.app.setting<string>(AI_SETTINGS.backlotPath, "");
-      const system = assistantSystem({ context, ...(selection ? { selection } : {}) });
-      this.run = runAi({ tier: "smart", system, messages: [...history, { role: "user", content: question }], maxTokens: 2000, backlot: useBacklot },
-        (delta) => update({ text: reply.text + delta }));
-      const started = await this.run.started;
-      const used = [`${started.model}`, context.truncated ? `${context.included} of ${context.total} scenes sent` : "whole script sent", ...(useBacklot ? ["Backlot data"] : [])];
-      update({ note: used.join(" · ") });
-      const answer = await this.run.done;
-      update({ text: answer, streaming: false });
+      if (controller.signal.aborted) throw new AiClientError("cancelled", "Cancelled.");
+      const messages: AiMessage[] = [...history, { role: "user", content: question }];
+      const fallback = { tier: "smart" as const, provider: status.active.provider,
+        system: assistantSystem({ context, ...(selection ? { selection } : {}) }), messages, maxTokens: 2000, backlot: useBacklot };
+      const contextNote = context.truncated ? `${context.included} of ${context.total} scenes sent` : "whole script sent";
+      let model = "";
+      if (this.app.setting<boolean>(AI_SETTINGS.wholeScript, true) && supportsTools(status.active.provider)) {
+        update({ steps: [], proposals: [], toolAnswer: true });
+        const answer = await runAgent({
+          request: { ...fallback, system: assistantSystem({ context, selection, agent: true }), backlot: false },
+          fallback, signal: controller.signal,
+          resultBudget: Math.min(120_000, Math.max(4000, status.active.contextChars - 12_000)),
+          context: {
+            script: () => this.app.session.script(),
+            identities: () => readStoredCast(this.app.session.doc).characters.map((character) => ({
+              id: character.id, displayName: character.name, aliases: character.aliases, cueIds: character.cueIds?.length ? character.cueIds : [character.id],
+            })),
+            ...(useBacklot ? { productionData: () => desktop.invoke<ProductionData>(AI_CHANNELS.productionData) } : {}),
+          },
+          onStep: (line) => update({ steps: [...reply.steps ?? [], line] }),
+          onProposal: (proposal) => update({ proposals: [...reply.proposals ?? [], proposal] }),
+          onStarted: (started) => { model = started.model; update({ note: `${model} · Script lookup` }); },
+          onDelta: (delta) => update({ text: reply.text + delta }),
+        });
+        update({ text: answer.text, streaming: false, proposals: answer.proposals,
+          toolAnswer: answer.note !== FALLBACK_NOTE,
+          note: [model, ...(answer.note ? [answer.note] : ["Script lookup"]),
+            ...(answer.note === FALLBACK_NOTE ? [contextNote, ...(useBacklot ? ["Backlot data"] : [])] : [])].filter(Boolean).join(" · ") });
+      } else {
+        this.run = runAi(fallback, (delta) => update({ text: reply.text + delta }));
+        const active = this.run;
+        void active.started.then((started) => {
+          if (!controller.signal.aborted) update({ note: [started.model, contextNote, ...(useBacklot ? ["Backlot data"] : [])].join(" · ") });
+        }, () => undefined);
+        const answer = await active.done;
+        if (controller.signal.aborted) throw new AiClientError("cancelled", "Cancelled.");
+        update({ text: answer, streaming: false });
+      }
     } catch (error) {
       const cancelled = error instanceof AiClientError && error.code === "cancelled";
       update({ streaming: false, ...(cancelled ? { note: "Stopped" } : { error: error instanceof Error ? error.message : String(error) }) });
     } finally {
       if (generation === this.generation) {
         this.run = null;
+        this.controller = null;
         this.busy = false;
         this.emit();
       }

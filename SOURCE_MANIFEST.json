@@ -53,7 +53,7 @@
   },
   {
     "path": "apps/desktop/e2e/ai.spec.ts",
-    "sha256": "262b420458967b0e89c54a998c1c906b706a095f7157fd93226856e46f880c86"
+    "sha256": "efb21b193bbc114ba38fd462e50c0bd45813c4129a88f2c826322921bdd12f2c"
   },
   {
     "path": "apps/desktop/e2e/autocomplete.spec.ts",
@@ -144,6 +144,10 @@
     "sha256": "5feda1353350ead9cd996dac606f301c67834511f569313b53fd3d0cbe1055f2"
   },
   {
+    "path": "apps/desktop/e2e/single-instance.spec.ts",
+    "sha256": "b6503e00ee1bf87c4986c293c61f0f8b50afafaee3de65ec25c4e55180b6418a"
+  },
+  {
     "path": "apps/desktop/e2e/smoke.spec.ts",
     "sha256": "5a6d76368489b93a604b3f5e5fd3dbbd1c8842222d365b512dd3dabb6d2b7a12"
   },
@@ -177,7 +181,7 @@
   },
   {
     "path": "apps/desktop/package.json",
-    "sha256": "9d9cc2970e0a7eeefb3ce45d21775af37587a7c2e88c3bb037bbd9702a37d419"
+    "sha256": "cae558d77d4a3eb37e8c0b5ceed7d146a2897657a8e01653e089fdc61e558238"
   },
   {
     "path": "apps/desktop/playwright.config.ts",
@@ -221,31 +225,35 @@
   },
   {
     "path": "apps/desktop/src/main/ai/chatgpt-direct.ts",
-    "sha256": "ddafc720b1b700959e4439b39a6124466f6f8db85699ad016e957b3d7c1ecdf9"
+    "sha256": "f51b3e7fc50434f314ee7b1dce356bc79724ec7282b77bab80d9d9ac69a324c9"
   },
   {
     "path": "apps/desktop/src/main/ai/chatgpt-http.ts",
-    "sha256": "e1bc28673743a6eafe8ee5debd88e1ad4775f8378dee9abd97eda7fdcd8fb012"
+    "sha256": "243275bdc3a5f175c2a3029694e016e47e1ced14da898016a679f35b2fc08098"
   },
   {
     "path": "apps/desktop/src/main/ai/chatgpt-oauth.ts",
-    "sha256": "54096e9c9d6e8cfbb8fa8d3eda3bcf731c76e982d62c54abe98ca30f4b6f4763"
+    "sha256": "97b2d374ed3d6d77db40a95d7722218346b6305dfd84c3735f92ba2d4c80d274"
   },
   {
     "path": "apps/desktop/src/main/ai/keys.ts",
-    "sha256": "6f1dd8bfcdd0a243140d3ea780f3b96006b61f5ef4965bd3ed30a59c4cc2964a"
+    "sha256": "86b4aede4279fbff0b8eb0c8d9b767b39d9746050e50d41a030acc808681c428"
   },
   {
     "path": "apps/desktop/src/main/ai/providers.ts",
-    "sha256": "688e6af6805607783648bfd55b085e69cb1f16cdd54c6798c708bef90fb643a0"
+    "sha256": "724b6ca2bba614d32c2cbd02c25904b64cde8d086207a8eddd61c1a72b519c20"
   },
   {
     "path": "apps/desktop/src/main/ai/runner.ts",
-    "sha256": "5d448de91075fbc16a3284bb2f8f8b20f0076c017af9aff1e1af77961e844365"
+    "sha256": "7b34815047284225306e90f3b1065a9c16a8eb4d45876a4fc4120219889fc611"
   },
   {
     "path": "apps/desktop/src/main/ai/stream.ts",
     "sha256": "3b222f50925dd3cf7c58b36d389fe799aca3e7b4b24651ee5af309810ed5c1ed"
+  },
+  {
+    "path": "apps/desktop/src/main/ai/tool-calls.ts",
+    "sha256": "11feda534079f8b52a256f89c21b201e5f8cf5c72e6e346749b7a285e86df59f"
   },
   {
     "path": "apps/desktop/src/main/backlot/client.ts",
@@ -289,7 +297,7 @@
   },
   {
     "path": "apps/desktop/src/main/index.ts",
-    "sha256": "b1a7bf5052a88307cd99be460d6dc8ab3150a26401d8cb3b6b82edf719bd55af"
+    "sha256": "2ca1ae7f96b608dcd1a7dcb184ff0b60e173c7dcb6e06ab21d7c84f5443118e8"
   },
   {
     "path": "apps/desktop/src/main/models/ollama.ts",
@@ -369,7 +377,7 @@
   },
   {
     "path": "apps/desktop/src/main/services/ai.ts",
-    "sha256": "37ad5480513b4221beab59faad9b3cb20a792216d978731ad922c02b9c3b78fa"
+    "sha256": "07a3f9f62bbf6914d39c20cde8ecff9955ea755120e37c6907979a238b6da683"
   },
   {
     "path": "apps/desktop/src/main/services/backlot.ts",
@@ -557,15 +565,19 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/Panel.tsx",
-    "sha256": "136349c9781caaf6b73de8221f49d47f9e9af77d9134dfdc8103369b624fed66"
+    "sha256": "97713ec2eb4966b37c6b6ffd5df9e26fbf094b80de189961e8b57265ef595935"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/Settings.tsx",
-    "sha256": "2ae97b96671f11438e12c9599d86937068005f8cb7f785ce822f5d598cf7bdb8"
+    "sha256": "cb0468e52c6ec7184577d2dba8e0384deca06e793c8108c1e54d17426763c46a"
+  },
+  {
+    "path": "apps/desktop/src/renderer/features/assistant/agent.ts",
+    "sha256": "0061ece9d085b188621ccb3aa24ecc692129e4a66f8454e5bb737e28436862e1"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/assistant.css",
-    "sha256": "f58888c9a3c3711726a55cb12f3e4d98ae4f8c72c3fa553cfc8729446d1a66bb"
+    "sha256": "e75517c782cf9adffb3c5e4ea7a492902c8879d0eeb8a69810864f3906566b61"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/brand/README.md",
@@ -581,15 +593,15 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/chat.ts",
-    "sha256": "d604b27e5ef0be3c275f2c49f7e45a9c8e5042143fddffc6468adfd354965f9f"
+    "sha256": "70c48d69117be75d07f0b03ea1a2e65cf11d48451d4560d3b36c04d187af6dd2"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/client.ts",
-    "sha256": "99b9ba312118eb65afff9839b362332615092eef1f443a57149a9b4641bb8420"
+    "sha256": "b0575a811e78199841662b03176522bd358103cec16dfebaefb6875eb43029e7"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/context.ts",
-    "sha256": "5a08a248d90a3beb43efe93bd5bd30af017a496153aae1268bff089cfdd0580a"
+    "sha256": "f178195dcb5521dc898ed540627ba24f4b2483a12cfb79d8cecdf5a844beaf31"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/index.tsx",
@@ -601,7 +613,11 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/suggestions.ts",
-    "sha256": "981c8cb6577568b8edc372b7f8c6e89491d1484816b38310cb215c229fa8bb62"
+    "sha256": "b655f8cdb26eea5c535d0e888eb84aedbb1c2ebab58338424a1eab79554c1cbe"
+  },
+  {
+    "path": "apps/desktop/src/renderer/features/assistant/tools.ts",
+    "sha256": "6ec5dc1dfa8c4599ef8add82d3bce7c26efc8eea14238fd1d9d6590b14cae860"
   },
   {
     "path": "apps/desktop/src/renderer/features/autocomplete/complete.ts",
@@ -1257,7 +1273,7 @@
   },
   {
     "path": "apps/desktop/src/shared/channels/ai.ts",
-    "sha256": "8b1827d4a9825192beddcc6d9263aafdbd49508630c7a549a70b94d5c991a7ef"
+    "sha256": "013793899772a5c65e8eb9a87a4ee61000cf9b08407f1974ddf33c87d7cb40d2"
   },
   {
     "path": "apps/desktop/src/shared/channels/backlot.ts",
@@ -1296,12 +1312,20 @@
     "sha256": "70d7d93d23d82d709b16aba432d10ca3a9239caa9567c5cd353a4170c4ad0c03"
   },
   {
+    "path": "apps/desktop/test/ai-agent-chat.test.ts",
+    "sha256": "f99ef253ebd0937d7d5738e5d49b94c11ccad86a4e0c28c0e1f0cc76087743ac"
+  },
+  {
+    "path": "apps/desktop/test/ai-agent.test.ts",
+    "sha256": "0c2d2b7d726cdeb96d0969c63095ecc2434edc70c6904b14acb6aff21d4bda0a"
+  },
+  {
     "path": "apps/desktop/test/ai-assistant.test.ts",
     "sha256": "7b783f22d1e6a21dde56fa855030f04f60f7ff4fa6f520811d5355938f817fd2"
   },
   {
     "path": "apps/desktop/test/ai-chatgpt.test.ts",
-    "sha256": "7a7d8ba27d47c5c3a2fa427e17443d129db65c7f9421fa6a68a92e77701a79bc"
+    "sha256": "26365ca7261427b54a05d4a8460720d27d2ec3c2cec6804aceee55a74289b738"
   },
   {
     "path": "apps/desktop/test/ai-live.test.ts",
@@ -1317,7 +1341,15 @@
   },
   {
     "path": "apps/desktop/test/ai-runner.test.ts",
-    "sha256": "8d7a2d5024e1d0006761c387fe6bee24b683f83cb13eac2d7617ef7c88bb6fdc"
+    "sha256": "cfc7313fe1e02dc4ea54b3ed35938f21ff05a3a3c5a5faade8683bd7f122b2d5"
+  },
+  {
+    "path": "apps/desktop/test/ai-tool-providers.test.ts",
+    "sha256": "37e1b2d79de5cfc536ec239a2edb5302f5adb1093c89eedb3996d7740792212b"
+  },
+  {
+    "path": "apps/desktop/test/ai-tools.test.ts",
+    "sha256": "966b63c2d765bc556b14b020bff0c48265d6f46891cb453b4cb3e883edaa5599"
   },
   {
     "path": "apps/desktop/test/autocomplete.test.ts",
@@ -2397,7 +2429,7 @@
   },
   {
     "path": "package-lock.json",
-    "sha256": "1aca8782c2fdf8a27ed3f593dadb1f4252d330f65a83bf55ad20f0943807b0cf"
+    "sha256": "0479f2bc918ff62e03db272495f9e8c30484ac9e13e9b4371ab1f169041a1e11"
   },
   {
     "path": "package.json",

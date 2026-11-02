@@ -1,7 +1,8 @@
-import { PLAN_LIMIT_MESSAGE, type ChatgptStatus } from "../../shared/channels/ai.ts";
+import { PLAN_LIMIT_MESSAGE, type AiTurn, type ChatgptStatus } from "../../shared/channels/ai.ts";
 import { boundedChunks, boundedJson, connectionError, diagnosticCode, diagnosticText, object, request, requestIdOf } from "./chatgpt-http.ts";
 import type { ChatgptOAuth } from "./chatgpt-oauth.ts";
 import { AiError, type ChatRequest, type FetchLike } from "./providers.ts";
+import { readResponseTurn, responseInput, responseTools } from "./tool-calls.ts";
 
 export interface ChatgptModel { id: string; label: string }
 export interface DirectProvider {
@@ -9,12 +10,13 @@ export interface DirectProvider {
   status(): ChatgptStatus;
   models(signal: AbortSignal): Promise<ChatgptModel[]>;
   stream(chat: ChatRequest, signal: AbortSignal): Promise<string>;
+  turn?(chat: ChatRequest, signal: AbortSignal): Promise<AiTurn>;
 }
 
 const API = "https://api.openai.com/v1";
 const LIMIT_CODE = "subscription_sharing_usage_limit_exceeded";
 
-/** No agent runtime, tools, API-key fallback, or automatic inference retries. */
+/** Direct plan usage, without hosted tools or an API-key fallback. */
 export class ChatgptDirect implements DirectProvider {
   private active = 0;
   private readonly account: ChatgptOAuth;
@@ -38,20 +40,21 @@ export class ChatgptDirect implements DirectProvider {
     return new AiError(error.code, this.account.redact(error.message, bearer));
   }
 
-  private failure(status: number, raw: Record<string, unknown>, requestId?: string | null): AiError {
+  /** `sender` is the account and token the request went out with; a response can arrive after an account switch. */
+  private failure(status: number, raw: Record<string, unknown>, requestId: string | null, sender: { token: string; profileId: string }): AiError {
     const error = object(raw.error);
     // Status, OpenAI's own code (or an admission "detail"), and the request ID, so a report can be traced.
     const code = diagnosticCode(error.code) || diagnosticText(raw.detail);
     const diagnostics = [status ? `HTTP ${status}` : "", code, requestId ? `request ID ${requestId}` : ""].filter(Boolean).join(", ");
     const tail = diagnostics ? ` (${diagnostics})` : "";
     if (error.code === LIMIT_CODE) {
-      this.account.pause();
+      this.account.pause(sender.profileId);
       return new AiError("plan-limit", `${PLAN_LIMIT_MESSAGE}${tail}. ChatGPT requests are paused. Review your plan or this app's limit in ChatGPT settings, then resume in Settings > AI.`);
     }
     if (status === 401) {
       // Renew once: the next request refreshes first. A 401 right after a renewal is not retried again, because a
       // fresh token that is still refused points at the account or its permission, not at an old token.
-      if (this.account.expireAccess()) {
+      if (this.account.expireAccess(sender.profileId, sender.token)) {
         return new AiError("unauthorized", `ChatGPT did not accept the access token${tail}. Try again: Cold Open renews access first.`);
       }
       return new AiError("unauthorized", `ChatGPT still refuses this account${tail}. Check its plan permission in ChatGPT, or sign out and continue with ChatGPT again.`);
@@ -74,12 +77,12 @@ export class ChatgptDirect implements DirectProvider {
   async models(caller: AbortSignal): Promise<ChatgptModel[]> {
     const signal = AbortSignal.any([caller, this.account.signal, AbortSignal.timeout(10_000)]);
     try {
-      const token = await this.account.accessToken(signal);
+      const sender = await this.account.access(signal), token = sender.token;
       signal.throwIfAborted();
       const response = await request(this.fetchFn, `${API}/models`, { method: "GET", headers: { authorization: `Bearer ${token}` } }, signal);
       const data = await boundedJson(response, signal);
       signal.throwIfAborted();
-      if (!response.ok) throw this.redacted(this.failure(response.status, data, requestIdOf(response)), token);
+      if (!response.ok) throw this.redacted(this.failure(response.status, data, requestIdOf(response), sender), token);
       if (!Array.isArray(data.models)) throw new AiError("bad-response", "ChatGPT returned no model catalog.");
       return data.models.map(object).filter((m) => m.visibility === "list" && typeof m.slug === "string" && typeof m.display_name === "string")
         .map((m) => ({ id: m.slug as string, label: m.display_name as string }));
@@ -87,24 +90,31 @@ export class ChatgptDirect implements DirectProvider {
   }
 
   async stream(chat: ChatRequest, caller: AbortSignal): Promise<string> {
+    return (await this.turn(chat, caller)).text;
+  }
+
+  async turn(chat: ChatRequest, caller: AbortSignal): Promise<AiTurn> {
     if (this.active >= 2) throw new AiError("rate-limited", "Two ChatGPT requests are already running. Wait for one to finish.");
     const body = JSON.stringify({ model: chat.model, store: false, stream: true,
-      input: [{ role: "developer", content: chat.system + (chat.json ? "\nReturn one valid JSON object." : "") }, ...chat.messages] });
+      input: [{ role: "developer", content: chat.system + (chat.json ? "\nReturn one valid JSON object." : "") }, ...responseInput(chat.messages)],
+      ...(chat.tools?.length ? { tools: [{ type: "namespace", name: "screenplay", description: "Read the screenplay and propose edits.", tools: responseTools(chat.tools) }],
+        include: ["reasoning.encrypted_content"] } : {}) });
     if (Buffer.byteLength(body) > 400_000) throw new AiError("failed", "That ChatGPT request is too large. Send a smaller passage.");
     const signal = AbortSignal.any([caller, this.account.signal, AbortSignal.timeout(this.timeoutMs)]);
     this.active++;
     try {
-      const token = await this.account.accessToken(signal);
+      const sender = await this.account.access(signal), token = sender.token;
       signal.throwIfAborted();
       const response = await request(this.fetchFn, `${API}/responses`, { method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body }, signal);
       if (!response.ok) {
         const data = await boundedJson(response, signal);
         signal.throwIfAborted();
-        throw this.redacted(this.failure(response.status, data, requestIdOf(response)), token);
+        throw this.redacted(this.failure(response.status, data, requestIdOf(response), sender), token);
       }
       if (!response.body) throw new AiError("bad-response", "ChatGPT returned no response stream.");
       let buffer = "", text = "", completed = false;
+      let turn: AiTurn | undefined;
       const decoder = new TextDecoder();
       for await (const chunk of boundedChunks(response.body, signal, 2 * 1024 * 1024)) {
         buffer += decoder.decode(chunk, { stream: true });
@@ -121,7 +131,7 @@ export class ChatgptDirect implements DirectProvider {
           if (event.type === "response.failed" || event.type === "response.incomplete" || event.type === "error") {
             signal.throwIfAborted();
             const failure = object(event.response);
-            throw this.redacted(this.failure(response.status, event.type === "error" ? { error: event.error ?? event } : failure, requestIdOf(response)), token);
+            throw this.redacted(this.failure(response.status, event.type === "error" ? { error: event.error ?? event } : failure, requestIdOf(response), sender), token);
           }
           if (event.type === "response.output_text.delta" && typeof event.delta === "string") text += event.delta;
           if (event.type === "response.completed") {
@@ -129,6 +139,7 @@ export class ChatgptDirect implements DirectProvider {
             if (terminal.status !== undefined && terminal.status !== "completed") {
               throw new AiError("bad-response", "ChatGPT did not finish the answer.");
             }
+            if (chat.tools?.length) turn = readResponseTurn(terminal, chat.tools);
             completed = true;
             break;
           }
@@ -137,6 +148,10 @@ export class ChatgptDirect implements DirectProvider {
       }
       signal.throwIfAborted();
       if (!completed) throw new AiError("bad-response", "ChatGPT stream ended before completion. No result was used.");
+      if (turn) {
+        this.account.accessWorked(sender.profileId);
+        return turn;
+      }
       if (!text.trim()) throw new AiError("bad-response", "ChatGPT completed without an answer.");
       if (chat.json) {
         let value: unknown;
@@ -146,8 +161,8 @@ export class ChatgptDirect implements DirectProvider {
           throw new AiError("bad-response", "ChatGPT did not return a JSON object.");
         }
       }
-      this.account.accessWorked();
-      return text;
+      this.account.accessWorked(sender.profileId);
+      return { text };
     } catch (error) { throw connectionError(signal, error); }
     finally { this.active--; }
   }

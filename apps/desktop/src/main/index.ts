@@ -26,6 +26,10 @@ import { WINDOW_MEMORY_KEY, WorkspaceMemory, windowMemories, visibleBounds, type
 
 app.setName("Cold Open");
 useLegacyUserData();
+// One running copy per profile. A second launch (`open -n`, or a double-click while the app is starting) hands its
+// files to the first and exits, so two processes never renew the same ChatGPT sign-in or write the same settings.
+// A separate --user-data-dir, as the tests use, gets its own lock and still runs side by side.
+if (!app.requestSingleInstanceLock()) process.exit(0);
 // End-to-end tests run hidden: no Dock icon, and no native dialog may attach to (and show) a hidden window.
 const e2e = !!process.env.SCREENPLAY_E2E;
 const devUrl = process.env.SCREENPLAY_DEV_URL;
@@ -362,6 +366,19 @@ app.on("open-file", (event, path) => {
   ctx.allowPath(path);
   if (app.isReady()) openInBestWindow(path);
   else pendingOpen.push(path);
+});
+
+app.on("second-instance", (_event, argv, workingDirectory) => {
+  const args = argv.slice(1).filter((arg) => !arg.startsWith("-")).map((arg) => resolve(workingDirectory, arg));
+  const documents = args.filter(isDocumentPath), takes = args.filter(isTakesPath);
+  for (const path of documents) { ctx.allowPath(path); openInBestWindow(path); }
+  for (const path of takes) openTakes(path);
+  // Bring the app forward either way: the window that took the file, or the one the writer was last in.
+  const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  if (!window) { if (!documents.length && !takes.length) createWindow(); return; }
+  if (window.isMinimized()) window.restore();
+  if (!e2e) window.show();
+  window.focus();
 });
 
 app.whenReady().then(() => {

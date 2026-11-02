@@ -27,10 +27,10 @@ export async function* boundedChunks(body: ReadableStream<Uint8Array>, signal: A
   }
 }
 
-export async function boundedJson(response: Response, signal: AbortSignal): Promise<Record<string, unknown>> {
+export async function boundedJson(response: Response, signal: AbortSignal, limit = 512 * 1024): Promise<Record<string, unknown>> {
   if (!response.body) throw new AiError("bad-response", "ChatGPT returned no data.");
   const parts: Uint8Array[] = [];
-  for await (const part of boundedChunks(response.body, signal, 512 * 1024)) parts.push(part);
+  for await (const part of boundedChunks(response.body, signal, limit)) parts.push(part);
   try {
     return object(JSON.parse(Buffer.concat(parts).toString("utf8")));
   } catch {

@@ -23,6 +23,8 @@ interface Tokens {
   refresh?: string;
   scopes: string[];
   expiresAt: number;
+  /** Saved before its ID token was checked; nothing uses the access token until the check passes. */
+  unverified?: boolean;
 }
 interface Profile {
   id: string;
@@ -47,9 +49,12 @@ interface SavedState {
 export class ChatgptStore {
   private readonly file: string;
   private readonly cipher: Cipher;
+  private usable: boolean | undefined;
   constructor(file: string, cipher: Cipher) { this.file = file; this.cipher = cipher; }
 
-  get available(): boolean { return this.cipher.available(); }
+  /** For status checks: the last answer, without asking the keychain again. */
+  get available(): boolean { return this.usable ?? true; }
+  canEncrypt(): boolean { return (this.usable = this.cipher.available()); }
 
   read(): SavedState {
     let encrypted: Buffer;
@@ -58,7 +63,7 @@ export class ChatgptStore {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { hostId: `urn:uuid:${randomUUID()}`, profiles: [] };
       throw new AiError("not-configured", "The saved ChatGPT connection could not be read.");
     }
-    if (!this.available) throw new AiError("not-configured", "This Mac cannot unlock the saved ChatGPT connection.");
+    if (!this.canEncrypt()) throw new AiError("not-configured", "This Mac cannot unlock the saved ChatGPT connection.");
     try {
       const state = JSON.parse(this.cipher.decrypt(encrypted)) as SavedState;
       if (!state.hostId?.startsWith("urn:uuid:") || !Array.isArray(state.profiles)) throw new Error();
@@ -67,7 +72,7 @@ export class ChatgptStore {
   }
 
   write(state: SavedState): void {
-    if (!this.available) throw new AiError("not-configured", "This Mac cannot encrypt ChatGPT credentials.");
+    if (!this.canEncrypt()) throw new AiError("not-configured", "This Mac cannot encrypt ChatGPT credentials.");
     mkdirSync(dirname(this.file), { recursive: true });
     const temp = `${this.file}.tmp`;
     writeFileSync(temp, this.cipher.encrypt(JSON.stringify(state)), { mode: 0o600 });
@@ -172,6 +177,8 @@ interface OAuthDeps {
 
 export class ChatgptOAuth {
   private state: SavedState | undefined;
+  /** Why a saved connection could not be unlocked. Status reports it instead of asking the keychain again; signing in or out retries. */
+  private locked: string | undefined;
   private pending: AbortController | undefined;
   private refreshing: { profile: Profile; promise: Promise<string> } | undefined;
   private session = new AbortController();
@@ -190,7 +197,7 @@ export class ChatgptOAuth {
     this.now = deps.now ?? Date.now;
   }
 
-  private saved(): SavedState { return this.state ??= this.deps.store.read(); }
+  private saved(): SavedState { this.state ??= this.deps.store.read(); this.locked = undefined; return this.state; }
   private active(): Profile | undefined { const saved = this.saved(); return saved.profiles.find((p) => p.id === saved.active); }
   private save(): void { this.deps.store.write(this.saved()); }
   private endRequests(): void {
@@ -200,6 +207,7 @@ export class ChatgptOAuth {
   get signal(): AbortSignal { return this.session.signal; }
 
   status(): ChatgptStatus {
+    if (this.locked) return { available: this.deps.store.available, signedIn: false, pending: !!this.pending, note: this.locked };
     try {
       const saved = this.saved(), profile = this.active();
       const signedIn = !!profile?.tokens;
@@ -214,7 +222,8 @@ export class ChatgptOAuth {
           : !signedIn ? "Continue with ChatGPT to connect an eligible plan." : undefined),
       };
     } catch (error) {
-      return { available: false, signedIn: false, pending: false, note: error instanceof Error ? error.message : "Could not unlock ChatGPT." };
+      this.locked = error instanceof Error ? error.message : "Could not unlock ChatGPT.";
+      return { available: this.deps.store.available, signedIn: false, pending: !!this.pending, note: this.locked };
     }
   }
 
@@ -278,8 +287,11 @@ export class ChatgptOAuth {
   /** Resolves only after identity validation. IPC starts this in the background and returns status alone. */
   async signIn(options: { profileId?: string; newProfile?: boolean; consent?: boolean } = {}): Promise<void> {
     if (this.pending || this.signingOut) throw new AiError("failed", "A ChatGPT account operation is already running.");
-    if (!this.deps.store.available) throw new AiError("not-configured", "This Mac cannot encrypt ChatGPT credentials.");
-    const saved = this.saved();
+    // IPC starts sign-in in the background, so a failure before the browser opens reaches the user only through status.
+    this.locked = undefined;
+    if (!this.deps.store.canEncrypt()) throw new AiError("not-configured", this.note = "This Mac cannot encrypt ChatGPT credentials.");
+    let saved: SavedState;
+    try { saved = this.saved(); } catch (error) { this.locked = error instanceof Error ? error.message : "Could not unlock ChatGPT."; throw error; }
     // A registration whose code exchange failed is reused for the next attempt instead of registering again.
     const retry = saved.profiles.find((p) => p.id === saved.retry && !p.tokens);
     const existing = options.profileId ? saved.profiles.find((p) => p.id === options.profileId)
@@ -351,17 +363,24 @@ export class ChatgptOAuth {
   select(profileId: string): void {
     if (this.pending || this.signingOut) throw new AiError("failed", "Finish the current ChatGPT account operation first.");
     if (!this.saved().profiles.some((p) => p.id === profileId)) throw new AiError("failed", "Unknown ChatGPT connection.");
-    this.endRequests(); this.saved().active = profileId; this.note = undefined; this.save();
+    // Inference stops at once; a renewal already on the wire settles, since OpenAI may have rotated its refresh token.
+    this.session.abort(); this.session = new AbortController();
+    this.saved().active = profileId; this.note = undefined; this.save();
   }
 
-  pause(): void { const profile = this.active(); if (profile) { profile.paused = true; this.save(); } }
+  /** The account a request was sent for, by id, or the active one. A response can arrive after a switch. */
+  private profile(id?: string): Profile | undefined { return id ? this.saved().profiles.find((p) => p.id === id) : this.active(); }
+
+  pause(profileId?: string): void { const profile = this.profile(profileId); if (profile) { profile.paused = true; this.save(); } }
   resume(): void { const profile = this.active(); if (profile) { profile.paused = false; this.note = undefined; this.save(); } }
   /**
    * Mark the access token used up so the next request renews it; the refresh result decides what happens next.
    * Without a refresh token there is nothing to renew with, so the token is left as it is (false).
    */
-  expireAccess(): boolean {
-    const profile = this.active(), tokens = profile?.tokens;
+  expireAccess(profileId?: string, refusedToken?: string): boolean {
+    const profile = this.profile(profileId), tokens = profile?.tokens;
+    // A renewal already replaced the refused token: the next request uses the new one, so leave it be.
+    if (refusedToken && tokens?.access && tokens.access !== refusedToken) return true;
     // Once per account until a request succeeds: a fresh token that is still refused is not renewed again.
     if (!profile || !tokens?.refresh || this.renewedAfter401.has(profile.id)) return false;
     this.renewedAfter401.add(profile.id);
@@ -380,23 +399,34 @@ export class ChatgptOAuth {
   }
 
   /** A request on the active account succeeded, so a later 401 may renew again. */
-  accessWorked(): void { const profile = this.active(); if (profile) this.renewedAfter401.delete(profile.id); }
+  accessWorked(profileId?: string): void { const profile = this.profile(profileId); if (profile) this.renewedAfter401.delete(profile.id); }
 
-  invalidate(): void {
-    const profile = this.active();
+  /**
+   * Clear one account's tokens: the active one by default, or the account a renewal ran for. A renewal can finish
+   * after the writer switched accounts, and must not clear the account switched to.
+   */
+  invalidate(profile = this.active()): void {
     if (profile) { delete profile.tokens; this.save(); }
+    if (profile && profile !== this.active()) return;
     this.note = "ChatGPT credentials expired or were revoked. Continue with ChatGPT to sign in again.";
     this.endRequests();
   }
 
   async accessToken(signal: AbortSignal): Promise<string> {
+    return (await this.access(signal)).token;
+  }
+
+  /** The access token and the account it belongs to, so a response is applied to the account that sent it. */
+  async access(signal: AbortSignal): Promise<{ token: string; profileId: string }> {
     signal.throwIfAborted();
     // OpenAI: stop requests before revoking. Nothing new uses or renews the tokens while sign-out runs.
     if (this.signingOut) throw new AiError("cancelled", "Signing out of ChatGPT.");
     const profile = this.active(), tokens = profile?.tokens;
     if (profile?.paused) throw new AiError("plan-limit", `${PLAN_LIMIT_MESSAGE}. ChatGPT requests are paused. Check usage, then resume in Settings > AI.`);
     if (!tokens?.access || !tokens.scopes.includes(DIRECT_SCOPE)) throw new AiError("not-configured", "Enable ChatGPT plan usage in Settings > AI.");
-    if (tokens.expiresAt > this.now() + 60_000) return tokens.access;
+    // An unverified set (its identity check still running, or cut off by a crash) is not handed out: callers join
+    // the renewal, or start one that ends verified.
+    if (tokens.expiresAt > this.now() + 60_000 && !tokens.unverified) return { token: tokens.access, profileId: profile!.id };
     if (!tokens.refresh) { this.invalidate(); throw new AiError("unauthorized", "ChatGPT credentials expired. Sign in again."); }
     // One rotating refresh per account. A cancelled caller does not cancel another caller's renewal.
     const refreshSignal = AbortSignal.any([this.renewal.signal, AbortSignal.timeout(15_000)]);
@@ -408,7 +438,7 @@ export class ChatgptOAuth {
     }
     const result = await untilAborted(this.refreshing!.promise, signal);
     signal.throwIfAborted();
-    return result;
+    return { token: result, profileId: profile!.id };
   }
 
   private async refresh(profile: Profile, signal: AbortSignal): Promise<string> {
@@ -427,7 +457,7 @@ export class ChatgptOAuth {
         const rid = requestIdOf(response), trace = rid ? `, request ID ${rid}` : "";
         // OpenAI lists these as unusable tokens: clear them and repeat OAuth with the saved client.
         if (TERMINAL_REFRESH.has(code)) {
-          this.invalidate();
+          this.invalidate(profile);
           throw new AiError("unauthorized", this.redact(`ChatGPT credentials expired or were revoked (HTTP ${response.status}, ${code}${trace}). Continue with ChatGPT to sign in again.`, previous.access, previous.refresh, previous.id));
         }
         // A client problem is not a token problem; the tokens stay until a new sign-in replaces them.
@@ -440,10 +470,11 @@ export class ChatgptOAuth {
       // Saved the moment the answer arrives, before any further check or wait: OpenAI has already rotated the refresh
       // token, so losing this response to a timeout or a key outage would strand the account. Saved even during
       // sign-out, because a rotated refresh token is exactly what sign-out then has to revoke.
-      profile.tokens = tokens;
+      const pending = typeof data.id_token === "string";
+      profile.tokens = pending ? { ...tokens, unverified: true } : tokens;
       this.save();
       if (!tokens.access || !tokens.scopes.includes(DIRECT_SCOPE)) {
-        this.invalidate();
+        this.invalidate(profile);
         throw new AiError("unauthorized", "ChatGPT plan permission changed. Sign in again.");
       }
       if (typeof data.id_token === "string") {
@@ -455,10 +486,11 @@ export class ChatgptOAuth {
           // verification, or a different account, still ends the session (the catch below invalidates).
           if (!(error instanceof AiError && error.code === "unreachable")) throw error;
         }
+        if (profile.tokens?.unverified) { delete profile.tokens.unverified; this.save(); }
       }
       return tokens.access;
     } catch (error) {
-      if (!signal.aborted && error instanceof AiError && error.code === "unauthorized") this.invalidate();
+      if (!signal.aborted && error instanceof AiError && error.code === "unauthorized") this.invalidate(profile);
       throw connectionError(signal, error);
     }
   }
@@ -471,6 +503,7 @@ export class ChatgptOAuth {
   async signOut(): Promise<void> {
     if (this.signingOut) return;
     this.signingOut = true;
+    this.locked = undefined;
     this.pending?.abort();
     // OpenAI says to stop requests first, so inference ends now; only a renewal is allowed to settle.
     this.session.abort(); this.session = new AbortController();

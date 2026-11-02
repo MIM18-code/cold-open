@@ -250,6 +250,8 @@ test("the assistant answers from the script and Backlot data, streams, applies s
   }, project);
   await page.evaluate(() => (window as any).desktop.invoke("ai:pick-backlot"));
   expect(await stored()).toBe(project);
+  // The single request with the trimmed script: what the assistant does with agent mode off, and its fallback.
+  await page.evaluate(() => (window as any).__app.setSetting("ai.assistant.wholeScript", false));
   await loadScript(page, KITCHEN);
   await openPanel(page, "assistant");
 

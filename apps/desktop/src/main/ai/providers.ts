@@ -1,7 +1,10 @@
 // The HTTP providers: Ollama, Anthropic, Google and OpenAI. Plain fetch, no SDKs. Each provider has a request
 // builder and a parser for one streamed event, both pure so tests can run them against canned responses.
-import type { AiErrorCode, AiMessage, AiTier, ProviderId } from "../../shared/channels/ai.ts";
+import { randomUUID } from "node:crypto";
+import type { AiErrorCode, AiMessage, AiTier, AiTool, AiTurn, ProviderId } from "../../shared/channels/ai.ts";
 import { type SseEvent, readLines, readSse } from "./stream.ts";
+import { record, readResponseTurn, responseInput, responseTools, toolParseError, validateCalls } from "./tool-calls.ts";
+import { boundedJson } from "./chatgpt-http.ts";
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -48,6 +51,7 @@ export interface ChatRequest {
   messages: AiMessage[];
   maxTokens: number;
   json: boolean;
+  tools?: AiTool[];
 }
 
 export interface ProviderConfig {
@@ -63,6 +67,7 @@ export interface BuiltRequest {
 const JSON_HEADERS = { "content-type": "application/json" };
 
 export function buildRequest(provider: HttpProvider, request: ChatRequest, config: ProviderConfig): BuiltRequest {
+  if (request.tools?.length) return buildToolRequest(provider, request, config);
   const key = config.apiKey ?? "";
   switch (provider) {
     case "ollama":
@@ -119,6 +124,133 @@ export function buildRequest(provider: HttpProvider, request: ChatRequest, confi
           }),
         },
       };
+  }
+}
+
+function grouped(messages: AiMessage[], convert: (message: AiMessage) => { role: string; content: Record<string, unknown>[] }) {
+  const output: { role: string; content: Record<string, unknown>[] }[] = [];
+  for (const message of messages) {
+    const next = convert(message);
+    const last = output.at(-1);
+    if (last?.role === next.role) last.content.push(...next.content);
+    else output.push(next);
+  }
+  return output;
+}
+
+function buildToolRequest(provider: HttpProvider, chat: ChatRequest, config: ProviderConfig): BuiltRequest {
+  const tools = chat.tools!;
+  const key = config.apiKey ?? "";
+  const calls = new Map(chat.messages.flatMap((message) => message.toolCalls ?? []).map((call) => [call.id, call]));
+  const post = (url: string, headers: Record<string, string>, body: unknown): BuiltRequest => ({
+    url, init: { method: "POST", headers: { ...JSON_HEADERS, ...headers }, body: JSON.stringify(body) },
+  });
+  switch (provider) {
+    case "ollama": return post(`${config.ollamaEndpoint.replace(/\/+$/, "")}/api/chat`, {}, {
+      model: chat.model, stream: false, think: false, keep_alive: "30m",
+      options: { temperature: 0.2, num_predict: chat.maxTokens, num_ctx: 16384 },
+      tools: tools.map((tool) => ({ type: "function", function: tool })),
+      messages: [{ role: "system", content: chat.system }, ...chat.messages.map((message) => ({
+        role: message.role, content: message.content,
+        ...(message.role === "tool" ? { tool_name: message.name } : {}),
+        ...(message.toolCalls?.length ? { tool_calls: message.toolCalls.map((call, index) => ({
+          type: "function", function: { index, name: call.name, arguments: call.arguments },
+        })) } : {}),
+      }))],
+    });
+    case "anthropic": return post("https://api.anthropic.com/v1/messages", { "x-api-key": key, "anthropic-version": "2023-06-01" }, {
+      model: chat.model, max_tokens: chat.maxTokens, system: chat.system, stream: false,
+      tools: tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })),
+      messages: grouped(chat.messages, (message) => ({ role: message.role === "tool" ? "user" : message.role,
+        content: message.role === "tool" ? [{ type: "tool_result", tool_use_id: message.toolCallId, content: message.content }]
+          : [...(message.content ? [{ type: "text", text: message.content }] : []), ...(message.toolCalls ?? []).map((call) => ({
+            type: "tool_use", id: call.id, name: call.name, input: call.arguments,
+          }))],
+      })),
+    });
+    case "google": return post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(chat.model)}:generateContent`, { "x-goog-api-key": key }, {
+      systemInstruction: { parts: [{ text: chat.system }] },
+      tools: [{ functionDeclarations: tools.map((tool) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.parameters })) }],
+      contents: grouped(chat.messages, (message) => ({ role: message.role === "assistant" ? "model" : "user",
+        content: message.role === "tool" ? [{ functionResponse: { ...(!calls.get(message.toolCallId!)?.generatedId ? { id: message.toolCallId } : {}), name: message.name, response: { result: message.content } } }]
+          : [...(message.content ? [{ text: message.content }] : []), ...(message.toolCalls ?? []).map((call) => ({
+            functionCall: { ...(!call.generatedId ? { id: call.id } : {}), name: call.name, args: call.arguments }, ...(call.signature ? { thoughtSignature: call.signature } : {}),
+          }))],
+      })).map((message) => ({ role: message.role, parts: message.content })),
+      generationConfig: { maxOutputTokens: chat.maxTokens, temperature: 0.2, thinkingConfig: { thinkingLevel: "high" } },
+    });
+    case "openai": return post("https://api.openai.com/v1/responses", { authorization: `Bearer ${key}` }, {
+      model: chat.model, instructions: chat.system, input: responseInput(chat.messages), store: false, stream: false,
+      tools: responseTools(tools), include: ["reasoning.encrypted_content"], max_output_tokens: chat.maxTokens,
+    });
+  }
+}
+
+export function readToolTurn(provider: HttpProvider, raw: unknown, tools: readonly AiTool[]): AiTurn {
+  const data = record(raw);
+  if (provider === "openai") return readResponseTurn(data, tools);
+  let text = "";
+  let rawCalls: unknown;
+  switch (provider) {
+    case "ollama": {
+      const message = record(data.message);
+      if (data.done !== true || !data.message) throw new AiError("bad-response", "Ollama did not complete the answer.");
+      text = typeof message.content === "string" ? message.content : "";
+      if (message.tool_calls !== undefined && !Array.isArray(message.tool_calls)) throw toolParseError();
+      rawCalls = (message.tool_calls ?? []).map((value: unknown) => {
+        const call = record(record(value).function);
+        return { id: randomUUID(), name: call.name, arguments: call.arguments };
+      });
+      break;
+    }
+    case "anthropic": {
+      if (!Array.isArray(data.content)) throw new AiError("bad-response", "Anthropic sent no answer.");
+      const content = data.content.map(record);
+      rawCalls = content.filter((part) => part.type === "tool_use").map((part) => ({ id: part.id, name: part.name, arguments: part.input }));
+      if (data.stop_reason !== "end_turn" && data.stop_reason !== "tool_use") throw new AiError("bad-response", "Anthropic did not complete the answer.");
+      text = content.filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
+      break;
+    }
+    case "google": {
+      const candidate = record(Array.isArray(data.candidates) ? data.candidates[0] : undefined);
+      // Gemini's own name for an invalid generated call: retried like any unparseable tool turn, then the fallback.
+      if (candidate.finishReason === "MALFORMED_FUNCTION_CALL") throw toolParseError();
+      if (candidate.finishReason !== "STOP") throw new AiError("bad-response", "Google did not complete the answer.");
+      const content = record(candidate.content);
+      if (!Array.isArray(content.parts)) throw new AiError("bad-response", "Google sent no answer.");
+      const parts = content.parts.map(record);
+      rawCalls = parts.filter((part) => part.functionCall !== undefined).map((part) => {
+        const call = record(part.functionCall);
+        return { id: call.id === undefined ? randomUUID() : call.id, name: call.name, arguments: call.args === undefined ? {} : call.args,
+          ...(call.id === undefined ? { generatedId: true } : {}),
+          ...(part.thoughtSignature !== undefined ? { signature: part.thoughtSignature } : {}) };
+      });
+      text = parts.filter((part) => !part.thought && typeof part.text === "string").map((part) => part.text).join("");
+      break;
+    }
+  }
+  const toolCalls = validateCalls(rawCalls, tools);
+  if (toolCalls.length) return { text: "", toolCalls };
+  if (!text.trim()) throw new AiError("bad-response", `${NAMES[provider]} finished without an answer.`);
+  return { text };
+}
+
+/** Tool turns are buffered so a malformed or incomplete batch cannot execute partially. */
+export async function toolChat(provider: HttpProvider, chat: ChatRequest, config: ProviderConfig, fetchFn: FetchLike, signal: AbortSignal): Promise<AiTurn> {
+  try {
+    const response = await send(provider, buildRequest(provider, chat, config), fetchFn, signal);
+    let data: Record<string, unknown>;
+    try { data = await boundedJson(response, signal, 2 * 1024 * 1024); }
+    catch (error) {
+      if (signal.aborted) throw error;
+      throw toolParseError();
+    }
+    signal.throwIfAborted();
+    return readToolTurn(provider, data, chat.tools ?? []);
+  } catch (error) {
+    if (signal.aborted) throw new AiError("cancelled", "Cancelled.");
+    if (provider === "ollama" && error instanceof AiError && /does not support tools|(?:error|failed).*pars.*tool/i.test(error.message)) throw toolParseError();
+    throw error;
   }
 }
 

@@ -30,6 +30,9 @@
 .assistant-reply { align-self: stretch; display: grid; gap: 8px; color: var(--ink); }
 .assistant-text { font-size: var(--text-s); line-height: 1.45; }
 .assistant-wait { color: var(--ink-3); font-style: italic; font-size: var(--text-s); }
+.assistant-steps { color: var(--ink-3); font-size: var(--text-xs); line-height: 1.5; }
+.assistant-steps summary { cursor: pointer; }
+.assistant-steps div { padding: 2px 0; }
 .assistant-note { color: var(--ink-3); font-size: var(--text-xs); }
 .assistant-error, .assistant-problem { color: var(--error); font-size: var(--text-s); font-weight: 500; }
 

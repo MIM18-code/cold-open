@@ -64,6 +64,58 @@ test("status shows only whether a key is set", async () => {
   assert.throws(() => runner.setKey("ollama", "x"), /does not use a key/);
 });
 
+test("runner returns validated tool calls and preserves tool result history through IPC", async () => {
+  const tools = [{ name: "read_scene", description: "Read scene", parameters: { type: "object", properties: { scene: { type: "string" } } } }];
+  const { runner } = runnerWith({ "ai.model.ollama": "m" }, async (_url, init) => {
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.stream, false);
+    if (body.messages.length > 2) {
+      assert.equal(body.messages[2].tool_calls[0].function.name, "read_scene");
+      assert.deepEqual(body.messages[3], { role: "tool", tool_name: "read_scene", content: "Scene text" });
+      return new Response(JSON.stringify({ done: true, message: { content: "Answer." } }));
+    }
+    return new Response(JSON.stringify({ done: true, message: { content: "", tool_calls: [{ function: { name: "read_scene", arguments: { scene: "12" } } }] } }));
+  });
+  const first = collect();
+  await runner.start("w", request({ tools }), first.emit);
+  const event = await first.finished;
+  assert.equal(event.type, "done");
+  assert.ok(event.type === "done" && event.toolCalls?.length);
+  if (event.type !== "done") return;
+  assert.equal(first.events.length, 1, "no text deltas for tool turns");
+  const second = collect();
+  await runner.start("w", request({ id: "r2", tools, messages: [{ role: "user", content: "Read scene" },
+    { role: "assistant", content: "", toolCalls: event.toolCalls },
+    { role: "tool", name: "read_scene", toolCallId: event.toolCalls![0]!.id, content: "Scene text" }] }), second.emit);
+  assert.deepEqual(await second.finished, { id: "r2", type: "done", text: "Answer." });
+});
+
+test("runner emits tool-parse errors for malformed calls without exposing partial batches", async () => {
+  const { runner } = runnerWith({ "ai.model.ollama": "m" }, async () => new Response(JSON.stringify({ done: true, message: { tool_calls: [
+    { function: { name: "list_scenes", arguments: {} } }, { function: { name: "read_file", arguments: {} } },
+  ] } })));
+  const sink = collect();
+  await runner.start("w", request({ tools: [{ name: "list_scenes", description: "List scenes", parameters: { type: "object", properties: {} } }] }), sink.emit);
+  const event = await sink.finished;
+  assert.ok(event.type === "error" && event.code === "tool-parse");
+  assert.equal(sink.events.length, 1);
+});
+
+test("production-data IPC returns only the existing summary, never the project path", async () => {
+  const path = join(folder(), "project.json");
+  writeFileSync(path, JSON.stringify({ meta: { title: "Project" }, script: { scenes: [{ number: "12", heading: "INT. ROOM - DAY" }] } }));
+  const settings: Record<string, unknown> = { [AI_SETTINGS.backlotPath]: path };
+  const { runner } = runnerWith(settings, async () => new Response("{}"));
+  const result = await runner.productionData();
+  assert.ok(result.ok);
+  assert.match(JSON.stringify(result), /INT\. ROOM - DAY/);
+  assert.ok(!JSON.stringify(result).includes(path));
+  settings[AI_SETTINGS.backlotPath] = "/private/missing.json";
+  assert.deepEqual(await runner.productionData(), { ok: false, error: "The Backlot project could not be read." });
+  delete settings[AI_SETTINGS.backlotPath];
+  assert.deepEqual(await runner.productionData(), { ok: false, error: "No Backlot project is set." });
+});
+
 test("Ollama: picks the best installed model, streams events and finishes", async () => {
   const calls: { url: string; body?: any }[] = [];
   const { runner } = runnerWith({ "ai.ollama.endpoint": "http://127.0.0.1:9" }, async (url, init) => {

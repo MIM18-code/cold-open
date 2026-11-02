@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 import { KEYED_PROVIDERS, type KeyedProvider } from "../../shared/channels/ai.ts";
 
 export interface Cipher {
+  /** In the app this reads the macOS keychain, which can hold the main process on a password prompt. Ask only when a secret is about to be encrypted or decrypted. */
   available(): boolean;
   encrypt(text: string): Buffer;
   decrypt(data: Buffer): string;
@@ -18,14 +19,20 @@ export function isKeyedProvider(value: unknown): value is KeyedProvider {
 export class KeyStore {
   private readonly file: string;
   private readonly cipher: Cipher;
+  private usable: boolean | undefined;
 
   constructor(file: string, cipher: Cipher) {
     this.file = file;
     this.cipher = cipher;
   }
 
+  /** For status checks: the last answer, without asking the keychain again. Saving a key asks. */
   get encryption(): boolean {
-    return this.cipher.available();
+    return this.usable ?? true;
+  }
+
+  private canEncrypt(): boolean {
+    return (this.usable = this.cipher.available());
   }
 
   private read(): Record<string, string> {
@@ -51,7 +58,7 @@ export class KeyStore {
   /** For the main process only, when it builds a request. */
   get(provider: KeyedProvider): string | undefined {
     const stored = this.read()[provider];
-    if (typeof stored !== "string" || !this.cipher.available()) return undefined;
+    if (typeof stored !== "string" || !this.canEncrypt()) return undefined;
     try {
       return this.cipher.decrypt(Buffer.from(stored, "base64"));
     } catch {
@@ -63,7 +70,7 @@ export class KeyStore {
     const trimmed = key.trim();
     if (!trimmed) throw new Error("Paste the key first.");
     if (/\s/.test(trimmed)) throw new Error("A key has no spaces. Check what was pasted.");
-    if (!this.cipher.available()) throw new Error("This Mac can't encrypt the key, so it was not saved.");
+    if (!this.canEncrypt()) throw new Error("This Mac can't encrypt the key, so it was not saved.");
     this.write({ ...this.read(), [provider]: this.cipher.encrypt(trimmed).toString("base64") });
   }
 

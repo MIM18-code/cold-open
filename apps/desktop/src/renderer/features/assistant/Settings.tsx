@@ -50,7 +50,7 @@ function KeyRow({ provider, keySet, encryption, refresh }: { provider: KeyedProv
       <div className="ai-settings-row">
         <input type="password" autoComplete="off" value={draft} placeholder={keySet ? "Paste a new key to replace it" : "Paste your key"} aria-label={`${PROVIDER_LABELS[provider]} API key`}
           onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && draft && void save()} />
-        <button className="button" disabled={!draft || !encryption} onClick={() => void save()}>Save</button>
+        <button className="button" disabled={!draft} onClick={() => void save()}>Save</button>
         <button className="button" disabled={!keySet} onClick={async () => (await desktop.invoke(AI_CHANNELS.clearKey, provider), refresh())}>Clear</button>
       </div>
       <small className="ai-settings-hint">
@@ -105,7 +105,7 @@ function ChatgptRow({ status, refresh }: { status: AiStatus["chatgpt"]; refresh:
           </>
         ) : (
           // OpenAI's approved button: black with the white logo, or white with the black logo in dark mode.
-          <button className="siwc-button" data-oai-siwc-button="" disabled={!status.available || status.pending} onClick={() => void run(AI_CHANNELS.chatgptLogin)}>
+          <button className="siwc-button" data-oai-siwc-button="" disabled={status.pending} onClick={() => void run(AI_CHANNELS.chatgptLogin)}>
             <img className="siwc-logo-on-black" src={logoWhite} alt="" width={18} height={18} />
             <img className="siwc-logo-on-white" src={logoBlack} alt="" width={18} height={18} />
             <span>{status.pending ? "Waiting for your browser" : "Continue with ChatGPT"}</span>
@@ -177,6 +177,7 @@ function BacklotRow() {
 
 export function AiSettings() {
   const [provider, setProvider] = useSetting<ProviderId>(AI_SETTINGS.provider, "ollama");
+  const [wholeScript, setWholeScript] = useSetting<boolean>(AI_SETTINGS.wholeScript, true);
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [entries, setEntries] = useState<{ id: string; label: string }[]>([]);
@@ -239,6 +240,9 @@ export function AiSettings() {
         <button className="button" disabled={testing} onClick={() => void test()}>{testing ? "Testing" : "Test connection"}</button>
         {result ? <span className={result.ok ? "ai-settings-ok" : "ai-settings-error"} role="status">{result.message}</span> : null}
       </div>
+
+      <h3 className="ai-settings-heading">Assistant</h3>
+      <label className="ai-settings-check"><input type="checkbox" checked={wholeScript} onChange={(e) => setWholeScript(e.target.checked)} />Let the assistant look through the whole script</label>
 
       <h3 className="ai-settings-heading">Sentence completion</h3>
       <CompleteSetting />
