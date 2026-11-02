@@ -140,7 +140,7 @@ function CompleteSetting() {
         <option value="pause">When I pause while typing</option>
       </select>
       <small className="ai-settings-hint">
-        {mode === "off" ? "Nothing is suggested." : "In action and dialogue, the suggestion appears in grey: → adds it, Esc or typing dismisses it. Uses ChatGPT or an API key when one is set up, otherwise the local model."}
+        {mode === "off" ? "Nothing is suggested." : "In action and dialogue, the suggestion appears in grey: → adds it, Esc or typing dismisses it. Uses the provider chosen at the top of these settings."}
       </small>
     </label>
   );

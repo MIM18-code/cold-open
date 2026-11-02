@@ -1,14 +1,11 @@
-// Which provider a background AI feature (casting, sentence completion) uses, without asking the writer to choose:
-// the local model, unless ChatGPT is signed in or an API key is set.
+// Which provider a background AI feature (casting, sentence completion) uses: the one chosen in Settings.
+// Choosing the local model keeps the script on this Mac even when ChatGPT is signed in or a key is saved.
 import type { AiStatus, ProviderId } from "../../../shared/channels/ai.ts";
 
-const CLOUD_ORDER: readonly ProviderId[] = ["chatgpt", "anthropic", "openai", "google"];
-
-/** A cloud provider chosen in Settings wins when it is ready; otherwise the first ready cloud provider; else Ollama. */
+/** The provider chosen in Settings when it is ready; otherwise the local model. Never a cloud provider the writer didn't choose. */
 export function preferredProvider(status: Pick<AiStatus, "providers" | "active">): ProviderId {
-  const ready = (provider: ProviderId) => status.providers.some((p) => p.provider === provider && p.ready);
-  if (status.active.provider !== "ollama" && ready(status.active.provider)) return status.active.provider;
-  return CLOUD_ORDER.find(ready) ?? "ollama";
+  const chosen = status.active.provider;
+  return status.providers.some((p) => p.provider === chosen && p.ready) ? chosen : "ollama";
 }
 
 // Short names for sentences; the Settings labels describe the sign-in method.

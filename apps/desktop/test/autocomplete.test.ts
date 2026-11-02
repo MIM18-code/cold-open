@@ -51,7 +51,7 @@ test("completion uses the same provider rule as casting", () => {
   const status = (ready: string[]) => ({ active: { provider: "ollama" as const, model: "", contextChars: 0 },
     providers: ["ollama", "chatgpt", "anthropic"].map((provider) => ({ provider: provider as any, ready: provider === "ollama" || ready.includes(provider) })) });
   assert.equal(preferredProvider(status([])), "ollama");
-  assert.equal(preferredProvider(status(["chatgpt"])), "chatgpt");
+  assert.equal(preferredProvider(status(["chatgpt"])), "ollama", "a signed-in ChatGPT doesn't override the local model chosen in Settings");
 });
 
 test("small-model habits are tolerated: wrapping quotes, curly apostrophes, bare continuations and narration", () => {

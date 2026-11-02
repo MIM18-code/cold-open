@@ -10,14 +10,14 @@ const status = (active: ProviderId, ready: ProviderId[]): Pick<AiStatus, "provid
   providers: (["ollama", "anthropic", "google", "openai", "chatgpt"] as const).map((provider) => ({ provider, ready: provider === "ollama" || ready.includes(provider) })),
 });
 
-test("casting uses the local model unless ChatGPT is signed in or an API key is set", () => {
+test("casting and completion use the provider chosen in Settings, never a cloud provider the writer didn't pick", () => {
   assert.equal(castingProvider(status("ollama", [])), "ollama");
-  assert.equal(castingProvider(status("ollama", ["chatgpt"])), "chatgpt");
-  assert.equal(castingProvider(status("ollama", ["google"])), "google");
-  assert.equal(castingProvider(status("ollama", ["google", "chatgpt"])), "chatgpt");
-  // A ready cloud provider chosen in Settings wins; one that is not ready falls through to the others.
+  assert.equal(castingProvider(status("ollama", ["chatgpt"])), "ollama", "Terra beta 5: Ollama chosen, ChatGPT signed in, casting offered ChatGPT");
+  assert.equal(castingProvider(status("ollama", ["google", "chatgpt"])), "ollama");
   assert.equal(castingProvider(status("anthropic", ["anthropic", "chatgpt"])), "anthropic");
-  assert.equal(castingProvider(status("anthropic", ["openai"])), "openai");
+  assert.equal(castingProvider(status("chatgpt", ["chatgpt"])), "chatgpt");
+  // A chosen cloud provider that isn't ready falls back to the local model, not to another cloud provider.
+  assert.equal(castingProvider(status("anthropic", ["openai"])), "ollama");
   assert.equal(castingProvider(status("chatgpt", [])), "ollama");
 });
 

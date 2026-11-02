@@ -6,7 +6,7 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { launch } from "./helpers.ts";
+import { launch, runCommand } from "./helpers.ts";
 
 /** The tests edit the script, and a dirty document makes closing ask about saving in a window nobody sees. */
 async function closeApp(app: ElectronApplication, page: Page): Promise<void> {
@@ -403,6 +403,35 @@ test("a whole-speech cut: proposed through tools, applied, undone in one step; a
   await page.evaluate(() => (window as any).__app.session.undo.undo());
   expect(await ids()).toEqual(expect.arrayContaining(["c2", "d2"]));
   expect(await textOf(page, "d2")).toBe("Anyone?");
+  await closeApp(electronApp, page);
+  await mock.close();
+});
+
+test("an applied rewrite is taken back by the Edit menu's Undo, word for word", async () => {
+  // Terra beta 5 applied a card, chose Undo, and could not tell whether the speech came back exactly.
+  const mock = await mockOllama();
+  const { electronApp, page } = await launch();
+  await useMock(page, mock);
+  await loadScript(page, KITCHEN);
+  await openPanel(page, "assistant");
+  const turn = (message: Record<string, unknown>) => (res: http.ServerResponse) => res.end(JSON.stringify({ message: { role: "assistant", content: "", ...message }, done: true }));
+  mock.reply = (res) => {
+    const tools = mock.chats.at(-1).messages.filter((m: { role: string }) => m.role === "tool").length;
+    const next = tools === 0 ? turn({ tool_calls: [{ function: { name: "character", arguments: { name: "MAYA" } } }, { function: { name: "read_scene", arguments: { scene: "1" } } }] })
+      : tools === 2 ? turn({ tool_calls: [{ function: { name: "propose_edit", arguments: { scene: "1", find: "Where did everyone go?", replace: "Where is everyone?", why: "Shorter." } } }] })
+      : turn({ content: "Proposed a shorter line." });
+    next(res);
+  };
+  await page.getByLabel("Ask about the script").fill("Tighten MAYA's last line.");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.locator(".assistant-note").last()).toContainText("Used 1 character lookup; read 1 of 2 scenes");
+  await page.getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByRole("button", { name: "Applied" })).toBeDisabled();
+  expect(await textOf(page, "d5")).toBe("Where is everyone?");
+  await runCommand(page, "editor.undo");
+  expect(await textOf(page, "d5")).toBe("Where did everyone go?");
+  await runCommand(page, "editor.redo");
+  expect(await textOf(page, "d5")).toBe("Where is everyone?");
   await closeApp(electronApp, page);
   await mock.close();
 });

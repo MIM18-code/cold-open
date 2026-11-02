@@ -13,7 +13,7 @@ export interface AgentAnswer {
   text: string;
   proposals: Suggestion[];
   note?: string;
-  /** What the answer rests on, counted by the app rather than claimed by the model: "Read 2 of 77 scenes". */
+  /** What the answer rests on, counted by the app rather than claimed by the model: "Used 2 character lookups; read 1 of 77 scenes". */
   coverage?: string;
 }
 
@@ -79,9 +79,15 @@ export async function runAgent(options: AgentOptions): Promise<AgentAnswer> {
   const question = options.request.messages.findLast((message) => message.role === "user")?.content ?? "";
   const read = new Set<string>();
   let looked = false, limited = false, remindedLook = false, remindedPropose = false, atLimit = false;
+  // Lookups answer some questions without reading a scene (line counts, first appearances), so they are named too.
+  const used = { list_scenes: 0, character: 0, search_script: 0, production_data: 0 };
   const coverage = () => {
     const total = scenesOf(context.script().paragraphs).length;
-    return `Read ${read.size} of ${total} scene${total === 1 ? "" : "s"}`;
+    const scenes = `read ${read.size} of ${total} scene${total === 1 ? "" : "s"}`;
+    const plural = (n: number, word: string, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
+    const lookups = [used.list_scenes ? "the scene list" : "", used.character ? plural(used.character, "character lookup") : "",
+      used.search_script ? plural(used.search_script, "search", "searches") : "", used.production_data ? "production data" : ""].filter(Boolean);
+    return lookups.length ? `Used ${lookups.join(", ")}; ${scenes}` : scenes[0]!.toUpperCase() + scenes.slice(1);
   };
   const finish = (answer: AgentAnswer): AgentAnswer => ({ ...answer, coverage: coverage() });
   const request = async (body: Omit<AiRequest, "id">, delta?: (text: string) => void): Promise<AiTurn> => {
@@ -150,6 +156,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentAnswer> {
       const outcome = executed.result as { ok?: boolean; scene?: unknown };
       if (fits && EVIDENCE.has(call.name) && outcome.ok !== false) looked = true;
       if (fits && call.name === "read_scene" && typeof outcome.scene === "string") read.add(outcome.scene);
+      if (fits && outcome.ok !== false && call.name in used) used[call.name as keyof typeof used]++;
       options.onStep?.(fits ? executed.line : "Script reading limit reached");
       if (executed.proposal) {
         const proposal = executed.proposal;

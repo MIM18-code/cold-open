@@ -63,6 +63,14 @@ test("an answer after reading ends at once and counts the scenes read", async ()
   assert.equal(answer.coverage, "Read 1 of 1 scene");
 });
 
+test("lookups that answer without reading a scene are named in the coverage line", async () => {
+  // Terra beta 5: an answer built from character lookups showed only "Read 0 of 77 scenes".
+  const h = harness([{ text: "", toolCalls: [call("character", { name: "Nell" }), call("search_script", { query: "gun" }, "c2"), call("list_scenes", {}, "c3")] },
+    { text: "Nell first appears in scene 12." }]);
+  const answer = await runAgent(h.options);
+  assert.equal(answer.coverage, "Used the scene list, 1 character lookup, 1 search; read 0 of 1 scene");
+});
+
 test("an edit written as text is sent back once to be proposed", async () => {
   const h = harness([{ text: "", toolCalls: [call("read_scene", { scene: "12" })] }, { text: 'Cut "Nell holds a gun." to tighten it.' },
     { text: "", toolCalls: [call("propose_edit", { scene: "12", find: "Nell holds a gun.", replace: "Nell waits.", why: "Tighter." }, "c2")] }, { text: "Proposed." }]);

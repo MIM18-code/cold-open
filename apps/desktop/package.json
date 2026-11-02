@@ -1,6 +1,6 @@
 {
   "name": "@screenplay/desktop",
-  "version": "0.1.0-beta.5",
+  "version": "0.1.0-beta.6",
   "description": "The screenwriting app: Electron, React and the shared screenplay engine",
   "license": "GPL-3.0-only",
   "private": true,

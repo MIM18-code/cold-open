@@ -53,7 +53,7 @@
   },
   {
     "path": "apps/desktop/e2e/ai.spec.ts",
-    "sha256": "09411b09126e2ddb41f94a07d8b61d9daf2e8931a665e4afb2edd6591f2ce9ac"
+    "sha256": "87e6887ef0bceb1ce2e5099d2968e77c69b420cd83f07c63aa3cdfaa6cb69daf"
   },
   {
     "path": "apps/desktop/e2e/autocomplete.spec.ts",
@@ -181,7 +181,7 @@
   },
   {
     "path": "apps/desktop/package.json",
-    "sha256": "9c7bb2fd4a436a29f0096daf2436e4b68d17760104a3bbfb58d6c3969c893dac"
+    "sha256": "abb25b0d9695e9aee7085dd59a5408d407d9befa115f59f8cec986db921c6e19"
   },
   {
     "path": "apps/desktop/playwright.config.ts",
@@ -569,11 +569,11 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/Settings.tsx",
-    "sha256": "cb0468e52c6ec7184577d2dba8e0384deca06e793c8108c1e54d17426763c46a"
+    "sha256": "f436eb1534f5be4ddcce32679ec0d8b9ad17e6977fc64a1d66e04e3d5f7f748b"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/agent.ts",
-    "sha256": "1916903808de284acd6117da2e3064887af63738274c722d4e213226045cbf85"
+    "sha256": "d9144c35e14185ba8aa945f2fe1b961c3f748dc0cd46c4ee5716839acdda0a5c"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/apply.ts",
@@ -617,7 +617,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/provider.ts",
-    "sha256": "b70b4670cf321cc6ce5ed2f69fb57d85e2efaef7d6cb935b7f1f77774732877e"
+    "sha256": "cb297e681693202693bdc98d4e22f1af28bd8380f1de682adf15da8955c25a79"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/suggestions.ts",
@@ -1145,7 +1145,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/table-read/index.tsx",
-    "sha256": "4b886d80c42f1dece1363ad05977fe3290641143b6a6255e7500c72d5d8878d6"
+    "sha256": "10fc8466ab60c309b88f8163a66428c9d8b39f2ea2f178f61b7170032d0d9db1"
   },
   {
     "path": "apps/desktop/src/renderer/features/table-read/notes.ts",
@@ -1325,7 +1325,7 @@
   },
   {
     "path": "apps/desktop/test/ai-agent.test.ts",
-    "sha256": "8bd663ee6957cae7eea9ef80e59013bc9b58a2bc358dd808c86917c07990ab76"
+    "sha256": "8cd85c17b45dfee220de96051e45d4b4ee0fa8deece98bff32d88d97d07c3e4b"
   },
   {
     "path": "apps/desktop/test/ai-assistant.test.ts",
@@ -1369,7 +1369,7 @@
   },
   {
     "path": "apps/desktop/test/autocomplete.test.ts",
-    "sha256": "2489d71166255e601dfdb2dd4f6947ce98f443a79b4659de5fbb2ddf292ed423"
+    "sha256": "1fc63e517770b7730c5e9ad464a6e8287c7b8fd7b873db466cead4a3b0682544"
   },
   {
     "path": "apps/desktop/test/backlot-handoff.test.ts",
@@ -1389,7 +1389,7 @@
   },
   {
     "path": "apps/desktop/test/casting-provider.test.ts",
-    "sha256": "ed6f36faaa9759cc289ec9312380e2c00a781febaf3447ee3dedaa038392933b"
+    "sha256": "13e7731dd7dd964aae95cc0deed4536573e33e2763bfb11e9b87532c08a9612e"
   },
   {
     "path": "apps/desktop/test/compact-sides.test.ts",
@@ -2445,7 +2445,7 @@
   },
   {
     "path": "package-lock.json",
-    "sha256": "7dc143327adb6f5e81148a48c3cd3e2649e350cd99611561663fdffc7cd9587c"
+    "sha256": "9d52445fb52c59c6f39d44d065a71b002d73d462f41aaa631437cc20dd5a538f"
   },
   {
     "path": "package.json",
