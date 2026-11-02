@@ -384,8 +384,10 @@ export async function listModels(provider: HttpProvider, config: ProviderConfig,
   const key = config.apiKey ?? "";
   switch (provider) {
     case "ollama": {
-      const body = await (await get(`${config.ollamaEndpoint.replace(/\/+$/, "")}/api/tags`, {})).json() as { models?: { name?: string; size?: number }[] };
-      return (body.models ?? []).filter((m) => m.name).map((m) => ({ id: m.name!, ...(m.size ? { size: m.size } : {}) }));
+      const body = await (await get(`${config.ollamaEndpoint.replace(/\/+$/, "")}/api/tags`, {})).json() as { models?: { name?: string; size?: number; remote_host?: string; remote_model?: string }[] };
+      // Ollama's cloud models run on Ollama's servers; "AI on this Mac" promises the script stays here.
+      return (body.models ?? []).filter((m) => m.name && !m.remote_host && !m.remote_model && !/(?:^|[:-])cloud$/i.test(m.name))
+        .map((m) => ({ id: m.name!, ...(m.size ? { size: m.size } : {}) }));
     }
     case "anthropic": {
       const body = await (await get("https://api.anthropic.com/v1/models?limit=100", { "x-api-key": key, "anthropic-version": "2023-06-01" })).json() as { data?: { id: string }[] };

@@ -2,13 +2,16 @@
 // main process picks the provider from settings, adds the key and streams text back with the request ID.
 
 export const AI_CHANNELS = {
-  /** renderer → main: start a streamed request. Payload: AiRequest. The reply is AiStarted; text arrives on `event`. */
+  /** renderer → main: start a streamed request. Payload: AiRequest. The reply is AiStartResult; text arrives on `event`. */
   start: "ai:start",
   /** renderer → main: stop a request. Payload: request ID. */
   cancel: "ai:cancel",
   /** main → renderer: AiEvent for a request. */
   event: "ai:event",
   status: "ai:status",
+  localSetup: "ai:local-setup",
+  startOllama: "ai:start-ollama",
+  offerSetup: "ai:offer-setup",
   setKey: "ai:set-key",
   clearKey: "ai:clear-key",
   test: "ai:test",
@@ -28,7 +31,7 @@ export const PROVIDERS = ["ollama", "anthropic", "google", "openai", "chatgpt"] 
 export type ProviderId = (typeof PROVIDERS)[number];
 
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
-  ollama: "Local model (Ollama)",
+  ollama: "AI on this Mac (Ollama)",
   anthropic: "Anthropic (Claude)",
   google: "Google (Gemini)",
   openai: "OpenAI (API key)",
@@ -51,6 +54,14 @@ export const AI_SETTINGS = {
 } as const;
 
 export const DEFAULT_OLLAMA_ENDPOINT = "http://127.0.0.1:11434";
+
+export interface LocalAiSetup {
+  installed: boolean;
+  running: boolean;
+  model: boolean;
+}
+
+export type AiStartResult = AiStarted | { error: { code: AiErrorCode; message: string } };
 
 /** What a request is for: "fast" suits proofreading, "smart" suits answers about the script. */
 export type AiTier = "fast" | "smart";
@@ -141,7 +152,7 @@ export const PLAN_LIMIT_MESSAGE = "Your ChatGPT plan's usage limit was reached";
 
 export interface ProviderStatus {
   provider: ProviderId;
-  /** Ready to use: a key is set, the endpoint is known, or ChatGPT plan usage is granted. */
+  /** Ready to use: a key is set, a local model is available, or ChatGPT plan usage is granted. */
   ready: boolean;
   /** Keyed providers: whether a key is stored. */
   keySet?: boolean;
@@ -187,3 +198,9 @@ export interface BacklotInfo {
 }
 
 export type ProductionData = { ok: true; text: string } | { ok: false; error: string };
+
+/** Ollama reads a name without a tag as `:latest`, so "mistral" and "mistral:latest" are the same model. */
+export const sameOllamaModel = (a: string, b: string) => {
+  const tagged = (name: string) => (/:[^/]*$/.test(name) ? name : `${name}:latest`).toLowerCase();
+  return tagged(a.trim()) === tagged(b.trim());
+};

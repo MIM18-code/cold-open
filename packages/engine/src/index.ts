@@ -4,6 +4,7 @@ export * from "./ids.ts";
 export * from "./doc.ts";
 export * from "./fdx.ts";
 export * from "./fountain.ts";
+export * from "./sex.ts";
 export { fountainRuns, readInline, writeInline } from "./inline.ts";
 export { XmlError, parseXml, serializeXml } from "./xml.ts";
 export * from "./layout.ts";
@@ -24,6 +25,7 @@ export * from "./templates.ts";
 
 export { captureScriptNotes, scriptNotes, changeScriptNote, SCRIPT_NOTE_ANCHORS, ORPHAN_NOTE_ATTR, type ScriptNoteInfo, type NoteEdit } from "./script-notes.ts";
 export * from "./tags.ts";
+export * from "./breakdown-suggest.ts";
 
 export * from "./scene-number-conflicts.ts";
 

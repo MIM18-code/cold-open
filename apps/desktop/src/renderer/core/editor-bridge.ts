@@ -69,7 +69,7 @@ export interface EditorBridge {
   getSelection(): Selection | null;
   setSelection(anchor: Position, head?: Position): void;
   /** Scroll a paragraph into view, optionally placing the caret at its start. */
-  revealParagraph(paragraphId: string, options?: { select?: boolean; offset?: number }): void;
+  revealParagraph(paragraphId: string, options?: { select?: boolean; offset?: number; ifNeeded?: boolean }): void;
   /** The paragraph holding the caret. */
   currentParagraphId(): string | null;
   /** The element type at the caret, for toolbars. */

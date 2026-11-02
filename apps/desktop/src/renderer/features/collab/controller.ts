@@ -23,16 +23,17 @@ export interface CollabState {
   participants: Participant[];
   invite: string | null;
   readOnlyInvite: string | null;
-  /** Where the invites point: host:port on the LAN, or the relay URL. */
+  /** Where the main invites point: host:port, or the self-hosted relay URL. */
   address: string | null;
-  /** False when the invite only works on this Mac (no network found). */
+  /** Whether a local-network address or self-hosted relay is available. */
   lan: boolean;
+  tailscale: HostInfo["tailscale"];
   readOnly: boolean;
   folder: FolderState;
 }
 
 const IDLE: Omit<CollabState, "folder"> = {
-  mode: "idle", status: "idle", participants: [], invite: null, readOnlyInvite: null, address: null, lan: true, readOnly: false,
+  mode: "idle", status: "idle", participants: [], invite: null, readOnlyInvite: null, address: null, lan: true, tailscale: null, readOnly: false,
 };
 
 /** How long Join waits to reach the session before it gives up. */
@@ -141,14 +142,15 @@ export class CollabController {
         readOnlyInvite: formatInvite({ ...invite, key: readKey, readOnly: true }),
         address: invite.relay,
         lan: true,
+        tailscale: null,
       });
     } else {
       if (!isDesktop) throw new Error("Sharing needs the desktop app, or a relay address in Settings.");
       const info = await desktop.invoke<HostInfo>(SYNC.hostStart);
       this.connect(this.app.session, { relay: info.relay, room: info.room, key: info.key, readOnly: false }, "host", true, {
-        invite: info.invite, readOnlyInvite: info.readOnlyInvite, address: info.address, lan: info.lan,
+        invite: info.invite, readOnlyInvite: info.readOnlyInvite, address: info.address, lan: info.lan, tailscale: info.tailscale,
       });
-      if (!info.lan) this.app.toast("No network found. The invite works only on this Mac until you connect to Wi-Fi.", "info");
+      if (!info.lan && !info.tailscale) this.app.toast("No network found. The invite works only on this Mac until you connect to Wi-Fi.", "info");
     }
     this.app.togglePanel("collab", true);
   }
@@ -177,7 +179,7 @@ export class CollabController {
     const original = this.app.session;
     const session = new DocumentSession(new ScreenplayDoc(), { name: "Shared script" });
     this.namedFromHost = false;
-    const live = this.connect(session, invite, "guest", false, { invite: null, readOnlyInvite: null, address: invite.relay, lan: true });
+    const live = this.connect(session, invite, "guest", false, { invite: null, readOnlyInvite: null, address: invite.relay, lan: true, tailscale: null });
     live.joining = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -233,7 +235,7 @@ export class CollabController {
   }
 
   private connect(session: DocumentSession, invite: Invite, mode: Exclude<Mode, "idle">, embedded: boolean,
-    info: Pick<CollabState, "invite" | "readOnlyInvite" | "address" | "lan">): Live {
+    info: Pick<CollabState, "invite" | "readOnlyInvite" | "address" | "lan" | "tailscale">): Live {
     const awareness = new Awareness(session.doc.ydoc);
     awareness.setLocalState(this.presence(session, mode, invite.readOnly, awareness.clientID));
     const client = new RelayClient({ relay: invite.relay, room: invite.room, key: invite.key, doc: session.doc.ydoc, awareness, readOnly: invite.readOnly });

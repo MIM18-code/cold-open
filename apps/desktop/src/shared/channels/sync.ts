@@ -36,8 +36,10 @@ export interface HostInfo {
   readOnlyInvite: string;
   /** The address in the invites. */
   address: string;
-  /** False when no network was found and the invite only works on this Mac. */
+  /** Whether a local-network address was found. */
   lan: boolean;
+  /** Alternate invites to the same room through this Mac's Tailscale IPv4 address. */
+  tailscale: { address: string; invite: string; readOnlyInvite: string } | null;
 }
 
 export interface FolderStartResult {

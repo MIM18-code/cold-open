@@ -26,7 +26,7 @@ function harness(settings: Record<string, unknown> = {}) {
   const chat = new Chat(app);
   const requests: AiRequest[] = [], cancelled: string[] = [];
   handle = (channel, ...args) => {
-    if (channel === AI_CHANNELS.status) return { active: { provider: "ollama", contextChars: 36000 }, providers: [] };
+    if (channel === AI_CHANNELS.status) return { active: { provider: "ollama", contextChars: 36000 }, providers: [{ provider: "ollama", ready: true }] };
     if (channel === AI_CHANNELS.cancel) { cancelled.push(String(args[0])); return; }
     if (channel === AI_CHANNELS.start) {
       const request = args[0] as AiRequest; requests.push(request);
@@ -131,8 +131,12 @@ test("Chat offers production_data only when the project and inclusion are both s
 
 test("client cancellation rejects immediately even before main acknowledges the request", async () => {
   let finish!: (value: unknown) => void;
-  handle = (channel) => channel === AI_CHANNELS.start ? new Promise((resolve) => { finish = resolve; }) : undefined;
+  let entered!: () => void;
+  const pending = new Promise<void>((resolve) => { entered = resolve; });
+  handle = (channel) => channel === AI_CHANNELS.start ? new Promise((resolve) => { finish = resolve; entered(); })
+    : { active: { provider: "ollama" }, providers: [{ provider: "ollama", ready: true }] };
   const run = runAiTurn({ tier: "smart", system: "Read", messages: [{ role: "user", content: "Hi" }] });
+  await pending;
   run.cancel();
   await assert.rejects(run.done, /Cancelled/);
   finish({ id: run.id, provider: "ollama", model: "test" });
@@ -156,4 +160,67 @@ test("a continuity action from a document that was switched away does nothing", 
   await pending;
   assert.equal(h.requests.length, 0);
   assert.equal(h.chat.messages.length, 0);
+});
+
+test("setup replaces missing-provider errors once, quiet requests stay silent, and Chat retries once", async (t) => {
+  const h = harness(); t.after(h.dispose);
+  const original = handle;
+  const { app } = await import("../src/renderer/core/app.ts");
+  const { aiSetupReady } = await import("../src/renderer/features/assistant/setup.ts");
+  let ready = false, offers = 0;
+  handle = (channel, ...args) => {
+    if (channel === AI_CHANNELS.status) return { active: { provider: "ollama", contextChars: 36000 }, providers: [{ provider: "ollama", ready }] };
+    if (channel === AI_CHANNELS.offerSetup) { offers++; return true; }
+    return original(channel, ...args);
+  };
+  const quiet = runAiTurn({ tier: "fast", system: "Complete", messages: [] }, undefined, { quiet: true });
+  await assert.rejects(quiet.done, (e: any) => e.setupRequired && e.message === "Set up AI to use this feature.");
+  assert.equal(offers, 0);
+  assert.equal(h.requests.length, 0);
+  await h.chat.send("Where is the gun?");
+  assert.equal(app.ui.modal?.id, "ai.setup");
+  assert.equal(h.chat.messages.at(-1)?.setupRequired, true);
+  assert.equal(offers, 1);
+  app.closeModal();
+  await h.chat.send("Which room?");
+  assert.equal(app.ui.modal, null);
+  assert.equal(offers, 1);
+  ready = true;
+  aiSetupReady();
+  // The ready callback starts a new async request; allow its tools to finish.
+  for (let i = 0; i < 50 && h.chat.busy; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.chat.messages.at(-1)?.text, "Scene 12.");
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.chat.messages.filter((m) => m.role === "user" && m.text === "Which room?").length, 1);
+});
+
+test("coded discovery failures and streamed local failures both offer setup without exposing transport errors", async () => {
+  for (const streamed of [false, true]) {
+    handle = (channel, ...args) => {
+      if (channel === AI_CHANNELS.status) return { active: { provider: "ollama" }, providers: [{ provider: "ollama", ready: true }] };
+      if (channel === AI_CHANNELS.start) {
+        const request = args[0] as AiRequest;
+        if (!streamed) return { error: { code: "not-configured", message: "Run ollama pull" } };
+        emit({ id: request.id, type: "error", code: "unreachable", message: "Ollama is not running at that address" });
+        return { id: request.id, provider: "ollama", model: "test" };
+      }
+    };
+    const run = runAiTurn({ tier: "smart", system: "Read", messages: [] });
+    await assert.rejects(run.done, (e: any) => e.setupRequired && e.message === "Set up AI to use this feature.");
+    assert.equal(listeners.size, 0);
+  }
+});
+
+test("an unready cloud provider keeps its own message; only the local model opens setup", async () => {
+  let starts = 0;
+  handle = (channel) => {
+    if (channel === AI_CHANNELS.status) return { active: { provider: "openai" }, providers: [{ provider: "openai", ready: false }, { provider: "ollama", ready: false }] };
+    if (channel === AI_CHANNELS.start) { starts++; return { error: { code: "not-configured", message: "No API key is set for openai." } }; }
+  };
+  const run = runAiTurn({ tier: "fast", system: "Read", messages: [] });
+  await assert.rejects(run.done, (e: any) => !e.setupRequired && /No API key/.test(e.message));
+  assert.equal(starts, 1);
+  const local = runAiTurn({ tier: "fast", system: "Read", messages: [], provider: "ollama" });
+  await assert.rejects(local.done, (e: any) => e.setupRequired);
+  assert.equal(starts, 1, "the local model is checked before any text is sent");
 });

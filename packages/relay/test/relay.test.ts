@@ -265,6 +265,17 @@ test("invites round-trip, and the Node and WebCrypto read keys agree", async () 
   assert.match(key, /^[A-Za-z0-9_-]{22}$/);
 });
 
+test("Tailscale ws invites round-trip without changing the invite format", () => {
+  const invite = { relay: "ws://100.114.165.59:52144", room: randomId(), key: randomId(), readOnly: false };
+  const text = formatInvite(invite);
+  assert.match(text, /^screenplay:\/\/join\?host=100\.114\.165\.59%3A52144&room=/);
+  assert.deepEqual(parseInvite(text), invite);
+  const explicitRelay = new URL(text);
+  explicitRelay.searchParams.delete("host");
+  explicitRelay.searchParams.set("relay", invite.relay);
+  assert.deepEqual(parseInvite(explicitRelay.href), invite);
+});
+
 test("the CLI starts a relay and answers health checks", async () => {
   const child = spawn(process.execPath, [fileURLToPath(new URL("../src/cli.ts", import.meta.url)), "--port", "0", "--host", "127.0.0.1"], { stdio: ["ignore", "pipe", "inherit"] });
   try {

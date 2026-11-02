@@ -6,6 +6,8 @@ import {
   type AiTier, type ProviderId, type ProductionData,
 } from "../../shared/channels/ai.ts";
 import { readBacklot } from "./backlot.ts";
+import { localAiSetup } from "./local-setup.ts";
+import type { LocalAiSetup } from "../../shared/channels/ai.ts";
 import type { DirectProvider } from "./chatgpt-direct.ts";
 import { isKeyedProvider, type KeyStore } from "./keys.ts";
 import {
@@ -40,7 +42,7 @@ const CONTEXT_CHARS: Record<ProviderId, number> = { ollama: 36_000, anthropic: 4
 export class AiRunner {
   private readonly active = new Map<string, AbortController>();
   private readonly sessionCleanup = new Map<string, () => void>();
-  private ollamaModels: { at: number; models: { name: string; size?: number }[] } | undefined;
+  private ollamaModels: { at: number; endpoint: string; models: { name: string; size?: number }[] } | undefined;
   private readonly deps: RunnerDeps;
 
   constructor(deps: RunnerDeps) {
@@ -62,10 +64,10 @@ export class AiRunner {
   }
 
   private async installedOllama(signal: AbortSignal): Promise<{ name: string; size?: number }[]> {
-    if (this.ollamaModels && Date.now() - this.ollamaModels.at < 30_000) return this.ollamaModels.models;
+    if (this.ollamaModels?.endpoint === this.endpoint() && Date.now() - this.ollamaModels.at < 30_000 && this.ollamaModels.models.length) return this.ollamaModels.models;
     const listed = await listModels("ollama", { ollamaEndpoint: this.endpoint() }, this.deps.fetch, signal);
     const models = listed.map((m) => ({ name: m.id, ...(m.size ? { size: m.size } : {}) }));
-    this.ollamaModels = { at: Date.now(), models };
+    this.ollamaModels = { at: Date.now(), endpoint: this.endpoint(), models };
     return models;
   }
 
@@ -191,13 +193,35 @@ export class AiRunner {
     for (const [key, controller] of this.active) if (key.startsWith(`${owner}:`)) controller.abort();
   }
 
+  private probe: { key: string; at: number; value?: LocalAiSetup; pending?: Promise<LocalAiSetup> } | undefined;
+  /** The local model's readiness, checked at most every 5 s per endpoint and model, and once at a time. With `cached`,
+   * returns the last answer (or undefined) without waiting and refreshes in the background. */
+  localReadiness(): Promise<LocalAiSetup>;
+  localReadiness(cached: true): LocalAiSetup | undefined;
+  /** `fresh` is the setup sheet's check: it always probes, so a retry after setup reads what the sheet just saw. */
+  localReadiness(cached: "fresh"): Promise<LocalAiSetup>;
+  localReadiness(cached: boolean | "fresh" = false): Promise<LocalAiSetup> | LocalAiSetup | undefined {
+    const selected = this.chosenModel("ollama"), key = `${this.endpoint()}\0${selected ?? ""}`;
+    if (this.probe?.key !== key) this.probe = { key, at: 0 };
+    const probe = this.probe;
+    if (!probe.pending && (cached === "fresh" || Date.now() - probe.at > 5000)) {
+      probe.pending = localAiSetup(this.endpoint(), { fetch: this.deps.fetch, ...(selected ? { selected } : {}) })
+        .then((value) => (probe.value = value, probe.at = Date.now(), value)).finally(() => { probe.pending = undefined; });
+      probe.pending.catch(() => undefined);
+    }
+    if (cached === true) return probe.value;
+    return probe.pending ?? Promise.resolve(probe.value!);
+  }
+
   async status(): Promise<AiStatus> {
     const selected = this.provider();
     const chatgpt: ChatgptStatus = this.deps.chatgpt?.status()
       ?? { available: false, signedIn: false, pending: false, note: CHATGPT_OFF };
+    // Only the local model's own requests wait for the probe; a cloud request reads the last answer.
+    const local = selected === "ollama" ? await this.localReadiness() : this.localReadiness(true);
     const providers = PROVIDERS.map((provider) => {
       if (provider === "chatgpt") return { provider, ready: chatgpt.signedIn && !!chatgpt.planUsageGranted && !chatgpt.paused, note: chatgpt.note };
-      if (provider === "ollama") return { provider, ready: true };
+      if (provider === "ollama") return { provider, ready: local ? local.running && local.model : true };
       const keySet = this.deps.keys.has(provider);
       return { provider, ready: keySet, keySet, ...(keySet ? {} : { note: "Add an API key." }) };
     });

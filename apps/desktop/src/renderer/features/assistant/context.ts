@@ -58,7 +58,7 @@ interface SceneChunk {
   ids: Set<string>;
 }
 
-function fountainOf(paragraphs: Paragraph[]): string {
+export function fountainOf(paragraphs: Paragraph[]): string {
   return writeFountain({ titlePage: [], paragraphs }).trim();
 }
 

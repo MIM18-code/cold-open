@@ -13,6 +13,7 @@ import { COMPLETE_SETTING, type CompleteMode } from "../autocomplete/complete.ts
 import { desktop, messageBox } from "../../core/platform.ts";
 import logoBlack from "./brand/chatgpt-logo-black.svg";
 import logoWhite from "./brand/chatgpt-logo-white.svg";
+import { openAiSetup } from "./setup.ts";
 
 function TextSetting({ label, name, placeholder, list, hint }: { label: string; name: string; placeholder?: string; list?: string; hint?: string }) {
   const [value, setValue] = useSetting<string>(name, "");
@@ -61,7 +62,7 @@ function KeyRow({ provider, keySet, encryption, refresh }: { provider: KeyedProv
   );
 }
 
-function ChatgptRow({ status, refresh }: { status: AiStatus["chatgpt"]; refresh: () => void }) {
+export function ChatgptRow({ status, refresh, setup = false, onSignIn }: { status: AiStatus["chatgpt"]; refresh: () => void; setup?: boolean; onSignIn?: () => void }) {
   const [error, setError] = useState("");
   const [welcomed, setWelcomed] = useSetting<boolean>("ai.chatgpt.welcomed", false);
   // OpenAI's guidelines: say once, on the first sign-in with plan usage, that eligible requests use the plan.
@@ -89,8 +90,8 @@ function ChatgptRow({ status, refresh }: { status: AiStatus["chatgpt"]; refresh:
   };
   return (
     <div className="field">
-      <span>ChatGPT account</span>
-      {status.profiles?.length ? <label>Connection
+      {!setup && <span>ChatGPT account</span>}
+      {!setup && status.profiles?.length ? <label>Connection
         <select aria-label="ChatGPT connection" value={status.activeProfile ?? ""}
           disabled={status.pending} onChange={(e) => void run(AI_CHANNELS.chatgptSelect, e.target.value)}>
           {!status.activeProfile ? <option value="">Choose a connection</option> : null}
@@ -101,28 +102,28 @@ function ChatgptRow({ status, refresh }: { status: AiStatus["chatgpt"]; refresh:
         {status.signedIn ? (
           <>
             <span>Signed in{status.email ? ` as ${status.email}` : ""}{status.plan ? `, ${status.plan} plan` : ""}.</span>
-            <button className="button" onClick={() => void run(AI_CHANNELS.chatgptLogout)}>Sign out</button>
+            {!setup && <button className="button" onClick={() => void run(AI_CHANNELS.chatgptLogout)}>Sign out</button>}
           </>
         ) : (
           // OpenAI's approved button: black with the white logo, or white with the black logo in dark mode.
-          <button className="siwc-button" data-oai-siwc-button="" disabled={status.pending} onClick={() => void run(AI_CHANNELS.chatgptLogin)}>
+          <button className="siwc-button" data-oai-siwc-button="" disabled={status.pending || !status.available} onClick={() => { onSignIn?.(); void run(AI_CHANNELS.chatgptLogin); }}>
             <img className="siwc-logo-on-black" src={logoWhite} alt="" width={18} height={18} />
             <img className="siwc-logo-on-white" src={logoBlack} alt="" width={18} height={18} />
-            <span>{status.pending ? "Waiting for your browser" : "Continue with ChatGPT"}</span>
+            <span>{status.pending ? "Waiting for your browser" : setup ? "Sign in with ChatGPT" : "Continue with ChatGPT"}</span>
           </button>
         )}
       </div>
       {status.signedIn ? <span>{status.planUsageGranted ? "Using ChatGPT plan" : "ChatGPT plan usage is not enabled"}</span> : null}
       <div className="ai-settings-row">
         {status.signedIn && !status.planUsageGranted ? <button className="button" disabled={status.pending}
-          onClick={() => void run(AI_CHANNELS.chatgptLogin, { consent: true })}>Enable ChatGPT plan usage</button> : null}
-        {status.profiles?.length || status.signedIn ? <button className="button" disabled={!status.available || status.pending}
+          onClick={() => { onSignIn?.(); void run(AI_CHANNELS.chatgptLogin, { consent: true }); }}>Enable ChatGPT plan usage</button> : null}
+        {!setup && (status.profiles?.length || status.signedIn) ? <button className="button" disabled={!status.available || status.pending}
           onClick={() => void run(AI_CHANNELS.chatgptLogin, { newProfile: true })}>Add ChatGPT account</button> : null}
-        <button className="button" onClick={() => void run(CHANNELS.openExternal, CHATGPT_USAGE_URL)}>Manage usage</button>
+        {!setup && <button className="button" onClick={() => void run(CHANNELS.openExternal, CHATGPT_USAGE_URL)}>Manage usage</button>}
         {status.paused ? <button className="button" onClick={() => void run(AI_CHANNELS.chatgptResume)}>Resume ChatGPT requests</button> : null}
         {status.pending ? <button className="button" onClick={() => void run(AI_CHANNELS.chatgptCancelLogin)}>Cancel sign-in</button> : null}
       </div>
-      <small className="ai-settings-hint">Cold Open is free and has no plan or charges of its own. With ChatGPT plan usage on, eligible requests use your ChatGPT plan. Casting and sentence completion each ask once before their first use.</small>
+      {!setup && <small className="ai-settings-hint">Cold Open is free and has no plan or charges of its own. With ChatGPT plan usage on, eligible requests use your ChatGPT plan. Casting and sentence completion each ask once before their first use.</small>}
       {status.note ? <small className="ai-settings-hint" role="status">{status.note}</small> : null}
       {error ? <small className="ai-settings-error">{error}</small> : null}
     </div>
@@ -177,6 +178,7 @@ function BacklotRow() {
 
 export function AiSettings() {
   const [provider, setProvider] = useSetting<ProviderId>(AI_SETTINGS.provider, "ollama");
+  const [endpoint] = useSetting<string>(AI_SETTINGS.ollamaEndpoint, DEFAULT_OLLAMA_ENDPOINT);
   const [wholeScript, setWholeScript] = useSetting<boolean>(AI_SETTINGS.wholeScript, true);
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [models, setModels] = useState<string[]>([]);
@@ -187,7 +189,7 @@ export function AiSettings() {
   const [testing, setTesting] = useState(false);
 
   const refresh = useCallback(() => void desktop.invoke<AiStatus>(AI_CHANNELS.status).then(setStatus, () => undefined), []);
-  useEffect(refresh, [refresh, provider]);
+  useEffect(refresh, [refresh, provider, endpoint]);
   const keySet = status?.providers.find((p) => p.provider === provider)?.keySet ?? false;
   useEffect(() => {
     setResult(null);
@@ -200,7 +202,7 @@ export function AiSettings() {
       if (current) { setModels(r.models); setSuggested(r.suggested); setEntries(r.entries ?? []); }
     }, () => undefined);
     return () => { current = false; };
-  }, [provider, keySet, status?.chatgpt.signedIn, status?.chatgpt.planUsageGranted, status?.chatgpt.activeProfile, status?.chatgpt.paused]);
+  }, [provider, endpoint, keySet, status?.chatgpt.signedIn, status?.chatgpt.planUsageGranted, status?.chatgpt.activeProfile, status?.chatgpt.paused]);
 
   const test = async () => {
     setTesting(true);
@@ -210,6 +212,7 @@ export function AiSettings() {
 
   return (
     <div className="ai-settings">
+      <div><button className="button" onClick={openAiSetup}>Set up AI…</button></div>
       <label className="field">
         <span>Provider</span>
         <select aria-label="Provider" value={provider} onChange={(e) => setProvider(e.target.value as ProviderId)}>
@@ -220,7 +223,10 @@ export function AiSettings() {
         </small>
       </label>
 
-      {provider === "ollama" ? <TextSetting label="Ollama address" name={AI_SETTINGS.ollamaEndpoint} placeholder={DEFAULT_OLLAMA_ENDPOINT} /> : null}
+      {provider === "ollama" ? <details><summary>Advanced</summary>
+        <TextSetting label="Ollama address" name={AI_SETTINGS.ollamaEndpoint} placeholder={DEFAULT_OLLAMA_ENDPOINT} />
+        <TextSetting label="Model" name={AI_SETTINGS.model(provider)} list="ai-models" placeholder={suggested ? `Automatic: ${suggested}` : "Automatic: an installed model"} />
+      </details> : null}
       {(KEYED_PROVIDERS as readonly string[]).includes(provider) && status
         ? <KeyRow provider={provider as KeyedProvider} keySet={keySet} encryption={status.encryption} refresh={refresh} /> : null}
       {provider === "chatgpt" && status ? <ChatgptRow status={status.chatgpt} refresh={refresh} /> : null}
@@ -232,9 +238,9 @@ export function AiSettings() {
           {chatgptModel && !entries.some((model) => model.id === chatgptModel) ? <option value={chatgptModel}>{chatgptModel} (unavailable)</option> : null}
           {entries.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
         </select>
-      </label> : <TextSetting label="Model" name={AI_SETTINGS.model(provider)} list="ai-models"
-        placeholder={provider === "ollama" ? (suggested ? `Automatic: ${suggested}` : "Automatic: the best installed small model") : "Default for this provider"}
-        hint={provider === "anthropic" ? "Default: Haiku for proofreading, Sonnet for questions." : undefined} />}
+      </label> : provider !== "ollama" ? <TextSetting label="Model" name={AI_SETTINGS.model(provider)} list="ai-models"
+        placeholder="Default for this provider"
+        hint={provider === "anthropic" ? "Default: Haiku for proofreading, Sonnet for questions." : undefined} /> : null}
 
       <div className="ai-settings-row">
         <button className="button" disabled={testing} onClick={() => void test()}>{testing ? "Testing" : "Test connection"}</button>

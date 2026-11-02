@@ -8,6 +8,7 @@ import type { EditorBridge } from "../../core/editor-bridge.ts";
 import { desktop, messageBox } from "../../core/platform.ts";
 import { AiClientError, runAi, type AiRun } from "../assistant/client.ts";
 import { preferredProvider, providerName } from "../assistant/provider.ts";
+import { activeReady } from "../assistant/setup-state.ts";
 import { COMPLETE_SETTING, COMPLETE_TYPES, answerSentence, completionFrom, completionRequest, visibleBefore, visibleText, type CompleteMode } from "./complete.ts";
 
 const CLOUD_SETTING = "ai.complete.cloudApproved";
@@ -71,11 +72,12 @@ async function complete(auto: boolean): Promise<void> {
   const current = () => mine === token && app.editor === editor && app.session === session && mode() !== "off";
   const status = await desktop.invoke<AiStatus>(AI_CHANNELS.status).catch(() => null);
   if (!status || !current()) return;
+  if (auto && !activeReady(status)) return;
   const provider = preferredProvider(status);
   if (!(await cloudApproved(provider)) || !current()) return;
   if (!auto) editor.setGhostText({ ...at, text: "", pending: true, onDismiss: stop });
   const request = completionRequest({ ...context(paragraphs, index), type: paragraph.type, prefix });
-  run = runAi({ provider, tier: "fast", json: true, maxTokens: 120, system: request.system, messages: request.messages });
+  run = runAi({ provider, tier: "fast", json: true, maxTokens: 120, system: request.system, messages: request.messages }, undefined, { quiet: auto });
   try {
     const answer = await run.done;
     if (!current()) return;

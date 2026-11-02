@@ -8,6 +8,8 @@ import { readStoredCast } from "../table-read/cast-store.ts";
 import { FALLBACK_NOTE, runAgent } from "./agent.ts";
 import type { Suggestion } from "./suggestions.ts";
 import { QUICK_ACTIONS, assistantSystem, buildScriptContext, selectedText } from "./context.ts";
+import { cancelAiRetry, retryWhenAiReady } from "./setup.ts";
+import { needsAiSetup } from "./setup-state.ts";
 
 export interface ChatMessage {
   id: number;
@@ -16,6 +18,7 @@ export interface ChatMessage {
   /** The answer is still arriving. */
   streaming?: boolean;
   error?: string;
+  setupRequired?: boolean;
   /** What the answer was based on, shown under it. */
   note?: string;
   steps?: string[];
@@ -57,6 +60,7 @@ export class Chat {
   }
 
   clear(): void {
+    cancelAiRetry(this);
     this.generation++;
     this.controller?.abort();
     this.controller = null;
@@ -68,6 +72,7 @@ export class Chat {
   }
 
   stop(): void {
+    cancelAiRetry(this);
     this.controller?.abort();
     this.run?.cancel();
   }
@@ -99,6 +104,7 @@ export class Chat {
   async send(text: string, options: SendOptions = {}): Promise<void> {
     const question = text.trim();
     if (!question || this.busy) return;
+    cancelAiRetry(this);
     const generation = this.generation;
     const controller = new AbortController();
     this.controller = controller;
@@ -152,16 +158,22 @@ export class Chat {
       } else {
         this.run = runAi(fallback, (delta) => update({ text: reply.text + delta }));
         const active = this.run;
-        void active.started.then((started) => {
+        const started = active.started.then((started) => {
           if (!controller.signal.aborted) update({ note: [started.model, contextNote, ...(useBacklot ? ["Backlot data"] : [])].join(" · ") });
-        }, () => undefined);
-        const answer = await active.done;
+        });
+        const [answer] = await Promise.all([active.done, started]);
         if (controller.signal.aborted) throw new AiClientError("cancelled", "Cancelled.");
         update({ text: answer, streaming: false });
       }
     } catch (error) {
       const cancelled = error instanceof AiClientError && error.code === "cancelled";
-      update({ streaming: false, ...(cancelled ? { note: "Stopped" } : { error: error instanceof Error ? error.message : String(error) }) });
+      const setupRequired = needsAiSetup(error);
+      update({ streaming: false, setupRequired, ...(cancelled ? { note: "Stopped" } : { error: error instanceof Error ? error.message : String(error) }) });
+      if (setupRequired && generation === this.generation) retryWhenAiReady(this, () => {
+        if (generation !== this.generation || this.busy) return;
+        this.messages = this.messages.filter((m) => m.id !== reply.id && m.id !== reply.id - 1);
+        void this.send(question, options);
+      });
     } finally {
       if (generation === this.generation) {
         this.run = null;

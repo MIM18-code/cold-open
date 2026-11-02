@@ -109,3 +109,9 @@
 :root[data-theme="dark"] .siwc-button { background: #fff; color: #000; border-color: #fff; }
 :root[data-theme="dark"] .siwc-button .siwc-logo-on-black { display: none; }
 :root[data-theme="dark"] .siwc-button .siwc-logo-on-white { display: inline; }
+.ai-setup { display: grid; gap: 16px; line-height: 1.5; }
+.ai-setup > p, .ai-setup h3 { margin: 0; }
+.ai-setup .rewrite-item { padding: 16px; }
+.ai-setup .rewrite-item > p { margin: 8px 0 12px; }
+.ai-setup progress { display: block; width: 100%; }
+.ai-setup-actions { display: flex; justify-content: flex-end; gap: 8px; }

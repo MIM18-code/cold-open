@@ -1,6 +1,6 @@
-// New, Open, Save, Save As, Import, Export (FDX and Fountain), Revert, recent files, crash-recovery backups,
-// and asking to save before a window closes. PDF export lives in the print feature.
-import { assertUniqueSceneNumbers, isTemplateId, ScreenplayDoc, parseFdx, parseFountain, plainText, writeFdx, writeFountain, type Script } from "@screenplay/engine";
+// New, Open, Save, Save As, Import, Export (FDX, Fountain and Movie Magic), Revert, recent files,
+// crash-recovery backups, and asking to save before a window closes. PDF export lives in the print feature.
+import { assertUniqueSceneNumbers, isTemplateId, ScreenplayDoc, parseFdx, parseFountain, plainText, sceneEighths, sexFromScript, writeFdx, writeFountain, writeSex, type Script } from "@screenplay/engine";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { CHANNELS, NATIVE_EXTENSION, type OpenedFile } from "../../../shared/api.ts";
@@ -9,6 +9,7 @@ import { useSessionState } from "../../core/hooks.ts";
 import { nativeOnlyFeatures } from "./preflight.ts";
 import { decodeNative, encodeNative, isNative, mergeNativeFromDisk, metaAfterMerge, sharesHistory } from "../../core/fileformat.ts";
 import { desktop, isDesktop, messageBox } from "../../core/platform.ts";
+import { currentPagination } from "../print/live.ts";
 import { titleFields } from "../title-page/titlepage.ts";
 import { historyId, recordVersion } from "../history/index.tsx";
 import { resolveSceneNumbersForDelivery } from "../revisions/settle.ts";
@@ -292,6 +293,29 @@ async function exportAs(format: "fdx" | "fountain"): Promise<void> {
   app.toast(`Exported ${path.split("/").pop()}`, "success");
 }
 
+async function exportSex(): Promise<void> {
+  app.flushPending();
+  const session = app.session;
+  resolveSceneNumbersForDelivery(session);
+  assertUniqueSceneNumbers(session.script());
+  // toScript already projects tags authored in the app, so their definitions resolve here.
+  const script = session.script();
+  const pagination = currentPagination(app, script), pages = new Map<string, string>();
+  for (const page of pagination.pages) {
+    for (const sceneId of page.sceneIds) if (!pages.has(sceneId)) pages.set(sceneId, page.number);
+  }
+  // Scene lengths fill Movie Magic's page-count column; they're the same eighths the Scenes report shows.
+  const data = writeSex(sexFromScript(script, { pages, lengths: sceneEighths(script, pagination) }));
+  const path = await desktop.invoke<string | null>(CHANNELS.saveDialog, {
+    title: "Export Movie Magic Scheduling",
+    defaultPath: `${session.name}.sex`,
+    filters: [{ name: "Movie Magic Scheduling", extensions: ["sex"] }],
+  });
+  if (!path) return;
+  await desktop.invoke(CHANNELS.writeFile, path, data);
+  app.toast(`Exported ${path.split("/").pop()}`, "success");
+}
+
 /** Ask to save unsaved changes. Resolves true when it is fine to discard the document. */
 export async function confirmDiscard(action = "closing"): Promise<boolean> {
   // A pending draft makes the document dirty, so closing asks instead of dropping it.
@@ -512,6 +536,7 @@ const feature: Feature = {
         await restoreAfterOpen(session);
       } },
     { id: "file.exportFdx", label: "Export Final Draft (.fdx)…", menu: "File", group: "export", run: () => exportAs("fdx") },
+    { id: "file.exportSex", label: "Export Movie Magic Scheduling (.sex)…", menu: "File", group: "export", run: () => exportSex() },
     { id: "file.exportFountain", label: "Export Fountain…", menu: "File", group: "export", run: () => exportAs("fountain") },
     { id: "file.reveal", label: "Show in Finder", menu: "File", group: "export", enabled: (a) => !!a.session.path && isDesktop,
       run: (a) => desktop.invoke(CHANNELS.revealInFinder, a.session.path) },

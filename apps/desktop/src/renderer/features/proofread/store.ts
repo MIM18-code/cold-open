@@ -9,6 +9,7 @@ import type { App } from "../../core/app.ts";
 import type { DocumentSession } from "../../core/session.ts";
 import { desktop } from "../../core/platform.ts";
 import { runAi, type AiRun } from "../assistant/client.ts";
+import { needsAiSetup } from "../assistant/setup-state.ts";
 import { replaceInParagraph } from "./apply.ts";
 import { AI_CHECK_SYSTEM, type Chunk, characterNames, checkPrompt, chunkParagraphs, isReadable, parseAiFindings, sceneParagraphs } from "./aicheck.ts";
 import { SpellCache, computeFindings, inScriptOrder, scriptFindings, spellingFindings, type CheckOptions } from "./check.ts";
@@ -25,6 +26,7 @@ export type AiScope = "scene" | "script";
 
 export interface AiState {
   running: boolean;
+  setupRequired?: boolean;
   progress?: string;
   error?: string;
   /** How many findings the last run kept. */
@@ -424,7 +426,7 @@ export class ProofreadStore {
       this.setAi({ running: false, kept: kept.length });
     } catch (error) {
       if (token !== this.aiToken) return;
-      this.setAi({ running: false, error: error instanceof Error ? error.message : String(error) });
+      this.setAi({ running: false, setupRequired: needsAiSetup(error), error: error instanceof Error ? error.message : String(error) });
     } finally {
       if (token === this.aiToken) this.aiRun = null;
     }

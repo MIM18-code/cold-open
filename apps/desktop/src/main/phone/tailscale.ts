@@ -44,6 +44,16 @@ export async function tailscaleCheck(exec: RunTail = run): Promise<PhoneTailscal
   }
   return { installed: false, running: false, magicDns: false, https: false };
 }
+/** This Mac's Tailscale IPv4 address as Tailscale itself reports it, or null when Tailscale isn't running here. */
+export async function tailscaleOwnAddress(exec: RunTail = run): Promise<string | null> {
+  for (const cli of binaries) {
+    try {
+      const { address } = tailStatus(await exec(cli, ["status", "--json"]));
+      if (address) return address;
+    } catch { /* The other supported installation may own the CLI. */ }
+  }
+  return null;
+}
 export async function tailscaleNetwork(exec: RunTail = run): Promise<TailNetwork | null> {
   for (const cli of binaries) {
     try {

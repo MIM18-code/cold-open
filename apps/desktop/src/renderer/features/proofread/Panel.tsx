@@ -2,6 +2,7 @@ import { FINDING_KINDS, FINDING_KIND_LABELS, type Finding, plainText } from "@sc
 import { useState, useSyncExternalStore } from "react";
 
 import { useSessionState } from "../../core/hooks.ts";
+import { openAiSetup } from "../assistant/setup.ts";
 import { type AiScope, type ProofreadStore } from "./store.ts";
 
 /** Button text for a replacement; spaces and nothing at all need words. */
@@ -67,7 +68,7 @@ export function ProofreadPanel({ store }: { store: ProofreadStore }) {
           ? <button className="button" onClick={() => store.cancelAi()}>Stop</button>
           : <button className="button" onClick={() => void store.checkWithAi(scope)}>Check with AI</button>}
         <span className="proofread-ai-status" role="status">
-          {ai.running ? ai.progress : ai.error ? <span className="proofread-error">{ai.error}</span> : ai.kept !== undefined ? `${ai.kept} found` : ""}
+          {ai.running ? ai.progress : ai.error ? <span className="proofread-error">{ai.error}{ai.setupRequired && <button className="button" onClick={openAiSetup}>Set up AI…</button>}</span> : ai.kept !== undefined ? `${ai.kept} found` : ""}
         </span>
       </div>
       <div className="proofread-list">

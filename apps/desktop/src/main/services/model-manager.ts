@@ -1,5 +1,6 @@
 import { dialog } from "electron";
 import type { ServiceContext } from "../context.ts";
+import { AI_SETTINGS, DEFAULT_OLLAMA_ENDPOINT } from "../../shared/channels/ai.ts";
 import { FORMATTER_MODEL, OllamaModels, type ModelPin, type ModelProgress } from "../models/ollama.ts";
 const PINS = "grants.localModelPins.v1";
 export function register(ctx: ServiceContext): void {
@@ -12,22 +13,24 @@ export function register(ctx: ServiceContext): void {
     let progress: ModelProgress | null = null;
     const pins = (): ModelPin[] => { const raw = ctx.settings.get(PINS); return Array.isArray(raw) ? raw.filter((p: any) => p && typeof p.name === "string" && typeof p.digest === "string") as ModelPin[] : []; };
     const emit = (value: ModelProgress) => { progress = value; ctx.broadcast("models:progress", value); };
-    ctx.handle("models:status", async () => ({ installed: await models.list(), pins: pins(), progress, downloading: !!job, source: FORMATTER_MODEL }));
-    ctx.handle("models:pull", async (event) => {
+    ctx.handle("models:status", async (event, options?: { fromAiSetup?: boolean }) => ({ installed: options?.fromAiSetup === true ? [] : await models.list(), pins: pins(), progress, downloading: !!job, canCancel: job?.owner === event.sender.id, source: FORMATTER_MODEL }));
+    ctx.handle("models:pull", async (event, options?: { fromAiSetup?: boolean }) => {
         const window = ctx.windowOf(event.sender);
         if (!window)
             throw new Error("Window closed.");
         if (job)
             throw new Error("A local-model download is already running.");
-        const answer = await dialog.showMessageBox(window, { type: "question", message: `Download or repair ${FORMATTER_MODEL}?`, detail: "Ollama downloads and verifies model files on this Mac. This can use several gigabytes and an internet connection. No screenplay text is sent. Cancelling and later resuming reuses Ollama’s valid partial data. Existing pinned versions remain selected until you explicitly switch.", buttons: ["Cancel", "Download model"], defaultId: 0, cancelId: 0 });
-        if (answer.response !== 1)
-            return null;
+        if (options?.fromAiSetup !== true) {
+            const answer = await dialog.showMessageBox(window, { type: "question", message: `Download or repair ${FORMATTER_MODEL}?`, detail: "Ollama downloads and verifies model files on this Mac. This can use several gigabytes and an internet connection. No screenplay text is sent. Cancelling and later resuming reuses Ollama’s valid partial data. Existing pinned versions remain selected until you explicitly switch.", buttons: ["Cancel", "Download model"], defaultId: 0, cancelId: 0 });
+            if (answer.response !== 1) return null;
+        }
         if (job)
             throw new Error("Another window started a download.");
         const abort = new AbortController();
         const stopped = () => abort.abort();
         event.sender.once("destroyed", stopped);
-        const done = models.pull(abort.signal, emit);
+        const target = options?.fromAiSetup === true ? new OllamaModels(fetch, ctx.settings.get<string>(AI_SETTINGS.ollamaEndpoint)?.trim() || DEFAULT_OLLAMA_ENDPOINT) : models;
+        const done = target.pull(abort.signal, emit);
         const owned = job = { owner: event.sender.id, abort, done };
         try {
             return await done;

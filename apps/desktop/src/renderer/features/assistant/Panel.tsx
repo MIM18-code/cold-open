@@ -10,6 +10,7 @@ import { applySuggestion } from "./apply.ts";
 import { type ChatMessage, Chat } from "./chat.ts";
 import { parseMarkdown, type Span } from "./markdown.ts";
 import { splitAnswer, type Suggestion } from "./suggestions.ts";
+import { openAiSetup } from "./setup.ts";
 
 let chat: Chat | null = null;
 export function getChat(): Chat {
@@ -81,7 +82,7 @@ function Message({ message }: { message: ChatMessage }) {
         : <SuggestionCard key={i} suggestion={piece.suggestion} />)}
       {message.proposals?.map((suggestion, index) => <SuggestionCard key={`proposal-${index}`} suggestion={suggestion} />)}
       {message.streaming && !message.text ? <div className="assistant-wait">Thinking</div> : null}
-      {message.error ? <div className="assistant-error">{message.error}</div> : null}
+      {message.error ? <div className="assistant-error">{message.error}{message.setupRequired && <button className="button" onClick={openAiSetup}>Set up AI…</button>}</div> : null}
       {message.note ? <div className="assistant-note">{message.note}</div> : null}
     </div>
   );
@@ -139,7 +140,7 @@ export function AssistantPanel() {
         {current.messages.length === 0 ? (
           <div className="assistant-empty">
             Ask about the script{backlotPath ? " or the production" : ""}. Nothing is sent until you ask.
-            {status && ready === false ? <div className="assistant-problem">Not ready: open Settings, AI, to set up {PROVIDER_LABELS[status.active.provider]}.</div> : null}
+            {status && ready === false ? <div className="assistant-problem">Set up AI to use this feature. <button className="button" onClick={openAiSetup}>Set up AI…</button></div> : null}
           </div>
         ) : current.messages.map((message) => <Message key={message.id} message={message} />)}
         <div ref={end} />

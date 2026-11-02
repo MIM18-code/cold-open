@@ -6,7 +6,7 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { launch, runCommand } from "./helpers.ts";
+import { close, launch, runCommand } from "./helpers.ts";
 
 /** The tests edit the script, and a dirty document makes closing ask about saving in a window nobody sees. */
 async function closeApp(app: ElectronApplication, page: Page): Promise<void> {
@@ -88,6 +88,115 @@ async function useMock(page: Page, mock: Mock): Promise<void> {
 }
 
 const openPanel = (page: Page, id: string) => page.evaluate((panel) => (window as any).__app.togglePanel(panel, true), id);
+
+test("an unavailable local provider opens setup once, becomes ready and retries the question", async () => {
+  const mock = await mockOllama();
+  const unavailable = await mockOllama();
+  await unavailable.close();
+  const { electronApp, page } = await launch();
+  try {
+    await useMock(page, unavailable);
+    await page.evaluate(() => (window as any).__app.setSetting("ai.assistant.wholeScript", false));
+    await loadScript(page, KITCHEN);
+    await openPanel(page, "assistant");
+    await page.getByLabel("Ask about the script").fill("What happens in the kitchen?");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    const sheet = page.getByRole("dialog", { name: "Set up AI", exact: true });
+    await expect(sheet).toBeVisible();
+    await expect(page.locator(".assistant-error")).toContainText("Set up AI to use this feature.");
+    await expect(page.locator(".assistant-error").getByRole("button", { name: "Set up AI…" })).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("Ollama is not running at that address");
+
+    mock.reply = "Maya pours coffee.";
+    await useMock(page, mock);
+    await expect(sheet).toContainText("AI on this Mac is ready.", { timeout: 10_000 });
+    await expect(page.locator(".assistant-log")).toContainText("Maya pours coffee.");
+    expect(mock.chats).toHaveLength(1);
+    expect(mock.chats[0].messages.filter((m: any) => m.role === "user")).toHaveLength(1);
+    await sheet.getByRole("button", { name: "Done", exact: true }).click();
+
+    await useMock(page, unavailable);
+    await page.getByLabel("Ask about the script").fill("What about the yard?");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    await expect(page.locator(".assistant-error").last()).toContainText("Set up AI to use this feature.");
+    await expect(sheet).toHaveCount(0);
+    await page.locator(".assistant-error").last().getByRole("button", { name: "Set up AI…" }).click();
+    await expect(sheet).toBeVisible();
+  } finally { await close(electronApp, page); await mock.close(); }
+});
+
+test("a signed-in ChatGPT never replaces the local model without a click", async () => {
+  const unavailable = await mockOllama();
+  await unavailable.close();
+  const { electronApp, page } = await launch();
+  try {
+    await useMock(page, unavailable);
+    // Report ChatGPT as signed in, as on a Mac where the writer chose the local model anyway.
+    await electronApp.evaluate(({ ipcMain }) => {
+      const original = (ipcMain as any)._invokeHandlers.get("ai:status");
+      ipcMain.removeHandler("ai:status");
+      ipcMain.handle("ai:status", async (event, ...args) => {
+        const status = await original(event, ...args);
+        return { ...status, chatgpt: { ...status.chatgpt, signedIn: true }, providers: status.providers.map((p: any) => p.provider === "chatgpt" ? { ...p, ready: true } : p) };
+      });
+    });
+    await runCommand(page, "ai.setup");
+    const sheet = page.getByRole("dialog", { name: "Set up AI", exact: true });
+    await expect(sheet.getByRole("button", { name: "Use ChatGPT", exact: true })).toBeVisible();
+    await page.screenshot({ path: "test-results/ai-setup-not-running.png" });
+    await page.waitForTimeout(2500);
+    expect(await page.evaluate(() => (window as any).__app.setting("ai.provider", "ollama"))).toBe("ollama");
+    await sheet.getByRole("button", { name: "Use ChatGPT", exact: true }).click();
+    await expect(sheet).toContainText("ChatGPT is selected.");
+    await expect.poll(() => page.evaluate(() => (window as any).__app.setting("ai.provider", "ollama"))).toBe("chatgpt");
+  } finally { await close(electronApp, page); }
+});
+
+test("opening setup while on ChatGPT keeps ChatGPT even when AI on this Mac is ready", async () => {
+  // Sol: a ready local model was selected the moment the sheet opened, replacing the writer's cloud choice.
+  const mock = await mockOllama();
+  const { electronApp, page } = await launch();
+  try {
+    await useMock(page, mock);
+    await page.evaluate(() => (window as any).__app.setSetting("ai.provider", "chatgpt"));
+    await runCommand(page, "ai.setup");
+    const sheet = page.getByRole("dialog", { name: "Set up AI", exact: true });
+    await expect(sheet.getByRole("button", { name: "Use AI on this Mac", exact: true })).toBeVisible({ timeout: 10_000 });
+    await page.waitForTimeout(2500);
+    expect(await page.evaluate(() => (window as any).__app.setting("ai.provider", "ollama"))).toBe("chatgpt");
+    await sheet.getByRole("button", { name: "Use AI on this Mac", exact: true }).click();
+    await expect(sheet).toContainText("AI on this Mac is ready.");
+    await expect.poll(() => page.evaluate(() => (window as any).__app.setting("ai.provider", "ollama"))).toBe("ollama");
+  } finally { await close(electronApp, page); await mock.close(); }
+});
+
+test("pause-mode completion stays silent until AI is ready", async () => {
+  const mock = await mockOllama();
+  const unavailable = await mockOllama();
+  await unavailable.close();
+  const { electronApp, page } = await launch();
+  try {
+    await useMock(page, unavailable);
+    await loadScript(page, [KITCHEN[0]!, { id: "typing", type: "action", text: "Rain on the glass. Then a kn" }]);
+    await page.evaluate(async () => {
+      const app = (window as any).__app;
+      await app.setSetting("ai.complete", "pause");
+    });
+    await page.locator(".ProseMirror").first().click();
+    await page.evaluate(() => (window as any).__app.editor.setSelection({ paragraphId: "typing", offset: "Rain on the glass. Then a kn".length }));
+    await page.keyboard.type("o");
+    await page.waitForTimeout(4000);
+    await expect(page.getByRole("dialog", { name: "Set up AI", exact: true })).toHaveCount(0);
+    await expect(page.locator(".editor-ghost")).toHaveCount(0);
+
+    mock.reply = JSON.stringify({ sentence: "Rain on the glass. Then a knock at the door." });
+    await useMock(page, mock);
+    await page.keyboard.type("c");
+    await expect(page.locator(".editor-ghost")).toHaveText("k at the door.", { timeout: 8000 });
+    await expect(page.getByRole("dialog", { name: "Set up AI", exact: true })).toHaveCount(0);
+    expect(mock.chats).toHaveLength(1);
+  } finally { await close(electronApp, page); await mock.close(); }
+});
 
 test("proofreading lists findings, accept fixes them, ignore persists in the document", async () => {
   const { electronApp, page } = await launch();

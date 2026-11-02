@@ -6,10 +6,10 @@ import { after, test } from "node:test";
 import { ScreenplayDoc } from "@screenplay/engine";
 import { createRelay, readKeyFor, type Relay } from "@screenplay/relay";
 import { RelayClient } from "@screenplay/relay/client";
-import { formatInvite } from "@screenplay/relay/protocol";
+import { formatInvite, randomId } from "@screenplay/relay/protocol";
 
 import { CHANNELS } from "../src/shared/api.ts";
-import { SYNC } from "../src/shared/channels/sync.ts";
+import { SYNC, type HostInfo } from "../src/shared/channels/sync.ts";
 import { DocumentSession } from "../src/renderer/core/session.ts";
 
 const calls: { channel: string; args: unknown[] }[] = [];
@@ -79,6 +79,37 @@ async function hostedRoom() {
 }
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+for (const lan of [true, false]) {
+  test(`sharing carries Tailscale invites through IPC ${lan ? "with a LAN address" : "without a LAN warning"}`, async (t) => {
+    const room = randomId(), key = randomId();
+    const invites = (address: string) => ({
+      address,
+      invite: formatInvite({ relay: `ws://${address}`, room, key, readOnly: false }),
+      readOnlyInvite: formatInvite({ relay: `ws://${address}`, room, key: readKeyFor(key), readOnly: true }),
+    });
+    const tailscale = invites("100.114.165.59:52144");
+    const info: HostInfo = { relay: "ws://127.0.0.1:52144", room, key, lan, tailscale,
+      ...invites(lan ? "192.168.1.20:52144" : tailscale.address) };
+    const bridge = (globalThis as any).window.desktop;
+    const invoke = bridge.invoke;
+    t.mock.method(bridge, "invoke", (channel: string, ...args: unknown[]) =>
+      channel === SYNC.hostStart ? Promise.resolve(info) : invoke(channel, ...args));
+    const app = fakeApp(DocumentSession.untitled());
+    const collab = new CollabController(app);
+    t.after(() => collab.stop());
+    await collab.share();
+    assert.equal(collab.state.mode, "host");
+    assert.equal(collab.state.lan, lan);
+    assert.deepEqual(collab.state.tailscale, tailscale);
+    assert.equal(collab.state.invite, info.invite);
+    assert.equal(collab.state.readOnlyInvite, info.readOnlyInvite);
+    assert.deepEqual(app.toasts, []);
+    await collab.stop();
+    assert.equal(collab.state.tailscale, null);
+    assert.equal(collab.state.invite, null);
+  });
+}
 
 test("typing while Join waits keeps the window's script; the shared one opens in a new window", async () => {
   const { shareScript, invite } = await hostedRoom();

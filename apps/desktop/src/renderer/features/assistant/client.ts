@@ -1,14 +1,17 @@
-// The renderer's side of "ai:start": send a request, get text as it streams, cancel. The provider and the key
-// are the main process's business; this only knows the request ID.
+// The renderer's side of "ai:start": stream, cancel, and route setup failures to the shared sheet.
 import { CHANNELS } from "../../../shared/api.ts";
-import { AI_CHANNELS, CHATGPT_USAGE_URL, PLAN_LIMIT_MESSAGE, type AiErrorCode, type AiEvent, type AiRequest, type AiStarted, type AiTurn } from "../../../shared/channels/ai.ts";
+import { AI_CHANNELS, CHATGPT_USAGE_URL, PLAN_LIMIT_MESSAGE, type AiErrorCode, type AiEvent, type AiRequest, type AiStarted, type AiStartResult, type AiStatus, type AiTurn } from "../../../shared/channels/ai.ts";
 import { desktop, messageBox } from "../../core/platform.ts";
+import { offerAiSetup } from "./setup.ts";
+import { AI_SETUP_MESSAGE } from "./setup-state.ts";
 
 export class AiClientError extends Error {
   readonly code: AiErrorCode;
-  constructor(code: AiErrorCode, message: string) {
+  readonly setupRequired: boolean;
+  constructor(code: AiErrorCode, message: string, setupRequired = false) {
     super(message);
     this.code = code;
+    this.setupRequired = setupRequired;
   }
 }
 
@@ -42,17 +45,25 @@ export interface AiTurnRun {
   cancel(): void;
 }
 
-export function runAi(request: Omit<AiRequest, "id">, onDelta?: (text: string) => void): AiRun {
-  const run = runAiTurn(request, onDelta);
+export function runAi(request: Omit<AiRequest, "id">, onDelta?: (text: string) => void, options: { quiet?: boolean } = {}): AiRun {
+  const run = runAiTurn(request, onDelta, options);
   const done = run.done.then((turn) => turn.text);
   done.catch(() => undefined);
   return { ...run, done };
 }
 
-export function runAiTurn(request: Omit<AiRequest, "id">, onDelta?: (text: string) => void): AiTurnRun {
+export function runAiTurn(request: Omit<AiRequest, "id">, onDelta?: (text: string) => void, options: { quiet?: boolean } = {}): AiTurnRun {
   const id = `ai-${Date.now().toString(36)}-${++counter}`;
   let off: () => void = () => undefined;
   let cancelled = false;
+  let status: AiStatus | undefined;
+  const failure = (code: AiErrorCode, message: string): AiClientError => {
+    // The sheet sets up ChatGPT or the local model; a cloud provider missing its key keeps its own message.
+    const local = (request.provider ?? status?.active.provider) === "ollama";
+    const setup = code !== "cancelled" && local && (code === "unreachable" || code === "not-configured");
+    if (setup && !options.quiet && !cancelled) offerAiSetup();
+    return new AiClientError(code, setup ? AI_SETUP_MESSAGE : message, setup);
+  };
   let rejectDone!: (error: AiClientError) => void;
   const done = new Promise<AiTurn>((resolve, reject) => {
     rejectDone = reject;
@@ -67,19 +78,27 @@ export function runAiTurn(request: Omit<AiRequest, "id">, onDelta?: (text: strin
       } else {
         off();
         planLimit(event.code, event.message);
-        reject(new AiClientError(event.code, event.message));
+        reject(failure(event.code, event.message));
       }
     });
   });
   done.catch(() => undefined);
-  const started = desktop.invoke<AiStarted>(AI_CHANNELS.start, { ...request, id });
+  const started = (async () => {
+    status = await desktop.invoke<AiStatus>(AI_CHANNELS.status);
+    if (cancelled) throw new AiClientError("cancelled", "Cancelled.");
+    if ((request.provider ?? status.active.provider) === "ollama" && !status.providers.some((p) => p.provider === "ollama" && p.ready))
+      throw failure("not-configured", AI_SETUP_MESSAGE);
+    const result = await desktop.invoke<AiStartResult>(AI_CHANNELS.start, { ...request, id });
+    if ("error" in result) throw failure(result.error.code, result.error.message);
+    return result;
+  })();
   void started.then(() => {
     // Cancel can precede model discovery in main; cancel again once its request is registered.
     if (cancelled) void desktop.invoke(AI_CHANNELS.cancel, id).catch(() => undefined);
   }, (error) => {
     off();
     planLimit(undefined, error instanceof Error ? error.message : String(error));
-    rejectDone(new AiClientError(cancelled ? "cancelled" : "failed", error instanceof Error ? error.message : String(error)));
+    rejectDone(error instanceof AiClientError ? error : new AiClientError(cancelled ? "cancelled" : "failed", error instanceof Error ? error.message : String(error)));
   });
   return {
     id, started, done,

@@ -1,0 +1,33 @@
+.breakdown-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; font-size: var(--text-s); }
+.breakdown-controls, .breakdown-actions { padding: 12px; display: grid; gap: 8px; flex-shrink: 0; }
+.breakdown-controls { border-bottom: 1px solid var(--line); }
+.breakdown-panel p { margin: 0; overflow-wrap: anywhere; }
+.breakdown-scene { font-weight: 600; line-height: 1.4; }
+.breakdown-note { color: var(--ink-2); font-size: var(--text-xs); line-height: 1.45; }
+.breakdown-error { color: var(--error); }
+.breakdown-progress { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.breakdown-list { padding: 12px; overflow-y: auto; flex: 1; min-height: 0; }
+.breakdown-list section + section { margin-top: 16px; }
+.breakdown-list h3 { font-size: var(--text-s); margin: 0 0 8px; padding-left: 8px; border-left: 3px solid var(--breakdown-color); }
+.breakdown-row { display: flex; align-items: start; gap: 8px; margin-bottom: 8px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
+.breakdown-row > input { flex-shrink: 0; margin-top: 6px; }
+.breakdown-element { min-width: 0; flex: 1; display: grid; gap: 5px; }
+.breakdown-element input, .breakdown-element select { width: 100%; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--bg); color: var(--ink); font: inherit; }
+.breakdown-element q { font-size: var(--text-xs); color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.breakdown-actions { border-top: 1px solid var(--line); }
+.breakdown-tag { background: color-mix(in srgb, var(--breakdown-color) 16%, transparent); text-decoration: underline solid var(--breakdown-color) 2px; text-underline-offset: 3px; }
+.breakdown-pending { outline: 1px dashed var(--breakdown-color); outline-offset: 1px; border-radius: 2px; }
+.breakdown-color-0 { --breakdown-color: #d74848; }
+.breakdown-color-1 { --breakdown-color: #40974b; }
+.breakdown-color-2 { --breakdown-color: #dc8428; }
+.breakdown-color-3 { --breakdown-color: #e16b9e; }
+.breakdown-color-4 { --breakdown-color: #9660ce; }
+.breakdown-color-5 { --breakdown-color: #4c83d3; }
+.breakdown-color-6 { --breakdown-color: #299c92; }
+.breakdown-color-7 { --breakdown-color: #ca55be; }
+.breakdown-color-8 { --breakdown-color: #949b37; }
+.breakdown-color-9 { --breakdown-color: #ae794e; }
+.breakdown-color-10 { --breakdown-color: #b6a16d; }
+.breakdown-color-11 { --breakdown-color: #7c84b5; }
+.breakdown-color-12 { --breakdown-color: #25a9c1; }
+.breakdown-color-13 { --breakdown-color: #919191; }

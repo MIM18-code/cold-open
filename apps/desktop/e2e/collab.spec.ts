@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
 
 import { launch, runCommand } from "./helpers.ts";
+import type { HostInfo } from "../src/shared/channels/sync.ts";
 
 /** Quit without the "Save changes?" sheet: a native sheet on a hidden window would show the window. */
 async function quit(electronApp: ElectronApplication): Promise<void> {
@@ -59,6 +60,8 @@ test("two instances share, join, edit in both and converge", async () => {
     const invite = await share(host.page);
     expect(invite).toMatch(/^screenplay:\/\/join\?host=127\.0\.0\.1%3A\d+&room=/);
     await expect(host.page.locator(".collab-invite-read")).toHaveValue(/&access=read$/);
+    await expect(host.page.getByLabel("Invite over")).toHaveCount(0);
+    await expect(host.page.locator(".collab-panel")).toContainText("To write with someone on another network, use Tailscale on both Macs");
 
     // The guest joins through the dialog and gets the host's script, not its own blank page.
     await join(guest.page, invite);
@@ -101,6 +104,56 @@ test("two instances share, join, edit in both and converge", async () => {
     await quit(guest.electronApp);
   }
 });
+
+for (const lan of [true, false]) {
+  test(`sharing offers a Tailscale invite ${lan ? "alongside the local-network invite" : "when no LAN address exists"}`, async () => {
+    const host = await launch();
+    try {
+      const info: HostInfo = await host.page.evaluate(() => (window as any).desktop.invoke("sync:host-start"));
+      const port = new URL(info.relay).port;
+      const withAddress = (text: string, address: string) => {
+        const url = new URL(text);
+        url.searchParams.set("host", address);
+        return url.href;
+      };
+      const tailscale = {
+        address: `100.114.165.59:${port}`,
+        invite: withAddress(info.invite, `100.114.165.59:${port}`),
+        readOnlyInvite: withAddress(info.readOnlyInvite, `100.114.165.59:${port}`),
+      };
+      const address = lan ? `192.168.1.20:${port}` : tailscale.address;
+      const advertised: HostInfo = { ...info, lan, tailscale, address,
+        invite: withAddress(info.invite, address), readOnlyInvite: withAddress(info.readOnlyInvite, address) };
+      // Keep the real loopback relay and room; replace only the advertised interfaces at the IPC boundary.
+      await host.electronApp.evaluate(({ ipcMain }, info) => {
+        ipcMain.removeHandler("sync:host-start");
+        ipcMain.handle("sync:host-start", () => info);
+      }, advertised);
+      await share(host.page);
+      const choice = host.page.getByLabel("Invite over");
+      await expect(choice).toHaveValue(lan ? "lan" : "tailscale");
+      await expect(choice.locator('option[value="lan"]')).toHaveText(lan ? "This network (192.168.1.20)" : "This network (unavailable)");
+      await expect(choice.locator('option[value="tailscale"]')).toHaveText("Tailscale (100.114.165.59)");
+      await expect(host.page.locator(".collab-invite-write")).toHaveValue(advertised.invite);
+      if (lan) await choice.selectOption("tailscale");
+      else await expect(choice.locator('option[value="lan"]')).toHaveJSProperty("disabled", true);
+      await expect(host.page.locator(".collab-invite-write")).toHaveValue(tailscale.invite);
+      await expect(host.page.locator(".collab-invite-read")).toHaveValue(tailscale.readOnlyInvite);
+      // The Copy command hands out the invite the panel shows.
+      await host.page.evaluate(() => (window as any).__app.runCommand("collab.copyInvite"));
+      await expect.poll(() => host.electronApp.evaluate(({ clipboard }) => clipboard.readText())).toBe(tailscale.invite);
+      await expect(host.page.locator(".collab-panel")).toContainText("Works for anyone on your Tailscale network, or anyone you share this Mac with in Tailscale. Tailscale encrypts the connection.");
+      await expect(host.page.locator(".collab-error")).toHaveCount(0);
+      await expect(host.page.locator(".collab-panel details")).toContainText("The invite has a network address.");
+      if (lan) {
+        await choice.selectOption("lan");
+        await expect(host.page.locator(".collab-invite-write")).toHaveValue(advertised.invite);
+        await expect(host.page.locator(".collab-invite-read")).toHaveValue(advertised.readOnlyInvite);
+      }
+      await expectHidden(host.electronApp);
+    } finally { await quit(host.electronApp); }
+  });
+}
 
 /** A stand-in editor: reports a caret the test sets and records the remote cursors it is asked to draw. */
 async function fakeEditor(page: Page): Promise<void> {

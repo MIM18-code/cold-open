@@ -1063,10 +1063,20 @@ export class EditorController implements EditorBridge {
     this.select({ anchor, head });
   }
 
-  revealParagraph(paragraphId: string, options: { select?: boolean; offset?: number } = {}): void {
+  revealParagraph(paragraphId: string, options: { select?: boolean; offset?: number; ifNeeded?: boolean } = {}): void {
     if (options.select) this.setSelection({ paragraphId, offset: options.offset ?? 0 });
     const start = this.positionMap(this.view.state.doc).get(paragraphId);
     if (start === undefined) return;
+    if (options.ifNeeded) {
+      const scroll = this.view.dom.closest(".editor-scroll");
+      if (scroll) {
+        const rect = scroll.getBoundingClientRect(), node = this.view.state.doc.nodeAt(start)!;
+        const at = this.view.coordsAtPos(start + 1 + Math.max(0, Math.min(options.offset ?? 0, node.content.size)));
+        if (at.top < rect.top || at.bottom > rect.bottom) scroll.scrollTop += at.top - rect.top - rect.height / 2;
+        if (at.left < rect.left || at.right > rect.right) scroll.scrollLeft += at.left - rect.left - rect.width / 2;
+        return;
+      }
+    }
     const dom = this.view.nodeDOM(start);
     if (dom instanceof HTMLElement) dom.scrollIntoView({ block: "center" });
   }

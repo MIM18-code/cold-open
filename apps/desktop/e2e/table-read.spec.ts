@@ -460,7 +460,9 @@ test("automatic casting skips novelty voices, but a locked novelty choice surviv
     const maya = run.page.getByLabel("Voice for MAYA", { exact: true }), eli = run.page.getByLabel("Voice for ELI", { exact: true });
     await expect(run.page.getByText(/Where those say nothing, the local model reads/)).toBeVisible();
     await run.page.getByRole("button", { name: "Assign distinct voices" }).click();
-    await expect(run.page.getByText(/The local model could not cast \(.+\)\. Voices were matched by name and pronouns instead\./)).toBeVisible();
+    await expect(run.page.getByText("Voices were matched by name and pronouns. Set up AI to use this feature.")).toBeVisible();
+    // The first failed AI request offers setup once; the writer can decline and keep casting by name.
+    await run.page.getByRole("dialog", { name: "Set up AI" }).getByRole("button", { name: "Not now" }).click();
     await expect(maya).not.toHaveValue("Bells");
     await expect(eli).not.toHaveValue("Bells");
 

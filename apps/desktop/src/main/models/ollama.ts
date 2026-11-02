@@ -1,4 +1,4 @@
-// Fixed loopback service and fixed catalogue. A renderer cannot supply a server URL or arbitrary model.
+// Fixed catalogue. Setup uses the AI endpoint saved in Settings; formatting uses the loopback service.
 export const OLLAMA_ORIGIN = "http://127.0.0.1:11434";
 export const FORMATTER_MODEL = "qwen3.5:4b";
 export interface InstalledModel {
@@ -31,9 +31,10 @@ export function localModels(value: unknown): InstalledModel[] {
 }
 export class OllamaModels {
     private readonly request: typeof fetch;
-    constructor(request: typeof fetch = fetch) { this.request = request; }
+    private readonly origin: string;
+    constructor(request: typeof fetch = fetch, origin = OLLAMA_ORIGIN) { this.request = request; this.origin = origin.replace(/\/+$/, ""); }
     private async call(path: string, init: RequestInit = {}): Promise<Response> {
-        const response = await this.request(OLLAMA_ORIGIN + path, { ...init, redirect: "error", signal: init.signal ?? AbortSignal.timeout(5000), headers: { "content-type": "application/json" } });
+        const response = await this.request(this.origin + path, { ...init, redirect: "error", signal: init.signal ?? AbortSignal.timeout(5000), headers: { "content-type": "application/json" } });
         if (!response.ok)
             throw new Error(`Ollama model request failed (${response.status}). Start Ollama and retry.`);
         return response;
