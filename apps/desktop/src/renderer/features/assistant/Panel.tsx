@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { CHANNELS } from "../../../shared/api.ts";
-import { AI_CHANNELS, AI_SETTINGS, CHATGPT_USAGE_URL, PROVIDER_LABELS, type AiStatus } from "../../../shared/channels/ai.ts";
+import { AI_CHANNELS, AI_SETTINGS, CHATGPT_USAGE_URL, judgesWholeScript, PROVIDER_LABELS, type AiStatus, WHOLE_SCRIPT_NEEDS } from "../../../shared/channels/ai.ts";
 import { app } from "../../core/app.ts";
-import { useApp, useSessionState } from "../../core/hooks.ts";
+import { useApp, useSessionState, useSetting } from "../../core/hooks.ts";
 import { desktop } from "../../core/platform.ts";
 import { hasSelection as selectionExists } from "../format-draft/target.ts";
-import { replaceInParagraph } from "../proofread/apply.ts";
+import { applySuggestion } from "./apply.ts";
 import { type ChatMessage, Chat } from "./chat.ts";
-import { locate, splitAnswer, type Suggestion } from "./suggestions.ts";
+import { splitAnswer, type Suggestion } from "./suggestions.ts";
 
 let chat: Chat | null = null;
 export function getChat(): Chat {
@@ -25,17 +25,15 @@ function SuggestionCard({ suggestion }: { suggestion: Suggestion }) {
   const [state, setState] = useState<"idle" | "applied" | string>("idle");
   const { readOnly } = useSessionState();
   const apply = () => {
-    if (app.session.readOnly) return setState("This script is read-only.");
-    const found = locate(app.session.script(), suggestion);
-    if ("error" in found) return setState(found.error);
-    replaceInParagraph(app, found.paragraphId, found.from, found.to, suggestion.replace);
+    const result = applySuggestion(app, suggestion);
+    if ("error" in result) return setState(result.error);
     setState("applied");
   };
   const problem = state !== "idle" && state !== "applied" ? state : null;
   return (
     <div className="assistant-suggestion">
-      <div className="assistant-suggestion-label">Suggested change{suggestion.scene ? `, scene ${suggestion.scene}` : ""}</div>
-      <div className="assistant-diff"><del>{suggestion.find}</del><ins>{suggestion.replace}</ins></div>
+      <div className="assistant-suggestion-label">{suggestion.cut === "speech" ? "Cut speech" : suggestion.cut === "paragraph" ? "Cut paragraph" : "Suggested change"}{suggestion.scene ? `, scene ${suggestion.scene}` : ""}</div>
+      <div className="assistant-diff"><del>{suggestion.find}</del>{suggestion.cut ? null : <ins>{suggestion.replace}</ins>}</div>
       {suggestion.why ? <div className="assistant-why">{suggestion.why}</div> : null}
       <div className="assistant-suggestion-actions">
         <button className="button" disabled={state === "applied" || readOnly} title={readOnly ? "This script is read-only." : undefined} onClick={apply}>{state === "applied" ? "Applied" : "Apply"}</button>
@@ -75,9 +73,11 @@ export function AssistantPanel() {
   const [status, setStatus] = useState<AiStatus | null>(null);
   const end = useRef<HTMLDivElement>(null);
 
+  // Refetch when the provider changes in Settings, so the continuity action follows it.
+  const [provider] = useSetting<string>(AI_SETTINGS.provider, "");
   useEffect(() => {
     void desktop.invoke<AiStatus>(AI_CHANNELS.status).then(setStatus, () => undefined);
-  }, [current.messages.length]);
+  }, [current.messages.length, provider]);
   // The braces matter: an effect that returns a value makes React call it as a cleanup and crash the panel.
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: "end" });
@@ -107,7 +107,9 @@ export function AssistantPanel() {
       <div className="assistant-actions">
         <button className="button" disabled={current.busy} onClick={() => void current.quick("notes", options)}>Notes on this scene</button>
         <button className="button" disabled={current.busy} onClick={() => void current.quick("summarize", options)}>Summarize scene</button>
-        <button className="button" disabled={current.busy} onClick={() => void current.quick("continuity", options)}>Check continuity across the script</button>
+        {active && !judgesWholeScript(active.provider)
+          ? <button className="button" disabled title={WHOLE_SCRIPT_NEEDS}>Check continuity across the script <span className="assistant-needs">{WHOLE_SCRIPT_NEEDS}</span></button>
+          : <button className="button" disabled={current.busy} onClick={() => void current.quick("continuity", options)}>Check continuity across the script</button>}
       </div>
       <div className="assistant-log" role="log" aria-live="polite">
         {current.messages.length === 0 ? (

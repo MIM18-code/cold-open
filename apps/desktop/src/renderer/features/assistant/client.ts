@@ -62,7 +62,8 @@ export function runAiTurn(request: Omit<AiRequest, "id">, onDelta?: (text: strin
       if (event.type === "delta") onDelta?.(event.text);
       else if (event.type === "done") {
         off();
-        resolve({ text: event.text, ...(event.toolCalls ? { toolCalls: event.toolCalls } : {}), ...(event.reasoning ? { reasoning: event.reasoning } : {}) });
+        resolve({ text: event.text, ...(event.toolCalls ? { toolCalls: event.toolCalls } : {}), ...(event.reasoning ? { reasoning: event.reasoning } : {}),
+          ...(event.skippedCalls ? { skippedCalls: event.skippedCalls } : {}) });
       } else {
         off();
         planLimit(event.code, event.message);

@@ -17,8 +17,14 @@ const API = "https://api.openai.com/v1";
 const LIMIT_CODE = "subscription_sharing_usage_limit_exceeded";
 
 /** Direct plan usage, without hosted tools or an API-key fallback. */
+// The catalog carries each model's base instructions, so a real account's list runs to megabytes, well past the 512 KB
+// cap on other responses. It changes rarely, so it is kept per account for a few minutes instead of fetched per request.
+const CATALOG_LIMIT = 16 * 1024 * 1024;
+const CATALOG_TTL_MS = 5 * 60_000;
+
 export class ChatgptDirect implements DirectProvider {
   private active = 0;
+  private catalog: { profileId: string; at: number; models: ChatgptModel[] } | undefined;
   private readonly account: ChatgptOAuth;
   private readonly fetchFn: FetchLike;
   private readonly timeoutMs: number;
@@ -79,13 +85,17 @@ export class ChatgptDirect implements DirectProvider {
     try {
       const sender = await this.account.access(signal), token = sender.token;
       signal.throwIfAborted();
+      const cached = this.catalog;
+      if (cached && cached.profileId === sender.profileId && Date.now() - cached.at < CATALOG_TTL_MS) return cached.models;
       const response = await request(this.fetchFn, `${API}/models`, { method: "GET", headers: { authorization: `Bearer ${token}` } }, signal);
-      const data = await boundedJson(response, signal);
+      const data = await boundedJson(response, signal, response.ok ? CATALOG_LIMIT : undefined);
       signal.throwIfAborted();
       if (!response.ok) throw this.redacted(this.failure(response.status, data, requestIdOf(response), sender), token);
       if (!Array.isArray(data.models)) throw new AiError("bad-response", "ChatGPT returned no model catalog.");
-      return data.models.map(object).filter((m) => m.visibility === "list" && typeof m.slug === "string" && typeof m.display_name === "string")
+      const models = data.models.map(object).filter((m) => m.visibility === "list" && typeof m.slug === "string" && typeof m.display_name === "string")
         .map((m) => ({ id: m.slug as string, label: m.display_name as string }));
+      this.catalog = { profileId: sender.profileId, at: Date.now(), models };
+      return models;
     } catch (error) { throw connectionError(signal, error); }
   }
 

@@ -82,6 +82,8 @@ export interface AiTurn {
   text: string;
   toolCalls?: AiToolCall[];
   reasoning?: AiReasoning[];
+  /** Calls past MAX_TOOL_CALLS, dropped before any ran so the model can ask again next turn. */
+  skippedCalls?: number;
 }
 
 export interface AiMessage {
@@ -97,6 +99,11 @@ export const MAX_TOOL_CALLS = 8;
 export const MAX_TOOL_ARGUMENT_CHARS = 32_000;
 
 export const supportsTools = (provider: ProviderId): boolean => PROVIDERS.includes(provider);
+
+/** Whole-script judgment, such as a continuity check, is offered only where it is reliable. In tests on a 77-scene
+ * feature, local models of a size most Macs can run read a third of the script and reported problems that weren't there. */
+export const WHOLE_SCRIPT_NEEDS = "Needs ChatGPT or an API key";
+export const judgesWholeScript = (provider: ProviderId): boolean => provider !== "ollama";
 
 export interface AiRequest {
   /** Chosen by the renderer so it can listen before the request starts. */

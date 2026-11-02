@@ -21,7 +21,7 @@ import type {
 import type { DocumentSession } from "../../core/session.ts";
 import { CLIPBOARD_TYPE, clipboardJson, clipboardText, readClipboard, selectedParagraphs, type Pasted } from "./clipboard.ts";
 import { charactersAt, liveRanges, relativeAt } from "./positions.ts";
-import { replaceInDocument } from "./replace.ts";
+import { deleteInDocument, replaceInDocument } from "./replace.ts";
 import {
   EMPTY_ENTER, enterContext, nextElement, parentheticalInput, suggestions, tabAction, typedText, unwrapParenthetical, type Suggestions,
 } from "./rules.ts";
@@ -1174,6 +1174,10 @@ export class EditorController implements EditorBridge {
   /** A replacement keeps the replaced text's formatting, and is its own undo step (not merged with recent typing). */
   replaceText(paragraphId: string, from: number, to: number, text: string): void {
     replaceInDocument(this.session, paragraphId, from, to, text);
+  }
+
+  deleteParagraphs(paragraphIds: readonly string[]): void {
+    deleteInDocument(this.session, paragraphIds);
   }
 
   onSelectionChange(listener: (selection: Selection | null) => void): () => void {

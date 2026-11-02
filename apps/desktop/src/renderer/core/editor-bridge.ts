@@ -86,6 +86,8 @@ export interface EditorBridge {
   insertParagraphs(paragraphs: NewParagraph[], at?: Position): string[];
   /** Replace text in one paragraph, as one undoable edit (proofreading fixes, find and replace). */
   replaceText(paragraphId: string, from: number, to: number, text: string): void;
+  /** Delete whole paragraphs as one undoable edit. */
+  deleteParagraphs(paragraphIds: readonly string[]): void;
   setDecorations(source: string, decorations: Decoration[]): void;
   setRemoteCursors(cursors: RemoteCursor[]): void;
   /** Show or clear a suggestion. → accepts it while the caret sits at its position, as one undoable edit. */

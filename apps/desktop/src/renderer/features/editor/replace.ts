@@ -7,3 +7,12 @@ export function replaceInDocument(session: DocumentSession, paragraphId: string,
   session.edit(() => session.doc.replaceText(paragraphId, from, to, text));
   session.undo.stopCapturing();
 }
+
+/** Remove whole paragraphs in one undo step, separate from typing on either side of the cut. */
+export function deleteInDocument(session: DocumentSession, paragraphIds: readonly string[]): void {
+  session.undo.stopCapturing();
+  session.edit(() => {
+    for (const id of paragraphIds) session.doc.deleteParagraph(id);
+  });
+  session.undo.stopCapturing();
+}

@@ -1,10 +1,11 @@
 import { tagDefinitions } from "./tags.ts";
 import { fdxPositionAt } from "./fdx.ts";
 // Detailed writing reports over the same paragraph IDs and printed page numbers as the editor.
-import { NON_PRINTING, type ElementType, type Paragraph, type Script, type XmlNode } from "./model.ts";
+import { NON_PRINTING, type ElementType, type Script, type XmlNode } from "./model.ts";
 import type { Pagination } from "./pagination.ts";
 import { characterName, countWords } from "./reports.ts";
 import { spokenText } from "./read-plan.ts";
+import { speechesOf } from "./speeches.ts";
 export interface ReportLine { paragraphId: string; sceneId: string; scene: string; heading: string; page: string; }
 export interface DialogueRow extends ReportLine { character: string; cue: string; parenthetical: string; dialogue: string; words: number; monologue: boolean; }
 export interface NoteRow extends ReportLine { text: string; kind: string; }
@@ -20,21 +21,15 @@ function locations(script: Script, pagination: Pagination): Map<string, ReportLi
 }
 export function dialogueReport(script: Script, pagination: Pagination): DialogueRow[] {
   const loc = locations(script, pagination), rows: DialogueRow[] = [];
-  let cue: Paragraph | undefined, dialogue: Paragraph[] = [], directions: string[] = [];
-  const flush = () => {
-    if (!cue || !dialogue.length) { dialogue = []; directions = []; return; }
+  for (const { cue, paragraphs } of speechesOf(script.paragraphs)) {
+    const dialogue = paragraphs.filter((p) => p.type === "dialogue" || p.type === "lyrics");
+    if (!dialogue.length) continue;
+    const directions = paragraphs.filter((p) => p.type === "parenthetical").map(spokenText);
     const text = dialogue.map(spokenText).filter(Boolean).join("\n"), words = countWords(text);
     rows.push({ ...loc.get(dialogue[0]!.id)!, character: characterName(spokenText(cue)), cue: spokenText(cue),
       parenthetical: directions.join(" "), dialogue: text, words, monologue: words > 100 });
-    dialogue = []; directions = [];
-  };
-  for (const p of script.paragraphs) {
-    if (p.type === "character") { flush(); cue = p; }
-    else if (p.type === "dialogue" || p.type === "lyrics") { if (cue) dialogue.push(p); }
-    else if (p.type === "parenthetical") { if (cue) directions.push(spokenText(p)); }
-    else if (!NON_PRINTING.has(p.type)) { flush(); cue = undefined; }
   }
-  flush(); return rows;
+  return rows;
 }
 function nodesNamed(roots: readonly XmlNode[], name: string): XmlNode[] {
   const found: XmlNode[] = [], pending = [...roots];

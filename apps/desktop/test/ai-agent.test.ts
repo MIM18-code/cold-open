@@ -47,10 +47,62 @@ test("agent round trip executes tools and sends matching results with the full h
   assert.ok(h.lines.some((line) => /Searched for "gun" · 1 match/.test(line)));
 });
 
-test("agent ends immediately when the model answers without tools", async () => {
-  const h = harness([{ text: "No evidence." }]);
-  assert.equal((await runAgent(h.options)).text, "No evidence.");
-  assert.equal(h.requests.length, 1);
+test("an answer before reading any script gets one reminder, then ends with what the model says", async () => {
+  const h = harness([{ text: "No evidence." }, { text: "Still no evidence." }]);
+  const answer = await runAgent(h.options);
+  assert.equal(answer.text, "Still no evidence.");
+  assert.equal(h.requests.length, 2);
+  assert.match(h.requests[1]!.messages.at(-1)!.content, /not read any of the script/);
+  assert.equal(answer.coverage, "Read 0 of 1 scene");
+});
+
+test("an answer after reading ends at once and counts the scenes read", async () => {
+  const h = harness([{ text: "", toolCalls: [call("read_scene", { scene: "12" })] }, { text: "Scene 12 has the gun." }]);
+  const answer = await runAgent(h.options);
+  assert.equal(h.requests.length, 2);
+  assert.equal(answer.coverage, "Read 1 of 1 scene");
+});
+
+test("an edit written as text is sent back once to be proposed", async () => {
+  const h = harness([{ text: "", toolCalls: [call("read_scene", { scene: "12" })] }, { text: 'Cut "Nell holds a gun." to tighten it.' },
+    { text: "", toolCalls: [call("propose_edit", { scene: "12", find: "Nell holds a gun.", replace: "Nell waits.", why: "Tighter." }, "c2")] }, { text: "Proposed." }]);
+  h.options.request = { ...h.options.request, messages: [{ role: "user", content: "Tighten scene 12." }] };
+  const answer = await runAgent(h.options);
+  assert.match(h.requests[2]!.messages.at(-1)!.content, /call propose_edit/i);
+  assert.equal(answer.proposals.length, 1);
+  assert.equal(answer.text, "Proposed.");
+});
+
+test("no edit reminder when the writer did not ask for a change, or once the reading limit is reached", async () => {
+  const quoted = { text: 'Scene 12 says "Nell holds a gun." and the gun changes hands later.' };
+  const h = harness([{ text: "", toolCalls: [call("read_scene", { scene: "12" })] }, quoted]);
+  h.options.request = { ...h.options.request, messages: [{ role: "user", content: "List continuity issues. Don't suggest changes." }] };
+  assert.equal((await runAgent(h.options)).text, quoted.text);
+  assert.equal(h.requests.length, 2);
+  const limited = harness([{ text: "", toolCalls: [call("read_scene", { scene: "12" })] }, { text: "", toolCalls: [call("read_scene", { scene: "12" }, "c2")] },
+    { text: 'Cut "Nell holds a gun." to tighten it.' }]);
+  limited.options.request = { ...limited.options.request, messages: [{ role: "user", content: "Trim scene 12." }] };
+  limited.options.resultBudget = 120;
+  assert.equal((await runAgent(limited.options)).text, 'Cut "Nell holds a gun." to tighten it.');
+});
+
+test("calls past the per-turn limit are reported as skipped so the model can ask again", async () => {
+  const h = harness([{ text: "", toolCalls: [call("read_scene", { scene: "12" })], skippedCalls: 3 }, { text: "Done." }]);
+  await runAgent(h.options);
+  assert.match(h.requests[1]!.messages.at(-1)!.content, /3 more were skipped/);
+});
+
+test("at the reading limit the model gets one turn to answer from what it read", async () => {
+  const h = harness([{ text: "", toolCalls: [call("read_scene", { scene: "12" })] }, { text: "", toolCalls: [call("read_scene", { scene: "12" }, "c2")] },
+    { text: "From scene 12: no issues." }]);
+  h.options.resultBudget = 120;
+  const answer = await runAgent(h.options);
+  assert.equal(answer.text, "From scene 12: no issues.");
+  assert.match(h.requests[2]!.messages.at(-1)!.content, /reading limit is reached/);
+  const again = harness([{ text: "", toolCalls: [call("read_scene", { scene: "12" })] }, { text: "", toolCalls: [call("read_scene", { scene: "12" }, "c2")] },
+    { text: "", toolCalls: [call("read_scene", { scene: "12" }, "c3")] }]);
+  again.options.resultBudget = 120;
+  assert.match((await runAgent(again.options)).note!, /Tool result limit/);
 });
 
 test("agent retains validated proposals as cards and never edits the document", async () => {
@@ -146,9 +198,9 @@ test("agent falls back only after two unparseable tool turns, with a footer note
 });
 
 test("agent recovers from one parse failure without falling back", async () => {
-  const h = harness([new AiClientError("tool-parse", "Bad arguments"), { text: "Answer." }]);
+  const h = harness([new AiClientError("tool-parse", "Bad arguments"), { text: "", toolCalls: [call("read_scene", { scene: "12" })] }, { text: "Answer." }]);
   assert.equal((await runAgent(h.options)).note, undefined);
-  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests.length, 3);
 });
 
 test("agent never retries authorization, network or plan-limit errors", async () => {
@@ -161,8 +213,20 @@ test("agent never retries authorization, network or plan-limit errors", async ()
 
 test("agent preserves encrypted reasoning and tool signatures in the next request", async () => {
   const reasoning = [{ id: "r", encryptedContent: "opaque", summary: [] }];
-  const h = harness([{ text: "", reasoning, toolCalls: [{ ...call("list_scenes"), signature: "signed", namespace: "screenplay" }] }, { text: "Done" }]);
+  const h = harness([{ text: "", reasoning, toolCalls: [{ ...call("read_scene", { scene: "12" }), signature: "signed", namespace: "screenplay" }] }, { text: "Done" }]);
   await runAgent(h.options);
   assert.deepEqual(h.requests[1]!.messages[1]!.reasoning, reasoning);
   assert.equal(h.requests[1]!.messages[1]!.toolCalls![0]!.signature, "signed");
+});
+
+test("only a request for a change counts as asking for an edit", async () => {
+  const { asksForEdit } = await import("../src/renderer/features/assistant/agent.ts");
+  for (const yes of ["Trim scene 12.", "Suggest one dialogue trim in scene 11.", "Tighten scene 12.", "Can you propose a cut in scene 3?", "Please rewrite Nell's line.", "Can you trim scene 12?", "Could you tighten this speech?"]) {
+    assert.equal(asksForEdit(yes), true, yes);
+  }
+  for (const no of ["Does Nell replace the gun in scene 12?", "Check continuity. Don't rewrite anything.", "List continuity issues. Don't suggest changes.",
+    "Where does the gun change hands?", "Which scenes is the lead in?", "Summarize scene 4 without suggesting edits.",
+    "Does Nell suggest a change in scene 12?"]) {
+    assert.equal(asksForEdit(no), false, no);
+  }
 });

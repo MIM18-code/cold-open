@@ -255,6 +255,20 @@ test("model discovery uses the account catalog, labels, and server order", async
   assert.equal((calls[0]!.init.headers as Record<string, string>).authorization, "Bearer access-secret");
 });
 
+test("a model catalog of several megabytes loads, and is fetched once per account for a few minutes", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  let fetched = 0;
+  const instructions = "x".repeat(400_000);
+  const direct = new ChatgptDirect(h.account, async () => {
+    fetched++;
+    return json({ models: Array.from({ length: 5 }, (_, index) => ({ slug: `m${index}`, display_name: `Model ${index}`, visibility: "list", base_instructions: instructions })) });
+  });
+  const signal = new AbortController().signal;
+  assert.equal((await direct.models(signal)).length, 5);
+  assert.equal((await direct.models(signal)).length, 5);
+  assert.equal(fetched, 1);
+});
+
 test("Responses request has only supported fields and returns validated JSON after completion", async (t) => {
   const h = await harness(t); await h.account.signIn();
   let body: Record<string, unknown> = {};
@@ -297,15 +311,21 @@ test("ChatGPT function tools use a namespace and resend calls, results and encry
   assert.deepEqual(bodies[0]!.include, ["reasoning.encrypted_content"]);
 });
 
-test("ChatGPT validates function names, arguments and batch size before returning tools", async (t) => {
+test("ChatGPT validates function names and arguments, and trims a batch past the limit, before returning tools", async (t) => {
   const h = await harness(t); await h.account.signIn();
   const tools = [{ name: "list_scenes", description: "List scenes", parameters: { type: "object", properties: {} } }];
   const valid = { type: "function_call", call_id: "c", name: "list_scenes", arguments: "{}" };
   for (const output of [[{ ...valid, name: "read_file" }], [{ ...valid, arguments: "{bad" }], [{ ...valid, arguments: "[]" }],
-    [{ ...valid, arguments: JSON.stringify({ text: "x".repeat(32_000) }) }], Array.from({ length: 9 }, (_, index) => ({ ...valid, call_id: String(index) }))]) {
+    [{ ...valid, arguments: JSON.stringify({ text: "x".repeat(32_000) }) }]]) {
     const direct = new ChatgptDirect(h.account, async () => sse({ type: "response.completed", response: { status: "completed", output } }));
     await assert.rejects(direct.turn({ ...chat, tools, json: false }, new AbortController().signal), (error: Error) => "code" in error && error.code === "tool-parse");
   }
+  // Past the per-turn limit, the first calls run and the rest are counted for the model to ask again.
+  const nine = Array.from({ length: 9 }, (_, index) => ({ ...valid, call_id: String(index) }));
+  const direct = new ChatgptDirect(h.account, async () => sse({ type: "response.completed", response: { status: "completed", output: nine } }));
+  const turn = await direct.turn({ ...chat, tools, json: false }, new AbortController().signal);
+  assert.equal(turn.toolCalls!.length, 8);
+  assert.equal(turn.skippedCalls, 1);
 });
 
 test("ChatGPT never returns tool calls from an incomplete stream", async (t) => {

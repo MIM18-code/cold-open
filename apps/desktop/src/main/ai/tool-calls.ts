@@ -19,6 +19,14 @@ export function validateTools(value: AiTool[] | undefined): AiTool[] | undefined
   });
 }
 
+/** A model's new calls: the first MAX_TOOL_CALLS are kept and validated, and the rest are only counted. Small models
+ * ask to read a dozen scenes at once; refusing the whole batch would push them onto the trimmed-script fallback. */
+export function readCalls(raw: unknown, tools: readonly AiTool[]): { toolCalls: AiToolCall[]; skippedCalls?: number } {
+  if (!Array.isArray(raw)) throw toolParseError();
+  const toolCalls = validateCalls(raw.slice(0, MAX_TOOL_CALLS), tools);
+  return { toolCalls, ...(raw.length > MAX_TOOL_CALLS ? { skippedCalls: raw.length - MAX_TOOL_CALLS } : {}) };
+}
+
 /** Validate the entire batch before the renderer is allowed to execute any of it. */
 export function validateCalls(raw: unknown, tools: readonly AiTool[]): AiToolCall[] {
   if (!Array.isArray(raw) || raw.length > MAX_TOOL_CALLS) throw toolParseError();
@@ -98,13 +106,13 @@ export function readResponseTurn(raw: unknown, tools: readonly AiTool[]): AiTurn
   const data = record(raw);
   if (data.status !== "completed" || !Array.isArray(data.output)) throw new AiError("bad-response", "The model did not complete the answer.");
   const output = data.output.map(record);
-  const calls = validateCalls(output.filter((item) => item.type === "function_call").map((item) => ({
+  const { toolCalls: calls, skippedCalls } = readCalls(output.filter((item) => item.type === "function_call").map((item) => ({
     id: item.call_id, name: item.name, arguments: item.arguments, ...(item.namespace ? { namespace: item.namespace } : {}),
   })), tools);
   const reasoning = output.filter((item) => item.type === "reasoning" && typeof item.encrypted_content === "string" && typeof item.id === "string")
     .map((item) => ({ id: item.id as string, encryptedContent: item.encrypted_content as string,
       summary: (Array.isArray(item.summary) ? item.summary : []).map(record).filter((row) => typeof row.text === "string").map((row) => ({ text: row.text as string })) }));
-  if (calls.length) return { text: "", toolCalls: calls, ...(reasoning.length ? { reasoning } : {}) };
+  if (calls.length) return { text: "", toolCalls: calls, ...(reasoning.length ? { reasoning } : {}), ...(skippedCalls ? { skippedCalls } : {}) };
   const text = output.filter((item) => item.type === "message").flatMap((item) => Array.isArray(item.content) ? item.content : [])
     .map(record).filter((part) => part.type === "output_text" && typeof part.text === "string").map((part) => part.text).join("");
   if (!text.trim()) throw new AiError("bad-response", "The model finished without an answer.");

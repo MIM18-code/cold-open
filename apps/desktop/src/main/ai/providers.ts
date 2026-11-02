@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import type { AiErrorCode, AiMessage, AiTier, AiTool, AiTurn, ProviderId } from "../../shared/channels/ai.ts";
 import { type SseEvent, readLines, readSse } from "./stream.ts";
-import { record, readResponseTurn, responseInput, responseTools, toolParseError, validateCalls } from "./tool-calls.ts";
+import { readCalls, record, readResponseTurn, responseInput, responseTools, toolParseError } from "./tool-calls.ts";
 import { boundedJson } from "./chatgpt-http.ts";
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
@@ -57,6 +57,8 @@ export interface ChatRequest {
 export interface ProviderConfig {
   ollamaEndpoint: string;
   apiKey?: string;
+  /** Set after a local model reports it can't think, for the retry. */
+  noThinking?: boolean;
 }
 
 export interface BuiltRequest {
@@ -65,6 +67,7 @@ export interface BuiltRequest {
 }
 
 const JSON_HEADERS = { "content-type": "application/json" };
+const OLLAMA_THINKING_TOKENS = 6000;
 
 export function buildRequest(provider: HttpProvider, request: ChatRequest, config: ProviderConfig): BuiltRequest {
   if (request.tools?.length) return buildToolRequest(provider, request, config);
@@ -146,9 +149,11 @@ function buildToolRequest(provider: HttpProvider, chat: ChatRequest, config: Pro
     url, init: { method: "POST", headers: { ...JSON_HEADERS, ...headers }, body: JSON.stringify(body) },
   });
   switch (provider) {
+    // Tool turns think: in tests on a 77-scene feature, qwen3.5 without it claimed reviews it never did, and with it
+    // reported what it read and judged continuity correctly. Thinking tokens count against num_predict.
     case "ollama": return post(`${config.ollamaEndpoint.replace(/\/+$/, "")}/api/chat`, {}, {
-      model: chat.model, stream: false, think: false, keep_alive: "30m",
-      options: { temperature: 0.2, num_predict: chat.maxTokens, num_ctx: 16384 },
+      model: chat.model, stream: false, think: !config.noThinking, keep_alive: "30m",
+      options: { temperature: 0.2, num_predict: chat.maxTokens + (config.noThinking ? 0 : OLLAMA_THINKING_TOKENS), num_ctx: 16384 },
       tools: tools.map((tool) => ({ type: "function", function: tool })),
       messages: [{ role: "system", content: chat.system }, ...chat.messages.map((message) => ({
         role: message.role, content: message.content,
@@ -229,8 +234,8 @@ export function readToolTurn(provider: HttpProvider, raw: unknown, tools: readon
       break;
     }
   }
-  const toolCalls = validateCalls(rawCalls, tools);
-  if (toolCalls.length) return { text: "", toolCalls };
+  const { toolCalls, skippedCalls } = readCalls(rawCalls, tools);
+  if (toolCalls.length) return { text: "", toolCalls, ...(skippedCalls ? { skippedCalls } : {}) };
   if (!text.trim()) throw new AiError("bad-response", `${NAMES[provider]} finished without an answer.`);
   return { text };
 }
@@ -249,6 +254,9 @@ export async function toolChat(provider: HttpProvider, chat: ChatRequest, config
     return readToolTurn(provider, data, chat.tools ?? []);
   } catch (error) {
     if (signal.aborted) throw new AiError("cancelled", "Cancelled.");
+    if (provider === "ollama" && !config.noThinking && error instanceof AiError && /does not support thinking/i.test(error.message)) {
+      return toolChat(provider, chat, { ...config, noThinking: true }, fetchFn, signal);
+    }
     if (provider === "ollama" && error instanceof AiError && /does not support tools|(?:error|failed).*pars.*tool/i.test(error.message)) throw toolParseError();
     throw error;
   }

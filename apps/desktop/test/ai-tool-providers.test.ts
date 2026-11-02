@@ -172,3 +172,26 @@ test("Ollama models without tools report a recoverable tool failure", async () =
   await assert.rejects(toolChat("ollama", chat, config, async () => new Response(JSON.stringify({ error: "This model does not support tools" }), { status: 400 }), signal),
     (error: AiError) => error.code === "tool-parse");
 });
+
+test("a turn with more than eight calls keeps the first eight and counts the rest", async () => {
+  const many = Array.from({ length: 11 }, (_, index) => ({ function: { name: "read_scene", arguments: { scene: String(index + 1) } } }));
+  const turn = await toolChat("ollama", chat, config, async () => new Response(JSON.stringify({ done: true, message: { role: "assistant", content: "", tool_calls: many } })), signal);
+  assert.equal(turn.toolCalls!.length, MAX_TOOL_CALLS);
+  assert.equal(turn.skippedCalls, 11 - MAX_TOOL_CALLS);
+  assert.deepEqual(turn.toolCalls!.map((c) => c.arguments.scene), ["1", "2", "3", "4", "5", "6", "7", "8"]);
+});
+
+test("Ollama tool turns think, and a model that can't think is asked again without it", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const turn = await toolChat("ollama", chat, config, async (_url, init) => {
+    const body = JSON.parse(String(init.body)); bodies.push(body);
+    if (body.think) return new Response(JSON.stringify({ error: "\"test\" does not support thinking" }), { status: 400 });
+    return new Response(JSON.stringify(response("ollama")));
+  }, signal);
+  assert.equal(bodies[0]!.think, true);
+  assert.equal((bodies[0]!.options as { num_predict: number }).num_predict, chat.maxTokens + 6000);
+  assert.equal(bodies[1]!.think, false);
+  assert.equal((bodies[1]!.options as { num_predict: number }).num_predict, chat.maxTokens);
+  assert.equal(turn.toolCalls![0]!.name, "read_scene");
+  assert.equal(bodies.length, 2);
+});

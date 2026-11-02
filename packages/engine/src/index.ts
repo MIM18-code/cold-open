@@ -1,4 +1,5 @@
 export * from "./model.ts";
+export * from "./speeches.ts";
 export * from "./ids.ts";
 export * from "./doc.ts";
 export * from "./fdx.ts";

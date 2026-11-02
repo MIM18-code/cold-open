@@ -2,7 +2,7 @@ import { buildCharacterRegistry, characterEvidence, normalizeCharacterName, plai
   type CharacterIdentity, type Script } from "@screenplay/engine";
 import type { AiTool, AiToolCall, ProductionData } from "../../../shared/channels/ai.ts";
 import { sceneLabel, visibleScript } from "./context.ts";
-import { locate, type Suggestion } from "./suggestions.ts";
+import { locate, locateCut, plainMarks, type Suggestion } from "./suggestions.ts";
 
 const sceneParameter = { type: "string", description: "Scene number, or 1-based ordinal when it has no number. Numbers take precedence." };
 const definition = (name: string, description: string, properties: Record<string, unknown>, required = Object.keys(properties)): AiTool => ({
@@ -18,7 +18,7 @@ export function scriptTools(production: boolean): AiTool[] {
     }, ["query"]),
     definition("character", "Find a character's speaking scenes, dialogue line count, first appearance and confirmed aliases.", { name: { type: "string" } }),
     ...(production ? [definition("production_data", "Read the chosen Backlot project's breakdown, cast and schedule summary.", {})] : []),
-    definition("propose_edit", "Propose a change for the writer to apply. Find must occur exactly once in this scene and fit in one paragraph. Nothing is applied.", {
+    definition("propose_edit", "Propose a change for the writer to apply. Find must occur exactly once in this scene and fit in one paragraph. An empty replace with a whole line or paragraph as find proposes cutting it (the whole speech when it is the speech's only line). Quote dialogue, not a character cue. Nothing is applied.", {
       scene: sceneParameter, find: { type: "string" }, replace: { type: "string" }, why: { type: "string" },
     }),
   ];
@@ -37,6 +37,24 @@ export interface ToolExecution {
 }
 
 const error = (message: string): ToolExecution => ({ result: { ok: false, error: message }, line: message });
+
+const COMMON = new Set(["the", "and", "but", "for", "with", "you", "are", "was", "his", "her", "its", "this", "that", "not"]);
+// Content words by their first four letters, so "holding" meets "holds".
+const words = (text: string) => new Set((plainMarks(text).toLowerCase().match(/[\p{L}\p{N}']{3,}/gu) ?? [])
+  .filter((word) => !COMMON.has(word)).map((word) => word.slice(0, 4)));
+
+/** The scene paragraph sharing the most words with a missed find, if it shares at least half of them. */
+function closestParagraph(paragraphs: Script["paragraphs"], find: string): string | undefined {
+  const wanted = words(find);
+  let best: { text: string; score: number } | undefined;
+  for (const paragraph of paragraphs) {
+    const text = plainText(paragraph.runs);
+    const have = words(text);
+    const score = [...wanted].filter((word) => have.has(word)).length;
+    if (score && (!best || score > best.score)) best = { text, score };
+  }
+  return best && best.score * 2 >= wanted.size ? best.text.slice(0, 600) : undefined;
+}
 
 /** Takes a fresh snapshot for every call; no document or filesystem handles reach the model. */
 export async function executeTool(call: AiToolCall, context: ToolContext): Promise<ToolExecution> {
@@ -117,8 +135,21 @@ export async function executeTool(call: AiToolCall, context: ToolContext): Promi
       // The same matcher Apply uses: visible paragraph text, without Fountain markup or private notes, so a proposal
       // that passes here is one the writer can apply.
       const proposal: Suggestion = { scene: scenes[index]!.number || String(index + 1), find, replace, why: args.why as string };
-      const found = locate(source, proposal);
-      if ("error" in found) return error(`${found.error} Copy an exact passage from one paragraph of ${label(index)}, as plain text without Fountain formatting.`);
+      const visibleMatch = !replace.trim() ? locate(script, proposal) : undefined;
+      const target = !visibleMatch || "error" in visibleMatch ? undefined : script.paragraphs.find((paragraph) => paragraph.id === visibleMatch.paragraphId);
+      const cutting = visibleMatch && (!target || plainMarks(plainText(target.runs)).trim() === plainMarks(find).trim());
+      const found = cutting ? locateCut(source, proposal) : locate(source, proposal);
+      if ("error" in found) {
+        const message = `${found.error} Copy an exact passage from one paragraph of ${label(index)}, as plain text without Fountain formatting.`;
+        const closest = closestParagraph(script.paragraphs.slice(scenes[index]!.start, scenes[index]!.end), find);
+        // Small models give up after a miss; the nearest real paragraph lets them retry with exact text.
+        return closest ? { result: { ok: false, error: message, closestParagraph: closest }, line: message } : error(message);
+      }
+      if ("paragraphIds" in found) {
+        proposal.cut = found.cut;
+        return { result: { ok: true, scene: label(index), proposed: true, cut: found.cut, removes: found.paragraphIds.length },
+          line: `Proposed ${found.cut} cut in ${label(index)}`, proposal };
+      }
       return { result: { ok: true, scene: label(index), proposed: true }, line: `Proposed edit in ${label(index)}`, proposal };
     }
     default: return error(`Unknown tool: ${call.name}.`);

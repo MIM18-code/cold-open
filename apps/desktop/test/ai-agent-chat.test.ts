@@ -30,7 +30,10 @@ function harness(settings: Record<string, unknown> = {}) {
     if (channel === AI_CHANNELS.cancel) { cancelled.push(String(args[0])); return; }
     if (channel === AI_CHANNELS.start) {
       const request = args[0] as AiRequest; requests.push(request);
-      emit({ id: request.id, type: "done", text: "Scene 12." });
+      // A tool-enabled model reads the scene first, as the agent expects, then answers.
+      const read = request.tools && !request.messages.some((message) => message.role === "tool");
+      emit(read ? { id: request.id, type: "done", text: "", toolCalls: [{ id: `read-${requests.length}`, name: "read_scene", arguments: { scene: "12" } }] }
+        : { id: request.id, type: "done", text: "Scene 12." });
       return { id: request.id, provider: "ollama", model: "test" };
     }
   };
@@ -40,7 +43,7 @@ function harness(settings: Record<string, unknown> = {}) {
 test("Chat uses tools by default without sending a whole-script snapshot", async (t) => {
   const h = harness(); t.after(h.dispose);
   await h.chat.send("Where is the gun?");
-  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests.length, 2);
   assert.ok(h.requests[0]!.tools?.length);
   assert.doesNotMatch(h.requests[0]!.system, /Nell holds|PRIVATE NOTE/);
   assert.match(h.requests[0]!.system, /propose_edit/);
@@ -122,7 +125,7 @@ test("Chat offers production_data only when the project and inclusion are both s
   await h.chat.send("Production?", { backlot: false });
   await h.chat.send("Include production", { backlot: true });
   assert.ok(!h.requests[0]!.tools!.some((tool) => tool.name === "production_data"));
-  assert.ok(h.requests[1]!.tools!.some((tool) => tool.name === "production_data"));
+  assert.ok(h.requests[2]!.tools!.some((tool) => tool.name === "production_data"));
   assert.doesNotMatch(JSON.stringify(h.requests), /\/chosen\/project/);
 });
 
@@ -135,4 +138,22 @@ test("client cancellation rejects immediately even before main acknowledges the 
   finish({ id: run.id, provider: "ollama", model: "test" });
   await run.started;
   assert.equal(listeners.size, 0);
+});
+
+test("the continuity check says what it needs instead of running on the local model", async (t) => {
+  const h = harness(); t.after(h.dispose);
+  await h.chat.quick("continuity");
+  assert.equal(h.requests.length, 0);
+  assert.match(h.chat.messages.at(-1)!.error!, /needs ChatGPT or an API key/);
+  await h.chat.quick("summarize");
+  assert.equal(h.requests.length > 0, true, "scene actions still run locally");
+});
+
+test("a continuity action from a document that was switched away does nothing", async (t) => {
+  const h = harness(); t.after(h.dispose);
+  const pending = h.chat.quick("continuity");
+  h.sessionChanged();
+  await pending;
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.chat.messages.length, 0);
 });

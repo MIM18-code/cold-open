@@ -1,6 +1,6 @@
 // The assistant conversation: messages, the running request, and sending. One conversation per open document;
 // it is cleared when another document replaces this one. Kept outside React so it survives the panel closing.
-import { AI_CHANNELS, AI_SETTINGS, type AiMessage, type AiStatus, type ProductionData, supportsTools } from "../../../shared/channels/ai.ts";
+import { AI_CHANNELS, AI_SETTINGS, type AiMessage, type AiStatus, judgesWholeScript, type ProductionData, supportsTools } from "../../../shared/channels/ai.ts";
 import type { App } from "../../core/app.ts";
 import { desktop } from "../../core/platform.ts";
 import { AiClientError, runAi, type AiRun } from "./client.ts";
@@ -79,7 +79,19 @@ export class Chat {
     return context.current ?? "the current scene";
   }
 
-  quick(kind: keyof typeof QUICK_ACTIONS, options: SendOptions = {}): Promise<void> {
+  async quick(kind: keyof typeof QUICK_ACTIONS, options: SendOptions = {}): Promise<void> {
+    if (kind === "continuity" && !this.busy) {
+      const generation = this.generation;
+      const status = await desktop.invoke<AiStatus>(AI_CHANNELS.status).catch(() => null);
+      // A document switch while status was loading clears the chat; the action belonged to the old one.
+      if (generation !== this.generation) return;
+      if (status && !judgesWholeScript(status.active.provider)) {
+        this.messages = [...this.messages, { id: this.nextId++, role: "assistant", text: "",
+          error: "Checking continuity across the script needs ChatGPT or an API key. Choose one in Settings, AI." }];
+        this.emit();
+        return;
+      }
+    }
     const scene = this.currentScene();
     return this.send(kind === "continuity" ? QUICK_ACTIONS.continuity() : QUICK_ACTIONS[kind](scene), options);
   }
@@ -135,7 +147,7 @@ export class Chat {
         });
         update({ text: answer.text, streaming: false, proposals: answer.proposals,
           toolAnswer: answer.note !== FALLBACK_NOTE,
-          note: [model, ...(answer.note ? [answer.note] : ["Script lookup"]),
+          note: [model, ...(answer.note ? [answer.note] : ["Script lookup"]), ...(answer.coverage ? [answer.coverage] : []),
             ...(answer.note === FALLBACK_NOTE ? [contextNote, ...(useBacklot ? ["Backlot data"] : [])] : [])].filter(Boolean).join(" · ") });
       } else {
         this.run = runAi(fallback, (delta) => update({ text: reply.text + delta }));

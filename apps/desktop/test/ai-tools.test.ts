@@ -154,3 +154,30 @@ test("standalone notes are never an edit target, alone or duplicating visible te
   assert.ok("error" in locate(script, { scene: "1", find: "Cut the gun.", replace: "x" }));
   assert.deepEqual(locate(script, { scene: "1", find: "Nell holds a gun.", replace: "Nell drops it." }), { paragraphId: "a", from: 0, to: 17 });
 });
+
+test("a missed edit returns the closest paragraph of that scene so the model can copy it exactly", async () => {
+  const output = await tool("propose_edit", { scene: "12", find: "Nell is holding the gun.", replace: "Nell waits.", why: "Tighter." });
+  assert.equal((output.result as { closestParagraph?: string }).closestParagraph, "Nell holds a gun.");
+  const unrelated = await tool("propose_edit", { scene: "12", find: "A whale sings.", replace: "Quiet.", why: "Tone." });
+  assert.equal((unrelated.result as { closestParagraph?: string }).closestParagraph, undefined);
+});
+
+test("straight quotes and dashes match the script's curly ones, and Apply edits the original characters", async () => {
+  const s = parseFountain("INT. OFFICE - DAY\n\nNELL\nDon’t move — “please.”\n");
+  const output = await tool("propose_edit", { scene: "1", find: "Don't move - \"please.\"", replace: "Stay.", why: "Shorter." }, s);
+  assert.equal((output.result as { ok: boolean }).ok, true);
+  const found = locate(s, output.proposal!);
+  assert.ok(!("error" in found));
+  const paragraph = s.paragraphs.find((p) => p.id === (found as { paragraphId: string }).paragraphId)!;
+  assert.equal(plainText(paragraph.runs).slice((found as { from: number }).from, (found as { to: number }).to), "Don’t move — “please.”");
+});
+
+test("empty replacement proposes a speech cut, refuses private notes, and still permits partial trims", async () => {
+  const output = await tool("propose_edit", { scene: "12", find: "The gun is empty.", replace: "", why: "Cut." });
+  assert.deepEqual(output.result, { ok: true, scene: "Scene 12 (INT. OFFICE - DAY)", proposed: true, cut: "speech", removes: 2 });
+  assert.equal(output.proposal!.cut, "speech");
+  const noted = parseFountain("INT. OFFICE - DAY\n\nNELL\nThe gun is empty. [[private]]\n");
+  assert.match(JSON.stringify((await tool("propose_edit", { scene: "1", find: "The gun is empty.", replace: "", why: "Cut." }, noted)).result), /private note in it/);
+  const partial = await tool("propose_edit", { scene: "12", find: " is empty", replace: "", why: "Shorter." });
+  assert.equal((partial.result as { ok: boolean }).ok, true);
+});
