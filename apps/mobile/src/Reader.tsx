@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, FlatList, Pressable, ScrollView, TextInput, useColorScheme, View } from "react-native";
 import { ELEMENT_LAYOUT, runRevision } from "@screenplay/engine";
 import { revisionColor, revisionLines, type ReaderLine } from "./reader-revisions";
+import { pairingEnded } from "./reach";
 import { readerAnchor } from "./reader-anchor";
 import type { Presence, Row } from "./live";
 import { Action, c, Caption, Heading, Label, NavBar, StatusDot, Symbol, ToolbarAction } from "./ui";
@@ -11,6 +12,7 @@ type Props = {
   compose(kind: "draft" | "dictation" | "note", row: Row): void;
 };
 export function Reader({ rows, people, status, secure, showStatus, compose }: Props) {
+  const ended = pairingEnded(status);
   const dark = useColorScheme() === "dark";
   const [layouts, setLayouts] = useState<Record<string, { text: string; lines: ReaderLine[] }>>({});
   const [selected, select] = useState(""), [follow, setFollow] = useState(false);
@@ -26,6 +28,7 @@ export function Reader({ rows, people, status, secure, showStatus, compose }: Pr
   const preferred = (follow && people.cursor) || selected || visible.current;
   if (rows.some(r => r.id === preferred)) previous.current = rows.map(r => r.id);
   const open = (kind: "draft" | "note" | "dictation") => {
+    if (ended) { showStatus(); return; }
     const anchor = (follow && people.cursor) || selected || visible.current;
     const { row, changed } = readerAnchor(rows, anchor, previous.current, visible.current);
     if (!row) {
@@ -57,14 +60,15 @@ export function Reader({ rows, people, status, secure, showStatus, compose }: Pr
       accessibilityLabel={`${heading ? item.scene : item.type}, ${item.text || "Empty paragraph"}${revision ? `, Revised, ${revision.label}` : ""}`}
       accessibilityHint="Tap to select. Long press to write a note."
       accessibilityState={{ selected: item.id === selected }}
-      accessibilityActions={[{ name: "write", label: "Write" }, { name: "note", label: "Add note" }, { name: "dictate", label: "Dictate" }]}
+      accessibilityActions={ended ? [] : [{ name: "write", label: "Write" }, { name: "note", label: "Add note" }, { name: "dictate", label: "Dictate" }]}
       onAccessibilityAction={e => {
+        if (ended) return;
         if (e.nativeEvent.actionName === "write") compose("draft", item);
         else if (e.nativeEvent.actionName === "note") compose("note", item);
         else if (e.nativeEvent.actionName === "dictate") compose("dictation", item);
         else select(item.id);
       }}
-      onPress={() => select(item.id)} onLongPress={() => { select(item.id); compose("note", item); }}
+      onPress={() => select(item.id)} onLongPress={ended ? undefined : () => { select(item.id); compose("note", item); }}
       style={{ paddingHorizontal: 22, paddingTop: heading ? 22 : layout.spaceBefore * 12,
         paddingBottom: 2, borderLeftWidth: 3, borderColor: item.id === selected ? c.accent : revision ? revisionColor(revision.color, dark) : "transparent" }}>
       {heading && <Label style={{ fontSize: 11, fontWeight: "700", letterSpacing: 1.4,
@@ -96,7 +100,7 @@ export function Reader({ rows, people, status, secure, showStatus, compose }: Pr
           fontFamily: "CourierPrime_700Bold", fontSize: 17, color: revisionColor(mark.color, dark) }}>{mark.mark}</Label>)}
       </View>
     </Pressable>;
-  }, [selected, compose, follow, people.cursor, people.offset, people.production, layouts, dark]);
+  }, [selected, compose, ended, follow, people.cursor, people.offset, people.production, layouts, dark]);
 
   if (changes) return <>
     <NavBar title="Changes" leading={<Action label="Script" press={() => setChanges(false)} />} />
@@ -144,6 +148,7 @@ export function Reader({ rows, people, status, secure, showStatus, compose }: Pr
           style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
           <StatusDot status={status} /><Caption>{status}{secure ? "" : " · Unencrypted Wi-Fi"}</Caption>
         </View>
+        {ended && <Action label="Pair again" icon="link" press={showStatus} />}
         {people.writers.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ gap: 6 }}>{people.writers.map((name, i) =>
           <View key={i} style={{ flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: c.group,
@@ -151,17 +156,17 @@ export function Reader({ rows, people, status, secure, showStatus, compose }: Pr
             <Symbol name="pencil" size={13} color={c.sub} /><Label style={{ fontSize: 13 }}>{name}</Label>
           </View>)}</ScrollView>}
       </View>} ListEmptyComponent={<View style={{ padding: 24 }}><Caption>
-        {["Host stopped sharing", "Refused", "Pairing expired"].includes(status)
+        {ended
           ? "Open Status to pair with your Mac again." : "Waiting for the Mac’s script."}
       </Caption></View>} />
     <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 8,
       borderTopWidth: 0.5, borderColor: c.line }}>
       <ToolbarAction label="Follow" icon={follow ? "location.fill" : "location"} checked={follow}
         press={() => { jump(null); setFollow(!follow); }} />
-      <ToolbarAction label="Write" icon="square.and.pencil" primary disabled={!rows.length} press={() => open("draft")} />
+      <ToolbarAction label="Write" icon="square.and.pencil" primary disabled={ended || !rows.length} press={() => open("draft")} />
       <ToolbarAction label="Changes" icon="asterisk" press={() => setChanges(true)} />
-      <ToolbarAction label="Dictate" icon="mic" disabled={!rows.length} press={() => open("dictation")} />
-      <ToolbarAction label="Note" icon="note.text" disabled={!rows.length} press={() => open("note")} />
+      <ToolbarAction label="Dictate" icon="mic" disabled={ended || !rows.length} press={() => open("dictation")} />
+      <ToolbarAction label="Note" icon="note.text" disabled={ended || !rows.length} press={() => open("note")} />
     </View>
   </>;
 }

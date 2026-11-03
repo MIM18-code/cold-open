@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import {
   DICTATION, SETTING_DEFAULTS, SETTING_KEYS, SPEECH_ENGINES, type CheckResult, type SpeechEngineName,
 } from "../../../shared/channels/dictation.ts";
+import { app } from "../../core/app.ts";
 import { useSetting } from "../../core/hooks.ts";
 import { desktop } from "../../core/platform.ts";
 import { prepareEngine } from "./controller.ts";
@@ -110,6 +111,7 @@ export function DictationSettings() {
       </div>
 
       <h3 className="dictation-heading">Formatting model</h3>
+      <button className="button" onClick={() => app.openModal("workspace.settings", { section: "modelManager" })}>Set up formatting on this Mac…</button>
       <label className="field">
         <span>Model server</span>
         <select value={provider} onChange={(event) => setProvider(event.target.value as "ollama" | "compatible")}>

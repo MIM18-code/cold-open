@@ -261,6 +261,11 @@ test("invites round-trip, and the Node and WebCrypto read keys agree", async () 
   assert.deepEqual(parseInvite(`  ${hosted}\n`), { relay: "wss://relay.example.com", room, key: readKeyFor(key), readOnly: true });
   assert.throws(() => parseInvite("https://example.com"), /not a co-writing invite/);
   assert.throws(() => parseInvite("screenplay://join?host=1.2.3.4:5&room=short&key=x"), /incomplete/);
+  assert.throws(() => parseInvite(lan.replace("://join?", "://other?")), /not a co-writing invite/);
+  for (const endpoint of ["wss://writer@bad.example", "wss://host.example?return=elsewhere", "ws://bad:port", "file:///tmp/script"]) {
+    const invalid = formatInvite({ relay: endpoint, room, key, readOnly: false });
+    assert.throws(() => parseInvite(invalid), /invalid server address/);
+  }
   assert.equal(await deriveReadKey(key), readKeyFor(key));
   assert.match(key, /^[A-Za-z0-9_-]{22}$/);
 });

@@ -14,6 +14,7 @@
     "test:browser": "npm run test:browser -w @screenplay/desktop",
     "voices:manifest": "node native/voice-helper/scripts/manifest.ts",
     "voices:starter-bank": "node native/voice-helper/scripts/starter-bank.ts",
-    "release:prepare": "sh scripts/build-helpers.sh && node scripts/prepare-licenses.mjs && SCREENPLAY_RELEASE=1 SCREENPLAY_SIGN=developer-id npm run package -w @screenplay/desktop && node scripts/release-source.mjs && node scripts/verify-release.mjs"
+    "test:packaged": "node apps/desktop/scripts/test-packaged-basic.mjs",
+    "release:prepare": "sh scripts/build-helpers.sh && node scripts/prepare-licenses.mjs && SCREENPLAY_RELEASE=1 SCREENPLAY_SIGN=developer-id npm run package -w @screenplay/desktop && npm run test:packaged && node scripts/release-source.mjs && node scripts/verify-release.mjs"
   }
 }

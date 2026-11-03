@@ -1,0 +1,8 @@
+Speech fixture: jfk.flac
+Source: OpenAI Whisper repository, tests/jfk.flac
+Repository: https://github.com/openai/whisper
+Pinned commit: 86098128c0b4f24f0e2aa2994de830614b474227
+Source file: https://github.com/openai/whisper/blob/86098128c0b4f24f0e2aa2994de830614b474227/tests/jfk.flac
+SHA-256: 63a4b1e4c1dc655ac70961ffbf518acd249df237e5a0152faae9a4a836949715
+License: MIT, Copyright (c) 2022 OpenAI. The upstream LICENSE at the pinned commit is reproduced in speech-LICENSE.txt.
+License source: https://github.com/openai/whisper/blob/86098128c0b4f24f0e2aa2994de830614b474227/LICENSE

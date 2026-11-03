@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { app, type Feature } from "../../core/app.ts";
 import { desktop } from "../../core/platform.ts";
-import { CHANNELS } from "../../../shared/api.ts";
 import type { InstalledModel, ModelPin, ModelProgress } from "../../../main/models/ollama.ts";
 interface Status {
     installed: InstalledModel[];
@@ -19,7 +18,7 @@ function ModelManager() {
         setError("");
     }
     catch (e) {
-        setError(String(e));
+        setError("Could not check the formatting model. Choose Set up formatting on this Mac to start Ollama and check again.");
     } };
     useEffect(() => { void refresh(); return desktop.on("models:progress", (value) => setProgress(value as ModelProgress)); }, []);
     const run = async (channel: string, ...args: unknown[]) => { setBusy(true); setError(""); try {
@@ -34,10 +33,9 @@ function ModelManager() {
     } };
     const source = status?.installed.find((m) => m.name === status.source), percent = progress?.total && progress.completed !== undefined ? Math.min(100, Math.round(progress.completed / progress.total * 100)) : null;
     return <section className="roadmap-dialog"><h3>Local formatting model</h3><p>Cold Open manages a pinned version of the formatter through Ollama on this Mac. Writing needs neither. The selected version does not silently change when a newer download arrives.</p>
-    <button className="button" onClick={() => void desktop.invoke(CHANNELS.openExternal, "https://ollama.com/download")}>Install / open Ollama download page</button>
-    <p>Install and start Ollama first, then Refresh. Model downloading sends no screenplay text. Voice engines have their own setup under Local features.</p>
+    <p>Cold Open can install Ollama and download the writing model for you. Allow about 4 GB for the download. Your script stays on this Mac.</p>
     <button className="button" disabled={busy} onClick={() => void refresh()}>Refresh model status</button>
-    <button className="button primary" disabled={busy || !!status?.downloading} onClick={() => void run("models:pull")}>{source ? "Repair / check for a newer formatter…" : "Download / resume formatter…"}</button>
+    <button className="button primary" disabled={busy || !!status?.downloading} onClick={() => void run("models:pull")}>{source ? "Repair / check for a newer formatter…" : "Set up formatting on this Mac…"}</button>
     {(busy || status?.downloading) && <button className="button" onClick={() => void desktop.invoke("models:cancel")}>Pause this window’s download</button>}
     {progress && <div role="status"><p>{progress.status}{percent !== null ? ` · ${percent}% of current layer` : ""}</p>{percent !== null && <progress aria-label="Model download progress" max={100} value={percent}/>}</div>}
     {source && <section><strong>{source.name}</strong><p>{(source.size / 1024 ** 3).toFixed(2)} GB · SHA-256 {source.digest}</p><button className="button" disabled={busy} onClick={() => void run("models:use", source.digest)}>Pin and use this version for Format Draft</button></section>}

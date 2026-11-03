@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinalDraft DocumentType="Script" Template="No" Version="1"><Content>
+<Paragraph Type="Scene Heading" Number="12A"><Text>INT. CAFÉ &amp; BAR - NIGHT</Text></Paragraph>
+<Paragraph Type="Action"><Text>Zoë &amp; 李 find </Text><Text TagNumber="1">&lt;the key&gt;</Text><Text>. </Text><Text Style="Bold">Bold</Text><Text Style="Italic"> Italic</Text><Text Style="Underline"> Underline</Text></Paragraph>
+<Paragraph Type="Character"><Text>MARA</Text></Paragraph><Paragraph Type="Dialogue" RevisionID="1"><Text>Crème brûlée &amp; tea.</Text></Paragraph>
+<Paragraph Type="General"><DualDialogue><Paragraph Type="Character"><Text>IVO</Text></Paragraph><Paragraph Type="Dialogue"><Text>Left voice.</Text></Paragraph><Paragraph Type="Character"><Text>MARÍA</Text></Paragraph><Paragraph Type="Dialogue"><Text>Right voice.</Text></Paragraph></DualDialogue><Text></Text></Paragraph>
+<Paragraph Type="Scene Heading" Number="13"><Text>EXT. HARBOR - DAY</Text></Paragraph><Paragraph Type="Action"><Text>Another scene.</Text></Paragraph>
+</Content><TitlePage><Content><Paragraph Type="Title Page"><Text>THE FERRY TEST</Text></Paragraph></Content></TitlePage><TagData><TagCategories><TagCategory Id="props" Name="Props" Number="1"/></TagCategories><TagDefinitions><TagDefinition Id="key" CatId="props" Number="1" Label="Key"/></TagDefinitions></TagData><CustomFixtureData sentinel="do-not-delete">Keep me</CustomFixtureData></FinalDraft>

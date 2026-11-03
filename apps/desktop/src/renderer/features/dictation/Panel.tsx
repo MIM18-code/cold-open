@@ -62,6 +62,7 @@ function Capture() {
           : push ? `Hold the button while you talk. ${formatAccelerator(SHORTCUT)} also starts and stops.`
             : `Press ${formatAccelerator(SHORTCUT)} to start and stop. Talk the scene in order; no commands needed.`}
       </div>
+      <p className="dictation-hint">Built-in dictation uses your selected speech engine. Parakeet comes with Cold Open. To use Wispr Flow, place the cursor in the script and use Flow’s shortcut.</p>
     </section>
   );
 }

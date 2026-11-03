@@ -77,8 +77,9 @@ Choose **Write** to type a Fountain passage in Courier Prime. The keyboard toolb
 Scene, Character, Parenthetical and Transition cues. Its microphone dictates at the
 cursor in the same field; tap it again to finish. Separate scenes and speeches with
 blank lines, and put dialogue directly below the character name or parenthetical.
-The attached passage stays visible for context. Backgrounding the app keeps the open
-Write screen's text; Cancel discards it. After Send, the complete draft and receipt ID
+The attached passage stays visible for context. Unsent writing, notes and dictated text reopen at the same passage after the app closes.
+Cancel asks before discarding text. If the Mac ends pairing mid-edit, copy the text
+before discarding and pairing again. After Send, the complete draft and receipt ID
 are saved synchronously in the same SQLite outbox as other takes before delivery, so
 queued drafts survive termination and use the same retries and iCloud fallback.
 
@@ -138,3 +139,16 @@ app. The host serves only synthetic text and removes the code file on Ctrl-C.
   and bookmark scope need a native device/simulator check. Its formatter result is a test fixture; the live transport and receipts are real.
 
 [Simulator gallery](../../docs/phone-remote/README.md) · [Wire contract](../../docs/sync-protocol.md#paired-phone-remote)
+
+## Distribute an iPhone beta
+
+Use TestFlight for a build that testers can install. The Mac download is a separate app.
+Keep the iOS bundle ID `com.mindinmotion.inklot.remote` so existing installations can update.
+
+1. Sign into the MindInMotion team in Xcode. The Account Holder must handle any pending Apple agreements.
+2. From the repository root, run `npm ci`, then `cd apps/mobile && npx expo prebuild --platform ios --no-install && cd ios && pod install`.
+3. Open `ColdOpen.xcworkspace`. Select the ColdOpen target, the MindInMotion signing team, automatic signing, the Release configuration and an iOS device destination. Choose **Product → Archive**. The generated Xcode project is local; make persistent app configuration changes in `app.json`.
+4. Check App Store Connect for the matching iOS app record and create one if it is missing. In Xcode Organizer, select the device archive, then **Distribute App → TestFlight & App Store**. Let Xcode manage the build number. Uploading alone does not make it available to testers.
+5. When Apple finishes processing, add the build to an internal TestFlight group. On a physical iPhone, check QR scanning, local network permission, and spoken dictation in a supported language. Pair, write a passage, close and reopen before sending, then accept it on the Mac. Try again with the Mac offline. For outside testers, supply beta review information and submit the build to TestFlight review before sharing an invitation.
+
+[Apple’s beta distribution guide](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases)

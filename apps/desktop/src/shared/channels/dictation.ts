@@ -163,6 +163,7 @@ export interface TakeResult {
   timings: TakeTimings;
   /** Set when the transcript is good but formatting failed. The transcript stays for another try. */
   error?: string;
+  needsFormatterSetup?: true;
 }
 
 export type ProgressStage = "saved" | "transcribing" | "formatting" | "done";

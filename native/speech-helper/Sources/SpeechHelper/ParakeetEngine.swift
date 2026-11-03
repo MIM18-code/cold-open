@@ -20,7 +20,12 @@ actor ParakeetEngine: SpeechEngine {
     func prepare(allowDownload: Bool) async throws {
         if manager != nil { return }
         let models: AsrModels
-        if allowDownload {
+        // In the Mac app the pinned recognizer ships beside this executable. loadLocal never resolves a remote model.
+        let bundled = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+            .appendingPathComponent("parakeet-tdt-0.6b-v3", isDirectory: true)
+        if precision == .int8V2 && FileManager.default.fileExists(atPath: bundled.path) {
+            models = try AsrModels.loadLocal(from: bundled, version: .v3, encoderPrecision: precision)
+        } else if allowDownload {
             models = try await AsrModels.downloadAndLoad(version: .v3, encoderPrecision: precision)
         } else {
             let directory = AsrModels.defaultCacheDirectory(for: .v3)

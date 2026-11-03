@@ -17,6 +17,7 @@ export interface DraftFormatDeps {
   invoke: DesktopBridge["invoke"];
   alwaysReview(): boolean;
   review(): void;
+  offerFormatterSetup(): void;
   notify(message: string, error?: boolean): void;
 }
 let requestId = Date.now();
@@ -51,6 +52,11 @@ export class DraftFormatController {
       if (generation !== this.generation) return;
       this.activeId = undefined;
       if (this.deps.session() !== session || !targetIsCurrent(session, target)) throw new Error("The source passage changed while formatting. Your draft was left untouched.");
+      if (take.needsFormatterSetup) {
+        this.set({ phase: "idle" });
+        this.deps.offerFormatterSetup();
+        return;
+      }
       if (take.error) throw new Error(take.error);
       if (!take.elements.length) throw new Error("The formatter returned no screenplay elements. Your draft was left untouched.");
       const warnings = [...new Set([...target.warnings, ...(take.autoApplyErrors ?? ["Review is required because this result has no automatic-apply safety check."]),

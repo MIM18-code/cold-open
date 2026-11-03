@@ -13,11 +13,11 @@
   },
   {
     "path": "README.md",
-    "sha256": "6929d4e2b7a413a07386e27ac38ba10b3ebec2e82d4b02ed5dd26a309fbd72b5"
+    "sha256": "c9901d84e149323f794393c3a241a672b70d66c955d4355be2f8c50ebbd966a4"
   },
   {
     "path": "THIRD_PARTY_NOTICES.md",
-    "sha256": "a5dc5194bd06f289f88d6778dd23f5f85e58dcc508d06dadb15700c9af7c6c69"
+    "sha256": "f2540e2d062f901b5114283f114d3a2df4a8097d9ff0fa9b15a7abbb931f40aa"
   },
   {
     "path": "apps/desktop/build/brand/mark.svg",
@@ -53,7 +53,7 @@
   },
   {
     "path": "apps/desktop/e2e/ai.spec.ts",
-    "sha256": "adb392f1c757d16fbead3354e2ddfe8565a651d0644790432ca04ec9525b4361"
+    "sha256": "8a03874789e96a5237c40e37bc3f2f49ce9970937904907338acb41f5659c541"
   },
   {
     "path": "apps/desktop/e2e/autocomplete.spec.ts",
@@ -65,15 +65,15 @@
   },
   {
     "path": "apps/desktop/e2e/collab.spec.ts",
-    "sha256": "4907ccfb8439aac6114dddbe050c0a8492f9062e85ed1cb21c20cba3ae4f6b9b"
+    "sha256": "5ad638a9eb3c2f46410f3bb1d51ef94deb718b2e275c9384fc09f50d35d37a95"
   },
   {
     "path": "apps/desktop/e2e/cowriting.spec.ts",
-    "sha256": "dca4335540e8ec37c35e73774192c56af54dcd942d96870a8640ff108cfda0db"
+    "sha256": "f6b1f629ca10d79dc46c740361b5e22acd0d212c16c71ae98dfe423bcdccc3a3"
   },
   {
     "path": "apps/desktop/e2e/dictation.spec.ts",
-    "sha256": "949b13ec14598ccfc7240203a2e31486b9bafe3d2059dcff20aaf2a6b80c9054"
+    "sha256": "73d72095782b4e050c5441920951b49082d1e92b8bba1e59d5e0eb7065388783"
   },
   {
     "path": "apps/desktop/e2e/editor.spec.ts",
@@ -185,7 +185,7 @@
   },
   {
     "path": "apps/desktop/package.json",
-    "sha256": "c9ccb485fac29b64ef76fa4c8b3e9b9edd73a3135d2c99bf0e0416aaf745505e"
+    "sha256": "85710679470e51a5d770b1eaeeab167a1d184386ed88a59c0f206057ba81be38"
   },
   {
     "path": "apps/desktop/playwright.config.ts",
@@ -200,12 +200,40 @@
     "sha256": "3d1a6884f33bd32dbf159e240a51c71e811a600988cfebbfe9dee442f3e9c302"
   },
   {
+    "path": "apps/desktop/scripts/fixtures/basic/SOURCE.txt",
+    "sha256": "126798b97ea6dcb6b666a5427faee9533d375cc3c56046842b3afa11957a7ced"
+  },
+  {
+    "path": "apps/desktop/scripts/fixtures/basic/edge.fdx",
+    "sha256": "13bc97f35ec53c20bdc93feaf7a67592b0a18d6a5c178897840b45b236776b85"
+  },
+  {
+    "path": "apps/desktop/scripts/fixtures/basic/edge.fountain",
+    "sha256": "5903108e4e6b1dec3f2c62b8998e081ab485978e1c1954b5a67315fbeeae85bb"
+  },
+  {
+    "path": "apps/desktop/scripts/fixtures/basic/jfk.flac",
+    "sha256": "63a4b1e4c1dc655ac70961ffbf518acd249df237e5a0152faae9a4a836949715"
+  },
+  {
+    "path": "apps/desktop/scripts/fixtures/basic/speech-LICENSE.txt",
+    "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d"
+  },
+  {
     "path": "apps/desktop/scripts/make-icon.sh",
     "sha256": "264d28804ed553cf3173332afe43e0a1529c3a87d9f4443d90cd4fc8d87e79fd"
   },
   {
     "path": "apps/desktop/scripts/package.mjs",
-    "sha256": "f259fe1df67c8fba5feecd4c57a94fb34266f126c168220a0bb6cdde09878bbc"
+    "sha256": "c0e36ae62e99afe4e29ec8fbc8e886e5f1041cce7eb76f9c59507e5efc70d71b"
+  },
+  {
+    "path": "apps/desktop/scripts/parakeet-files.json",
+    "sha256": "bc142b551b89b51966a385ddf004fcafef133e473ee2670ed2f0c04f77df5bfa"
+  },
+  {
+    "path": "apps/desktop/scripts/parakeet-resources.mjs",
+    "sha256": "90348c080581848a167503faf5755e3cd4792eb843a7f78eddb417ab53a3b1b2"
   },
   {
     "path": "apps/desktop/scripts/phone-browser-acceptance.mjs",
@@ -217,11 +245,15 @@
   },
   {
     "path": "apps/desktop/scripts/qol-browser.mjs",
-    "sha256": "e489c257268c29ffcc0f71c63ff9540905811c59ee5f921fd9c718b520498c25"
+    "sha256": "050935bb8db90e78bb2a28c31ecdb61ceab3bc7a4bb98633de06c8407eff12e6"
   },
   {
     "path": "apps/desktop/scripts/release-policy.mjs",
-    "sha256": "46422cab1ec42c3bd0c718b5ca21f4760dda457602cc2be8c0e021ec50b69a1a"
+    "sha256": "f558aa044165c730bbc45c96761e03a44de701883abfe507e7207d8a5531f18e"
+  },
+  {
+    "path": "apps/desktop/scripts/test-packaged-basic.mjs",
+    "sha256": "5cf95e8c25903bc80f0071a7a5a0bbdbff41ff0aeea4ca7584e402d3943cc83d"
   },
   {
     "path": "apps/desktop/src/main/ai/backlot.ts",
@@ -281,11 +313,11 @@
   },
   {
     "path": "apps/desktop/src/main/dictation/errors.ts",
-    "sha256": "cb50bc4bacf87f44ab660259e495c9462034d2ae571f6584faf1307d9bc2fcb2"
+    "sha256": "48932bbf9ac8b716915c1f733b3aa86fc08090e1747f4fba6161a3a771debf51"
   },
   {
     "path": "apps/desktop/src/main/dictation/pipeline.ts",
-    "sha256": "7bce5aa44bcf109cf2ffb3ab194cce9d4348fea0708db8ee3d4b927b25db7616"
+    "sha256": "0604058c040364925b6307478b3b28a45c42729d910b76c6cd3233fbe441fb97"
   },
   {
     "path": "apps/desktop/src/main/dictation/runtime.ts",
@@ -305,11 +337,15 @@
   },
   {
     "path": "apps/desktop/src/main/index.ts",
-    "sha256": "2ca1ae7f96b608dcd1a7dcb184ff0b60e173c7dcb6e06ab21d7c84f5443118e8"
+    "sha256": "a219be6d9a894db9e5a9c7f7e172ec4f509ed95686c380b989af9bf64ebcf368"
+  },
+  {
+    "path": "apps/desktop/src/main/models/local-runtime.ts",
+    "sha256": "e6e3a6d3187591cfcddf464bab07f7063d8ea528858b88f75b69dcecbd3303a5"
   },
   {
     "path": "apps/desktop/src/main/models/ollama.ts",
-    "sha256": "b7c9c8b8a051b47b12a3689f9ea958af35efb398032f4348ad35f57badc81907"
+    "sha256": "ab9fca8be23fe4c49ae1734cd065253ddaaf1ef037fa624ac44a52798a18ff47"
   },
   {
     "path": "apps/desktop/src/main/models/voice-manager.ts",
@@ -409,7 +445,7 @@
   },
   {
     "path": "apps/desktop/src/main/services/model-manager.ts",
-    "sha256": "03b8dc07c5fd0e019af0661be8cef68bce252173549be58549c32f002d382a5b"
+    "sha256": "b44ea9d4fd4fb7a59d07104e8bef6c0fadf1f60bba35861fa5d3fddf513a3809"
   },
   {
     "path": "apps/desktop/src/main/services/phone.ts",
@@ -437,7 +473,7 @@
   },
   {
     "path": "apps/desktop/src/main/services/sync.ts",
-    "sha256": "e96811846777f986dd910dd90f8e80b7fa78740786a79276fb37328473749ab8"
+    "sha256": "3a48d3766d1611e6036d7319964555f2c0afb519de1a6ccd07438c4f7c302025"
   },
   {
     "path": "apps/desktop/src/main/services/table-read-files.ts",
@@ -581,7 +617,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/Setup.tsx",
-    "sha256": "812fc5a9457f19d91af4341a747fe236cd1cef4e6a8cc413c9f70f83395ecd5f"
+    "sha256": "ab898d0874beffd37a29a614281003b15f83f3806865b03579465fed68887e47"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/agent.ts",
@@ -613,7 +649,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/client.ts",
-    "sha256": "04037d89fdb4a61537b1fc883d8676acfdce2bdf4013a40b828563309163da92"
+    "sha256": "4d32ab71fad4a5fa6f9ce769fdd8a87cd5058ffe63987d366693c1c66da692b2"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/context.ts",
@@ -633,7 +669,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/setup-state.ts",
-    "sha256": "7026ea551a6f8b206385e912659a7050696348175a325b050abce66658ef2a4d"
+    "sha256": "a4d9030a275e239541f1af58a464b8627f61568ff75ea7f45372082a163b7cf0"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/setup.ts",
@@ -725,11 +761,11 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/collab/collab.css",
-    "sha256": "8f88f1a343fe446fd7712f25a13d99c0e034f13847d682c68be43a791d8dcf21"
+    "sha256": "32d577831949b11e803c44d68605711b8305f9d8f4094058bb5d1a4fbff87bf0"
   },
   {
     "path": "apps/desktop/src/renderer/features/collab/controller.ts",
-    "sha256": "0bc9aa9c441904a2e75398f1f4c41de95470187f97e86140dcc5dc75b6b42567"
+    "sha256": "49095051c31c88a979a5dd005e1f2f8ec5cb0f68182cf2c5b4749f7531b0225c"
   },
   {
     "path": "apps/desktop/src/renderer/features/collab/folder.ts",
@@ -737,7 +773,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/collab/index.tsx",
-    "sha256": "5a945ad249fdf33e911e101e0cfd0e994c79b32b33802b7ca36f219030e74cd7"
+    "sha256": "669904eeb14dde8aa3cd5d8d70720e97d79e5a2769a4f97f78218f36362b4f21"
   },
   {
     "path": "apps/desktop/src/renderer/features/collab/presence.ts",
@@ -777,11 +813,11 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/dictation/Panel.tsx",
-    "sha256": "aaf157fdd4ef2480eb6ac1cfe7452cea15a9cce94035382aa6837d171d695bd7"
+    "sha256": "d9043e5fc012edf3070b62d7f58045145099d1779ae8c8d63fe0a1eccdbb6331"
   },
   {
     "path": "apps/desktop/src/renderer/features/dictation/Settings.tsx",
-    "sha256": "97bd70fa131146a24a9579bae2aa6dbe28fc2343ea24662e99ecd877c34e79a7"
+    "sha256": "1ec31d01d40be5cf73caaea2c030d2a46d8c422bea708c45b8e9be1194043a84"
   },
   {
     "path": "apps/desktop/src/renderer/features/dictation/assets.d.ts",
@@ -797,7 +833,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/dictation/controller.ts",
-    "sha256": "22d4bb44a967068076f65b256fea4510128370a20cd6a5f80027393f863f66ed"
+    "sha256": "c7593fbf1a70b10a9a99bbbba8ab14150c977ec42421b4c16552d6684ea6b523"
   },
   {
     "path": "apps/desktop/src/renderer/features/dictation/dictation.css",
@@ -885,7 +921,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/format-draft/controller.ts",
-    "sha256": "a85251d3eaa1acf13de2301bf3cce49c5ee12c49f305ba3366af1a3d8c01360f"
+    "sha256": "be97f6d613ad489272be61f158bb16057f6e8e7aedd2cfc4d3d47c00fd7995ed"
   },
   {
     "path": "apps/desktop/src/renderer/features/format-draft/format-draft.css",
@@ -893,7 +929,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/format-draft/index.tsx",
-    "sha256": "0946122b0b30bfdd0f402913dc76f3d14d7ea99182e154909e54e8ef66929177"
+    "sha256": "d9ee6ea71c404c69aa2ece27228be22ede53427cc2c0919c58162742b4d988ad"
   },
   {
     "path": "apps/desktop/src/renderer/features/format-draft/target.ts",
@@ -913,7 +949,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/local-features/index.tsx",
-    "sha256": "f1b6da4a283e8176df6f77b520d5675bef2a4ffd1ae97dd00eb969e0c53a44fe"
+    "sha256": "7e3033d7fd9e74ba67201544f792c1f54410ed0003a09d4a5b3d977388fcf773"
   },
   {
     "path": "apps/desktop/src/renderer/features/local-features/voice-packs.tsx",
@@ -925,7 +961,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/model-manager/index.tsx",
-    "sha256": "cfa6431b1763ebc707a2938755e8ad097c8df6d251bde83b4e46f239d1b01853"
+    "sha256": "113cb8e7ece9cffe4d8ff989529b239c40302a107ef751413462dc4ec646fad7"
   },
   {
     "path": "apps/desktop/src/renderer/features/navigator/index.tsx",
@@ -1333,7 +1369,7 @@
   },
   {
     "path": "apps/desktop/src/shared/channels/dictation.ts",
-    "sha256": "da9f65929e7fe129954554015e600f6049ec9fa2f3f88ed45428e6dcec72a728"
+    "sha256": "962b3d830bc3a65d08fddee03052df12d7a62d9ef0c38c6a4d8982592d40d84b"
   },
   {
     "path": "apps/desktop/src/shared/channels/history.ts",
@@ -1353,7 +1389,7 @@
   },
   {
     "path": "apps/desktop/src/shared/channels/sync.ts",
-    "sha256": "3dd316fcdec52c540703ac36bbdb4574b63a62c4298fc39cb94d19006aa2359f"
+    "sha256": "22fc6cc622fa7b0723509fb3539381c19b8072dc4aaefd64cdaee8837b060dca"
   },
   {
     "path": "apps/desktop/src/shared/channels/table-read.ts",
@@ -1385,7 +1421,7 @@
   },
   {
     "path": "apps/desktop/test/ai-local-setup.test.ts",
-    "sha256": "e93afbaf074ea009ff12de8b90b319c8352381ac2d094aec56fd651ff72bba63"
+    "sha256": "284fa5e3a87c41c277e087fa7501c102445aaabf66231ef8615940554cc68613"
   },
   {
     "path": "apps/desktop/test/ai-proofread.test.ts",
@@ -1401,7 +1437,7 @@
   },
   {
     "path": "apps/desktop/test/ai-setup-download.test.ts",
-    "sha256": "0fcacf427c0f75bc3412ce37396923b838dd114cd2a0b18c5224a864e167fedb"
+    "sha256": "5bb70464801e461da846f5ad74e8a55e44ef8bdb802627d7b37a66ce49d2b5b0"
   },
   {
     "path": "apps/desktop/test/ai-tool-providers.test.ts",
@@ -1477,7 +1513,7 @@
   },
   {
     "path": "apps/desktop/test/dictation-pipeline.test.ts",
-    "sha256": "bf43125d96398a890b0d7351631012bf77fac8d8c43c43927d0bea55e5f7ef45"
+    "sha256": "697ef7267622eeae09846e62e1cef1d34b820793da3f0a92f95d51da4afb9284"
   },
   {
     "path": "apps/desktop/test/dictation-script.test.ts",
@@ -1497,7 +1533,7 @@
   },
   {
     "path": "apps/desktop/test/draft-format.test.ts",
-    "sha256": "ca698b001b1041fb9c2e044e77f0afca0b4dc5742acb35db8f3f9fa7ba7305af"
+    "sha256": "4691814e3ff21b764d523c6f184f4bf05592c956836fda790e49f96498134c0f"
   },
   {
     "path": "apps/desktop/test/editor-positions.test.ts",
@@ -1617,11 +1653,11 @@
   },
   {
     "path": "apps/desktop/test/release-policy.test.ts",
-    "sha256": "2bfe65f36485d6d46fad1959f50eaa5642ecca7785cbbe8fa85aaa83a0513b58"
+    "sha256": "6a77c384f8c6f264ab1ce7d4734b8d1ff947c303d7d702b6439ba38689ca75b2"
   },
   {
     "path": "apps/desktop/test/release-source.test.ts",
-    "sha256": "10956ce8ba5900a217d69a3fce540f3b8878f9004666eb48f7ac2de2920619d1"
+    "sha256": "6016032acbbe37c105722f627c3ca76c021d19006dc19f706bd78a1ea4902c59"
   },
   {
     "path": "apps/desktop/test/report-sort.test.ts",
@@ -1673,7 +1709,7 @@
   },
   {
     "path": "apps/desktop/test/sync-collab-join.test.ts",
-    "sha256": "ea3c996798c8a2c26891caefb5a0972916ed3114ceb12c787b5106d7bfab9e83"
+    "sha256": "bf3a0c005758287a23eab4bf97c65cae55cd24364f3ff0e069bb26c5dde198c1"
   },
   {
     "path": "apps/desktop/test/sync-folder-client.test.ts",
@@ -1769,15 +1805,15 @@
   },
   {
     "path": "apps/mobile/App.tsx",
-    "sha256": "e41012f0d680638a7ab1f99cde0903160b5e8b9f962bb49eb4ad68bc21d9c562"
+    "sha256": "87b07ea57a0a102facbe5fbc3af4796dbe64a27b44b26222324f481f868f9b65"
   },
   {
     "path": "apps/mobile/README.md",
-    "sha256": "9ec4da85b884cfa395118c2bbf7505b0462d56bb7c445131f3c5d46d0578861a"
+    "sha256": "d9f67d5d316258ffc17734b8559af1e2fadd84ac5f9ff3c6d473e63d3edb03c0"
   },
   {
     "path": "apps/mobile/app.json",
-    "sha256": "01302c1c6f9dadba4f86b194da1ab20d035c86e10403ac2f1ca75d17336be90e"
+    "sha256": "e4c1b708598d5832ac91476d2e208bb1ec06efb0a39ab17c1ce79d427b8eb829"
   },
   {
     "path": "apps/mobile/assets/icon.png",
@@ -1833,19 +1869,19 @@
   },
   {
     "path": "apps/mobile/src/Compose.tsx",
-    "sha256": "c821809260533f813fabd9ba117b86c8fb1a24dc0440c6c6fde0695c12432d02"
+    "sha256": "ac409274bdf2a832c99436fd6696c58cc40f52d7838cd696c2f5707b45fab21e"
   },
   {
     "path": "apps/mobile/src/Pair.tsx",
-    "sha256": "f291102669d8634b3a578ef1a29834f38fd9e1f86fa9caf9b9077c9dffa8d62e"
+    "sha256": "72609bd6c1eee096b4ca68b7ee1413395c74b8cdbeba83e132c689e2845cd0fd"
   },
   {
     "path": "apps/mobile/src/Reader.tsx",
-    "sha256": "d19dded9be8777e5a25562d78a76561b45517015369fc191000c10a9b6690663"
+    "sha256": "a493682b894d264144a5a64dca40938bf450dc71db9b8cf6348a7adbf05b3403"
   },
   {
     "path": "apps/mobile/src/Status.tsx",
-    "sha256": "469c1fd8303ab962f4c3597c3d0d6c7d76032305906251e7b6bfdccf6448e245"
+    "sha256": "1b4ee776b1b1c034462b0028a438e68fe475137ce0bda3385b610153e45d4a70"
   },
   {
     "path": "apps/mobile/src/crypto.ts",
@@ -1873,7 +1909,7 @@
   },
   {
     "path": "apps/mobile/src/reach.ts",
-    "sha256": "d650afe25c283e87759b57d9cd5ec503c1a2a682145cd4c08d401d9d4d8d19e8"
+    "sha256": "448d3cca0deb5783eb6eecad299004997d6dd7aac96b975545d238ad31783d89"
   },
   {
     "path": "apps/mobile/src/reader-anchor.ts",
@@ -1893,7 +1929,7 @@
   },
   {
     "path": "apps/mobile/src/store.ts",
-    "sha256": "a139d67ade7e0687b92d459e50a1fc00c2846c16b55edb14e58117df274b52bd"
+    "sha256": "b5d24bb98a47cce0fec8ddb861f73edf1983fb7c66495d4e432988374275325e"
   },
   {
     "path": "apps/mobile/src/takes-file.ts",
@@ -1905,7 +1941,7 @@
   },
   {
     "path": "apps/mobile/src/useRemote.ts",
-    "sha256": "a1f966d24302ecd82b61643cb1691927a3e00ba4160b28d192393a68e18f587e"
+    "sha256": "30ce477b8d3a1a7fe6d2023362aad27d7202789dc3b07fda36e345cb8170230b"
   },
   {
     "path": "apps/mobile/src/writing.ts",
@@ -1953,7 +1989,7 @@
   },
   {
     "path": "apps/mobile/test/ui.test.ts",
-    "sha256": "669bd3a3bf0a023d48a4ea3563177e6c7464f7acdd46c18f7d8f741251852b49"
+    "sha256": "e2c31d291dc9d69af14300517a02aff323978239d5154bc22fde2593cc5381cf"
   },
   {
     "path": "apps/mobile/test/writing.test.ts",
@@ -1969,7 +2005,7 @@
   },
   {
     "path": "docs/OPTIONAL_DOWNLOADS.md",
-    "sha256": "70d0140275497abb42eed08501cea1c6bec2fede8d7802b12f410703cf34834c"
+    "sha256": "4e6c2497fe388bd197a56a5519503b6fb1f8dd3d7095f5bb73da01f48a02a9bd"
   },
   {
     "path": "docs/app-architecture.md",
@@ -2029,7 +2065,7 @@
   },
   {
     "path": "docs/sync-protocol.md",
-    "sha256": "1cfd4226a9adf60dcab2f7b2c7a35272b33e6a267a0ddeb7af0faea0fbcbe59f"
+    "sha256": "e787ec8ab1f959158cf7535c6531d745653f332df29774007d995ca76a3815f5"
   },
   {
     "path": "docs/table-read.md",
@@ -2405,7 +2441,7 @@
   },
   {
     "path": "native/speech-helper/Sources/SpeechHelper/ParakeetEngine.swift",
-    "sha256": "b9affa3a75b05723593876b28eab0430eb39eab21df1dac6096fea037c44c0d2"
+    "sha256": "0df19364e47152296dc722eba914ad98cb942692effc1252fc4365d5e7ea5ea7"
   },
   {
     "path": "native/speech-helper/Sources/SpeechHelper/SpeechEngine.swift",
@@ -2505,11 +2541,11 @@
   },
   {
     "path": "package-lock.json",
-    "sha256": "c0ed2957e4655c205356dfaff4835f832235b180a9589329d2e2ce103fb8abb7"
+    "sha256": "beaf1efc8f851bdc365b19ce79ccde5fb6aec9f33174e05bfa9b687e1f37a342"
   },
   {
     "path": "package.json",
-    "sha256": "c649246a09947794d2f00d026f877a6e6284e48b7e539b3d80658071f876a259"
+    "sha256": "139c11f1ca5ea7d69a41a3e6ea92f34f4b210ea81f63e9d63c571c39f3350d03"
   },
   {
     "path": "packages/dictation/LICENSE",
@@ -2901,7 +2937,7 @@
   },
   {
     "path": "packages/relay/src/protocol.ts",
-    "sha256": "429755a8bba9d40027b9ab48b386da9fb9cfc902ea232b9494273d7582a3ce5f"
+    "sha256": "f87ad8e047424e4f974354e16568cd32831fa3988d7bb912c7c9e76678766f2b"
   },
   {
     "path": "packages/relay/src/relay.ts",
@@ -2917,7 +2953,7 @@
   },
   {
     "path": "packages/relay/test/relay.test.ts",
-    "sha256": "047d073d291c0e305e0d12085faabb20afffa46367190e958fca644390f7b9f4"
+    "sha256": "891d4cc8cc0f7cb1d7dba5bb10267b230ba4376996e13d24d5c782e6851a217d"
   },
   {
     "path": "packages/relay/tsconfig.json",
@@ -2945,6 +2981,6 @@
   },
   {
     "path": "scripts/verify-release.mjs",
-    "sha256": "590ccfafdf1e8ef9302a5956c07d8788510e7c36842110c2099f91b799ced247"
+    "sha256": "0aa0f96dc3a4299a484f932c4cb98f00dd9d7ecb42a95069f4cc3fa1a5803c08"
   }
 ]

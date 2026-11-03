@@ -222,6 +222,32 @@ test("editing the transcript formats the corrected text", async () => {
   await finish(electronApp, page);
 });
 
+test("missing default formatting AI offers setup and preserves the draft and dictation transcript", async () => {
+  const { electronApp, page } = await launch();
+  try {
+    await electronApp.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler("models:status");
+      ipcMain.handle("models:status", () => ({ installed: [], pins: [], progress: null, downloading: false, source: "qwen3.5:4b" }));
+      const original = globalThis.fetch;
+      globalThis.fetch = (url, options) => String(url).startsWith("http://127.0.0.1:11434/")
+        ? Promise.reject(new TypeError("fetch failed")) : original(url, options);
+    });
+    await writeLine(page, SPOKEN);
+    const original = await paragraphs(page);
+    await page.evaluate(() => (window as any).__app.runCommand("draftFormat.run"));
+    const setup = page.getByRole("button", { name: "Set up formatting on this Mac…" });
+    await expect(setup).toBeVisible();
+    await page.keyboard.press("Escape");
+    expect(await paragraphs(page)).toEqual(original);
+
+    await page.evaluate(text => (window as any).__dictation.formatText(text), SPOKEN);
+    await expect(setup).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".dictation-transcript")).toHaveText(SPOKEN);
+    expect(await paragraphs(page)).toEqual(original);
+  } finally { await finish(electronApp, page); }
+});
+
 test("a missing helper and a missing model server are explained", async () => {
   const { electronApp, page } = await launch();
   // A helper the writer chose that has since been deleted.

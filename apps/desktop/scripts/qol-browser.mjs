@@ -23,8 +23,11 @@ try {
     Object.defineProperty(navigator, "platform", { get: () => "MacIntel", configurable: true });
     const settings = { "appearance.theme": "light" }, listeners = new Map();
     window.__requests = []; window.__voiceRequests = []; window.__downloads = []; window.__exports = [];
-    const loaded = new Set(["system"]);
-    const voiceStatus = () => ({ cacheBytes: 0, engines: ["system", "phonon", "ming"].map((id) => ({ id,
+    const loaded = new Set(["system"]), installed = new Set();
+    const voiceModels = () => ["phonon", "ming"].map((id) => ({ id, engine: id, label: `${id} fixture`, installed: installed.has(id),
+      sizeBytes: 1024, diskBytes: installed.has(id) ? 1024 : 0, minimumMacOS: 15, memoryGB: 1,
+      license: "Synthetic fixture", provenance: "No real download in this UI test.", revision: ["fixture"] }));
+    const voiceStatus = () => ({ cacheBytes: 0, memoryGB: 16, models: voiceModels(), engines: ["system", "phonon", "ming"].map((id) => ({ id,
       tier: id === "system" ? "Ready now" : id === "phonon" ? "Fast" : "Premium local",
       label: id === "system" ? "Mac voices" : id === "phonon" ? "Phonon 31m" : "Ming 3.0 · 0.5B",
       ready: loaded.has(id), available: true, note: "Synthetic voice fixture for UI verification; no model download.",
@@ -33,9 +36,19 @@ try {
       platform: "darwin", spelling: { isMisspelled: () => false, suggestions: () => [], addToDictionary() {} },
       on(channel, listener) { const set = listeners.get(channel) ?? new Set(); set.add(listener); listeners.set(channel, set); return () => set.delete(listener); },
       async invoke(channel, ...args) {
-        if (channel === "phone:status") return { addresses: [{ name: "Fixture", address: "192.168.50.2" }], active: false, url: "", revision: "", inbox: [], certificate: null, encrypted: false, expiresAt: null };
+        if (channel === "phone:claim-key" || channel === "phone:path-key") return `fixture:${args[0]}`;
+        if (channel === "phone:status") return { addresses: [{ name: "Fixture", address: "192.168.50.2" }], active: false, url: "", revision: "", inbox: [], certificate: null, encrypted: false, expiresAt: null,
+          remembered: [], port: 4779, folderChosen: false, folderError: "", connectionError: "", liveRemembered: false,
+          tailscale: { installed: false, running: false, magicDns: false, https: false } };
         if (channel === "table-read:status") return voiceStatus();
-        if (channel === "table-read:prepare") { if (args[1] !== true) throw new Error("Download consent missing"); window.__downloads.push(args[0]); loaded.add(args[0]); return voiceStatus(); }
+        if (channel === "table-read:models") return voiceModels();
+        if (channel === "table-read:install") {
+          if (args[1] !== true) throw new Error("Download consent missing");
+          window.__downloads.push(args[0]); installed.add(args[0]);
+          for (const fn of listeners.get("table-read:models-changed") ?? []) fn();
+          return voiceModels();
+        }
+        if (channel === "table-read:prepare") { if (!installed.has(args[0])) throw new Error("Voice pack is not installed"); loaded.add(args[0]); return voiceStatus(); }
         if (channel === "table-read:synthesize") {
           window.__voiceRequests.push(args[0]);
           const bytes = new Uint8Array(48044), view = new DataView(bytes.buffer);
@@ -164,18 +177,31 @@ try {
   assert.equal(await page.locator(".table-read-speaking").count(), 0); check("reader submits source text and Stop clears highlighting");
   await page.getByLabel("Voice engine", { exact: true }).selectOption("phonon");
   assert.equal(await page.getByRole("button", { name: "Play", exact: true }).isDisabled(), true);
-  await page.getByRole("button", { name: "Download & load this model", exact: true }).click();
-  await page.waitForFunction(() => window.__downloads.includes("phonon"));
+  const installAndLoad = async (engine) => {
+    const before = await page.evaluate(() => window.__downloads.length);
+    await page.getByRole("button", { name: "Set up voice packs…", exact: true }).click();
+    const pack = page.getByRole("region", { name: `${engine} fixture`, exact: true });
+    await pack.getByRole("button", { name: "Install…", exact: true }).click();
+    assert.equal(await page.evaluate(() => window.__downloads.length), before, "opening setup and reviewing a pack never downloads it");
+    await pack.getByRole("button", { name: "Confirm download", exact: true }).click();
+    await page.waitForFunction((id) => window.__downloads.includes(id), engine);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Load voice engine", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Play", exact: true })).toBeEnabled();
+  };
+  await installAndLoad("phonon");
   await page.getByRole("button", { name: "Assign distinct voices" }).click();
   await page.getByLabel("Voice for MARA", { exact: true }).selectOption("UK_George");
-  await page.waitForFunction(() => [...window.__app.session.doc.meta.entries()].some(([key, value]) => key.startsWith("tableRead.cast.v2.character.") && value?.get("voices")?.get("phonon") === "UK_George"));
+  await expect(page.getByLabel("Voice for MARA", { exact: true })).toHaveValue("UK_George");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await page.waitForFunction(() => window.__voiceRequests.some((request) => request.engine === "phonon" && request.voice === "UK_George"));
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
   assert.equal(await page.getByLabel("Lock MARA").isChecked(), true); check("Fast mode is consent-gated and manual casting locks the voice");
   if (output) { await mkdir(output, { recursive: true }); await page.screenshot({ path: join(output, "table-read-fast.png") }); }
   await page.getByLabel("Voice engine", { exact: true }).selectOption("ming");
   assert.equal(await page.getByRole("button", { name: "Play", exact: true }).isDisabled(), true);
   assert.ok((await page.locator(".table-reader").innerText()).includes("Three documented English presets"));
-  await page.getByRole("button", { name: "Download & load this model", exact: true }).click();
-  await page.waitForFunction(() => window.__downloads.includes("ming"));
+  await installAndLoad("ming");
   check("Premium local has a separate readiness state and honest voice-count limitation");
   await page.getByRole("button", { name: "Reports", exact: true }).click();
   await page.getByRole("tab", { name: "Dialogue", exact: true }).click();
@@ -213,7 +239,7 @@ try {
     assert.equal(await page.getByLabel("Phone connection protection", { exact: true }).inputValue(), "https");
     assert.equal(await page.getByRole("button", { name: "Start phone pairing…", exact: true }).isDisabled(), true);
     await page.getByLabel("Phone connection protection", { exact: true }).selectOption("http");
-    assert.equal(await page.getByRole("button", { name: "Start phone pairing…", exact: true }).isEnabled(), true);
+    await expect(page.getByRole("button", { name: "Start phone pairing…", exact: true })).toBeEnabled();
     await page.getByLabel("Phone connection protection", { exact: true }).selectOption("https");
     assert.equal(await page.getByRole("button", { name: "Start phone pairing…", exact: true }).isDisabled(), true);
     check("phone sharing defaults to HTTPS and never silently falls back to HTTP");

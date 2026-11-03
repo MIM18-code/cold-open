@@ -1,5 +1,6 @@
 // Check a prepared release before publishing: notices in the app and the source snapshot, no private material,
 // Developer ID signatures, notarization tickets, the source manifest and the native source archives. Writes SHA256SUMS.
+import { verifyParakeet } from "../apps/desktop/scripts/parakeet-resources.mjs";
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
@@ -15,7 +16,7 @@ const privateFile = join(root, 'scripts/private-text.json');
 export const privateText = existsSync(privateFile)
   ? new RegExp(JSON.parse(readFileSync(privateFile, 'utf8')).patterns.join('|')) : null;
 // Binary formats a text search can't meaningfully read.
-const BINARY = /\.(png|jpe?g|gif|icns|ico|webp|wasm|dylib|node|metallib|mlmodelc|bin|zip|gz)$/i;
+const BINARY = /\.(png|jpe?g|gif|icns|ico|webp|wasm|dylib|node|metallib|mlmodelc|bin|flac|zip|gz)$/i;
 
 function files(folder) {
   return readdirSync(folder, { withFileTypes: true }).flatMap((item) => {
@@ -29,7 +30,7 @@ export function checkContents(tree) {
   for (const path of files(tree)) {
     const rel = relative(tree, path);
     assert.ok(!rel.split('/').some((part) => ['.git', 'node_modules', '.build', 'bench'].includes(part)), `Excluded directory in ${path}`);
-    assert.ok(!/\.(fdx|fountain|screenplay)$/i.test(rel) || /\/test\/fixtures\//.test(rel), `Script file outside test fixtures: ${path}`);
+    assert.ok(!/\.(fdx|fountain|screenplay)$/i.test(rel) || /\/test\/fixtures\//.test(rel) || /^apps\/desktop\/scripts\/fixtures\/basic\/edge\.(fdx|fountain)$/.test(rel), `Script file outside test fixtures: ${path}`);
     if (!privateText || BINARY.test(rel)) continue;
     assert.ok(!privateText.test(readFileSync(path, 'latin1')), `Private text in ${path}`);
   }
@@ -66,7 +67,12 @@ function checkNotices(tree) {
 }
 
 /** The packaged app: its version, its notices and no private text in anything it carries. */
-function checkApp(bundle, version) {
+async function checkApp(bundle, version) {
+  const resources = join(bundle, 'Contents/Resources');
+  for (const name of ['speech-helper', 'voice-helper/voice-helper', 'voice-helper/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib']) {
+    assert.ok(existsSync(join(resources, name)), `Missing bundled speech resource: ${name}`);
+  }
+  await verifyParakeet(join(resources, 'parakeet-tdt-0.6b-v3'));
   const unpacked = mkdtempSync(join(tmpdir(), 'coldopen-asar-'));
   try {
     const extract = spawnSync(join(root, 'node_modules/.bin/asar'), ['extract', join(bundle, 'Contents/Resources/app.asar'), unpacked], { encoding: 'utf8' });
@@ -91,10 +97,10 @@ async function verifyRelease() {
   for (const item of JSON.parse(readFileSync(join(source, 'SOURCE_MANIFEST.json')))) {
     assert.equal(createHash('sha256').update(readFileSync(join(source, item.path))).digest('hex'), item.sha256, item.path);
   }
-  for (const name of ['docs/NATIVE_SOURCE.md', 'docs/OPTIONAL_DOWNLOADS.md', 'apps/desktop/src/renderer/features/assistant/brand/README.md']) {
+  for (const name of ['docs/NATIVE_SOURCE.md', 'docs/OPTIONAL_DOWNLOADS.md', 'apps/desktop/src/renderer/features/assistant/brand/README.md', 'apps/desktop/scripts/test-packaged-basic.mjs', 'apps/desktop/scripts/fixtures/basic/edge.fdx', 'apps/desktop/scripts/fixtures/basic/edge.fountain', 'apps/desktop/scripts/fixtures/basic/jfk.flac', 'apps/desktop/scripts/fixtures/basic/speech-LICENSE.txt', 'apps/desktop/scripts/fixtures/basic/SOURCE.txt']) {
     assert.ok(existsSync(join(source, name)), `Missing ${name} in the source snapshot`);
   }
-  checkApp(appBundle, version);
+  await checkApp(appBundle, version);
   verifySignature(appBundle);
   verifyNotarized(appBundle, 'exec');
   verifyNotarized(dmg, 'open');
@@ -106,7 +112,7 @@ async function verifyRelease() {
     const shipped = join(mount, 'Cold Open.app');
     verifySignature(shipped);
     verifyNotarized(shipped, 'exec');
-    checkApp(shipped, version);
+    await checkApp(shipped, version);
   } finally { spawnSync('hdiutil', ['detach', mount, '-quiet']); rmSync(mount, { recursive: true, force: true }); }
   const extracted = mkdtempSync(join(tmpdir(), 'coldopen-src-'));
   try {

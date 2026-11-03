@@ -3,7 +3,7 @@ export function releasePolicy(env, helpers) {
   const release = env.SCREENPLAY_RELEASE === "1";
   const signed = env.SCREENPLAY_SIGN === "developer-id";
   if (release && !signed) throw new Error("A release build requires SCREENPLAY_SIGN=developer-id.");
-  if (release && (!helpers.speech || !helpers.voice)) throw new Error("A release build requires both compiled native helpers.");
+  if (!helpers.speech || !helpers.voice) throw new Error("Packaging requires both compiled native helpers. Run sh scripts/build-helpers.sh first.");
   if (release) {
     const appleId = env.APPLE_ID && env.APPLE_APP_SPECIFIC_PASSWORD && env.APPLE_TEAM_ID;
     const apiKey = env.APPLE_API_KEY && env.APPLE_API_KEY_ID && env.APPLE_API_ISSUER;

@@ -59,8 +59,9 @@ export function runAiTurn(request: Omit<AiRequest, "id">, onDelta?: (text: strin
   let status: AiStatus | undefined;
   const failure = (code: AiErrorCode, message: string): AiClientError => {
     // The sheet sets up ChatGPT or the local model; a cloud provider missing its key keeps its own message.
-    const local = (request.provider ?? status?.active.provider) === "ollama";
-    const setup = code !== "cancelled" && local && (code === "unreachable" || code === "not-configured");
+    const provider = request.provider ?? status?.active.provider;
+    const setup = (provider === "ollama" && (code === "unreachable" || code === "not-configured"))
+      || (provider === "chatgpt" && status?.chatgpt.signedIn === false && code === "not-configured");
     if (setup && !options.quiet && !cancelled) offerAiSetup();
     return new AiClientError(code, setup ? AI_SETUP_MESSAGE : message, setup);
   };

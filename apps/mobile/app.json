@@ -10,12 +10,14 @@
     ],
     "ios": {
       "bundleIdentifier": "com.mindinmotion.inklot.remote",
+      "buildNumber": "2",
       "supportsTablet": false,
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Connect to Cold Open on your Mac over private Wi-Fi.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         },
+        "NSPhotoLibraryUsageDescription": "A built-in file-sharing component can open photos. Cold Open shares writing as text files and does not need your photos. You can choose Don’t Allow.",
         "NSMicrophoneUsageDescription": "Record a take while you hold the dictate button.",
         "NSSpeechRecognitionUsageDescription": "Transcribe takes on this iPhone."
       }

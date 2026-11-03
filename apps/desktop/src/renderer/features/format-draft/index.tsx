@@ -16,6 +16,7 @@ export const draftFormatter = new DraftFormatController({
   context: (target) => buildTakeContext(app.session.script(), target.from.paragraphId, target.from.offset),
   invoke: (...args) => desktop.invoke(...args),
   alwaysReview: () => app.setting("draftFormat.alwaysReview", false),
+  offerFormatterSetup: () => app.openModal("workspace.settings", { section: "modelManager" }),
   review: () => app.openModal("format-draft.review"),
   notify: (message, error) => app.toast(message, error ? "error" : "success"),
 });

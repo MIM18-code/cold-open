@@ -7,7 +7,7 @@ export interface InstalledModel {
     size: number;
 }
 export interface ModelProgress {
-    state: "downloading" | "verifying" | "ready" | "paused" | "error";
+    state: "preparing" | "downloading" | "verifying" | "ready" | "paused" | "error";
     status: string;
     completed?: number;
     total?: number;

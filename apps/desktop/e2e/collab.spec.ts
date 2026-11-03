@@ -33,6 +33,7 @@ async function appendParagraph(page: Page, type: string, text: string): Promise<
 
 async function share(page: Page): Promise<string> {
   await runCommand(page, "collab.share");
+  await page.getByRole("radio", { name: "On this Mac only" }).check();
   const field = page.locator(".collab-invite-write");
   await expect(field).toHaveValue(/^screenplay:\/\/join\?/);
   return field.inputValue();
@@ -60,8 +61,8 @@ test("two instances share, join, edit in both and converge", async () => {
     const invite = await share(host.page);
     expect(invite).toMatch(/^screenplay:\/\/join\?host=127\.0\.0\.1%3A\d+&room=/);
     await expect(host.page.locator(".collab-invite-read")).toHaveValue(/&access=read$/);
-    await expect(host.page.getByLabel("Invite over")).toHaveCount(0);
-    await expect(host.page.locator(".collab-panel")).toContainText("To write with someone on another network, use Tailscale on both Macs");
+    await expect(host.page.getByText("File › Join Co-writing Session…")).toBeVisible();
+    await expect(host.page.locator(".collab-status-text")).toHaveText("Waiting for a co-writer");
 
     // The guest joins through the dialog and gets the host's script, not its own blank page.
     await join(guest.page, invite);
@@ -83,6 +84,7 @@ test("two instances share, join, edit in both and converge", async () => {
     await expect(guest.page.locator(".collab-statusbar .collab-count")).toHaveText("2");
     await expect(guest.page.locator(".collab-person")).toHaveCount(2);
     await expect(guest.page.locator(".collab-status-text")).toHaveText("Connected");
+    await expect(host.page.locator(".collab-status-text")).toHaveText("Connected");
 
     // Undo on the guest takes back only the guest's own line, never the host's.
     await guest.page.evaluate(() => (window as any).__app.session.undo.undo());
@@ -102,6 +104,42 @@ test("two instances share, join, edit in both and converge", async () => {
   } finally {
     await quit(host.electronApp);
     await quit(guest.electronApp);
+  }
+});
+
+test("a clicked relay invite opens a separate preview and joins only after confirmation", async () => {
+  const host = await launch(), guest = await launch();
+  const { createRelay } = await import("@screenplay/relay");
+  const relay = await createRelay({ host: "127.0.0.1", allowClaim: true });
+  try {
+    await host.page.evaluate(url => (window as any).__app.setSetting("collab.relayUrl", url), `ws://127.0.0.1:${relay.port}`);
+    await appendParagraph(host.page, "action", "The relay’s shared draft.");
+    await runCommand(host.page, "collab.share");
+    const field = host.page.locator(".collab-invite-read");
+    await expect(field).toHaveValue(/access=read/);
+    await appendParagraph(guest.page, "action", "My unsaved draft.");
+    const openInvite = async () => {
+      const opened = guest.electronApp.waitForEvent("window");
+      await guest.electronApp.evaluate(({ app }, link) => app.emit("open-url", { preventDefault() {} } as any, link), await field.inputValue());
+      return opened;
+    };
+    const first = await openInvite();
+    await expect(first.getByRole("dialog")).toContainText("invited to read");
+    await expect(first.getByRole("dialog")).toContainText(`127.0.0.1:${relay.port}`);
+    await first.getByRole("button", { name: "Cancel" }).click();
+    expect(relay.stats().connections).toBe(1);
+    const second = await openInvite();
+    await second.getByRole("button", { name: "Join", exact: true }).click();
+    await expect.poll(() => paragraphs(second)).toBe(await paragraphs(host.page));
+    expect(await second.evaluate(() => (window as any).__app.session.readOnly)).toBe(true);
+    expect(await paragraphs(guest.page)).toContain("My unsaved draft.");
+    expect(await paragraphs(host.page)).not.toContain("My unsaved draft.");
+    await host.page.getByRole("button", { name: "Leave Session" }).click();
+    await expect(second.locator(".collab-status-text")).toHaveText("Connected");
+  } finally {
+    await quit(host.electronApp);
+    await quit(guest.electronApp);
+    await relay.close();
   }
 });
 
@@ -129,31 +167,60 @@ for (const lan of [true, false]) {
         ipcMain.removeHandler("sync:host-start");
         ipcMain.handle("sync:host-start", () => info);
       }, advertised);
-      await share(host.page);
-      const choice = host.page.getByLabel("Invite over");
-      await expect(choice).toHaveValue(lan ? "lan" : "tailscale");
-      await expect(choice.locator('option[value="lan"]')).toHaveText(lan ? "This network (192.168.1.20)" : "This network (unavailable)");
-      await expect(choice.locator('option[value="tailscale"]')).toHaveText("Tailscale (100.114.165.59)");
-      await expect(host.page.locator(".collab-invite-write")).toHaveValue(advertised.invite);
-      if (lan) await choice.selectOption("tailscale");
-      else await expect(choice.locator('option[value="lan"]')).toHaveJSProperty("disabled", true);
-      await expect(host.page.locator(".collab-invite-write")).toHaveValue(tailscale.invite);
-      await expect(host.page.locator(".collab-invite-read")).toHaveValue(tailscale.readOnlyInvite);
-      // The Copy command hands out the invite the panel shows.
-      await host.page.evaluate(() => (window as any).__app.runCommand("collab.copyInvite"));
-      await expect.poll(() => host.electronApp.evaluate(({ clipboard }) => clipboard.readText())).toBe(tailscale.invite);
-      await expect(host.page.locator(".collab-panel")).toContainText("Works for anyone on your Tailscale network, or anyone you share this Mac with in Tailscale. Tailscale encrypts the connection.");
-      await expect(host.page.locator(".collab-error")).toHaveCount(0);
-      await expect(host.page.locator(".collab-panel details")).toContainText("The invite has a network address.");
+      await runCommand(host.page, "collab.share");
+      const local = host.page.getByRole("radio", { name: "On the same Wi-Fi or local network" });
+      const remote = host.page.getByRole("radio", { name: "On a different network" });
+      const writer = host.page.locator(".collab-invite-write");
+      const reader = host.page.locator(".collab-invite-read");
+      await expect(writer).toHaveCount(0);
       if (lan) {
-        await choice.selectOption("lan");
-        await expect(host.page.locator(".collab-invite-write")).toHaveValue(advertised.invite);
-        await expect(host.page.locator(".collab-invite-read")).toHaveValue(advertised.readOnlyInvite);
-      }
+        await local.check();
+        await expect(writer).toHaveValue(advertised.invite);
+        await expect(reader).toHaveValue(advertised.readOnlyInvite);
+      } else await expect(local).toBeDisabled();
+      await remote.check();
+      await expect(writer).toHaveValue(tailscale.invite);
+      await expect(reader).toHaveValue(tailscale.readOnlyInvite);
+      await runCommand(host.page, "collab.copyInvite");
+      await expect.poll(() => host.electronApp.evaluate(({ clipboard }) => clipboard.readText())).toBe(tailscale.invite);
+      await runCommand(host.page, "collab.copyReadOnlyInvite");
+      await expect.poll(() => host.electronApp.evaluate(({ clipboard }) => clipboard.readText())).toBe(tailscale.readOnlyInvite);
+      await expect(host.page.getByText("Tailscale is connected on this Mac")).toBeVisible();
       await expectHidden(host.electronApp);
     } finally { await quit(host.electronApp); }
   });
 }
+
+test("remote setup withholds local invites and detects Tailscale when the host checks again", async () => {
+  const host = await launch();
+  try {
+    await runCommand(host.page, "collab.share");
+    await host.page.getByRole("radio", { name: "On a different network" }).check();
+    await expect(host.page.getByRole("link", { name: "install Tailscale" })).toBeVisible();
+    await expect(host.page.locator(".collab-invite-write, .collab-invite-read")).toHaveCount(0);
+    const canCopy = () => host.page.evaluate(() => {
+      const app = (window as any).__app;
+      return app.commands.filter((c: { id: string }) => ["collab.copyInvite", "collab.copyReadOnlyInvite"].includes(c.id))
+        .some((c: { enabled: (app: unknown) => boolean }) => c.enabled(app));
+    });
+    expect(await canCopy()).toBe(false);
+    const info: HostInfo = await host.page.evaluate(() => (window as any).desktop.invoke("sync:host-start"));
+    await host.electronApp.evaluate(({ ipcMain }, info) => {
+      // Only the advertised interface changes. Keep the room and server from the real host.
+      const address = "100.80.0.1:" + new URL(info.relay).port;
+      const remote = (invite: string) => {
+        const url = new URL(invite);
+        url.searchParams.set("host", address);
+        return url.href;
+      };
+      ipcMain.removeHandler("sync:host-start");
+      ipcMain.handle("sync:host-start", () => ({ ...info, tailscale: { address, invite: remote(info.invite), readOnlyInvite: remote(info.readOnlyInvite) } }));
+    }, info);
+    await host.page.getByRole("button", { name: "Check Tailscale again" }).click();
+    await expect(host.page.locator(".collab-invite-write")).toHaveValue(/host=100\.80\.0\.1/);
+    expect(await canCopy()).toBe(true);
+  } finally { await quit(host.electronApp); }
+});
 
 /** A stand-in editor: reports a caret the test sets and records the remote cursors it is asked to draw. */
 async function fakeEditor(page: Page): Promise<void> {
@@ -222,7 +289,7 @@ test("a refused or closed invite is reported in the dialog and leaves the guest'
     await guest.page.locator(".collab-join-input").fill(invite);
     await guest.page.locator(".collab-join-submit").click();
     await expect(guest.page.locator(".collab-join-submit")).toHaveText("Connecting…");
-    await expect(guest.page.locator(".collab-error")).toContainText(/Could not reach the session/, { timeout: 20_000 });
+    await expect(guest.page.locator(".collab-error")).toContainText(/send an invite for your location/, { timeout: 20_000 });
     expect(await paragraphs(guest.page)).toBe(before);
     expect(await guest.page.evaluate(() => (window as any).__app.session.pristine)).toBe(true);
     await expectHidden(guest.electronApp);

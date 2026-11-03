@@ -33,7 +33,7 @@ export function Pair({ scan, initialError }: { scan(raw: string): Promise<void>;
         if (!ok) return;
       }
       await scan(value);
-    } catch (e) { setError(e instanceof SyntaxError ? "This is not a Cold Open pairing code." : String(e)); }
+    } catch (e) { setError(e instanceof SyntaxError || e instanceof TypeError ? "Use the QR code or Copy app pairing code in the Mac’s Phone Companion." : e instanceof Error ? e.message : "Couldn’t pair. Start pairing again on the Mac."); }
     finally { locked.current = false; }
   }
   async function start() {
@@ -48,23 +48,17 @@ export function Pair({ scan, initialError }: { scan(raw: string): Promise<void>;
       contentContainerStyle={{ flexGrow: 1, padding: 24, paddingBottom: 32, gap: 16 }}>
       {!manual && <Image source={require("../assets/mark.png")} style={{ height: 66, width: 66, marginLeft: -7 }} />}
       <View><Heading>Pair with your Mac</Heading>
-        {!manual && <Label style={{ color: c.sub }}>Open the Phone panel in Cold Open and start pairing using Tailscale or your private Wi-Fi.</Label>}
+        <Label style={{ color: c.sub }}>{manual
+          ? "On the Mac, choose Copy app pairing code. Paste that code here, then tap Pair."
+          : "On your Mac, open your script in Cold Open. Choose Tools → Phone Companion, then Start phone pairing. Scan the QR code shown on the Mac."}</Label>
       </View>
       {!manual && <><View style={{ backgroundColor: c.group, minHeight: 220, justifyContent: "center", alignItems: "center",
         padding: camera ? 0 : 24, borderRadius: 18, overflow: "hidden", gap: 16 }}>
         {camera ? <CameraView style={{ width: "100%", height: 260 }} barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
           onBarcodeScanned={e => void read(e.data)} /> : <>
           <Symbol name="qrcode.viewfinder" size={76} />
-          <Label style={{ fontWeight: "600" }}>Desktop pairing code</Label>
+          <Label style={{ fontWeight: "600" }}>Scan the code on your Mac</Label>
         </>}
-      </View>
-      <Caption>Tick Remember this iPhone on the Mac to stay paired.</Caption>
-      <View style={{ gap: 6 }}>
-        <Label accessibilityRole="header" style={{ fontWeight: "700" }}>Away from home?</Label>
-        <Caption>1. Install Tailscale from the App Store, then sign in with the same account as your Mac.</Caption>
-        <Caption>2. Scan the code above.</Caption>
-        <Action label="Get Tailscale" icon="arrow.up.forward.app"
-          press={() => void Linking.openURL("https://apps.apple.com/app/tailscale/id1470499037")} />
       </View>
       </>}
       {error ? <Label accessibilityRole="alert" style={{ color: c.danger }}>{error}</Label> : null}
@@ -76,6 +70,16 @@ export function Pair({ scan, initialError }: { scan(raw: string): Promise<void>;
       <Action primary icon={manual ? "link" : "camera"} label={manual ? "Pair" : camera ? "Close camera" : "Scan code"}
         press={() => manual ? void read(raw) : camera ? showCamera(false) : void start()} />
       <Action label={manual ? "Use camera instead" : "Paste a pairing code"} press={() => { enter(!manual); showCamera(false); setError(""); }} />
+      {!manual && <>
+      <Caption>For your own phone, select Remember this iPhone on the Mac before you start pairing.</Caption>
+      <View style={{ gap: 6 }}>
+        <Label accessibilityRole="header" style={{ fontWeight: "700" }}>Away from home?</Label>
+        <Caption>1. Install Tailscale from the App Store, then sign in with the same account as your Mac.</Caption>
+        <Caption>2. Choose Tailscale in Phone Companion on the Mac. Scan its QR code, or paste its app pairing code here.</Caption>
+        <Action label="Get Tailscale" icon="arrow.up.forward.app"
+          press={() => void Linking.openURL("https://apps.apple.com/app/tailscale/id1470499037")} />
+      </View>
+      </>}
     </ScrollView>
   </KeyboardAvoidingView>;
 }

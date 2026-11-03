@@ -10,10 +10,20 @@ Both paths move the same thing: Yjs updates for the screenplay document describe
 
 There is no hosted server. A session runs on one of two relays:
 
-- **The host's Mac.** "Share for Co-writing…" starts a relay inside the desktop app's main process, bound to `0.0.0.0` on a port the OS picks. It runs only while at least one window is sharing and stops listening when the last one stops. Guests must be able to reach the host's LAN address.
+- **The host's Mac.** "Share for Co-writing…" starts a relay inside the desktop app's main process, bound to `0.0.0.0` on a port the OS picks. It runs only while at least one window is sharing and stops listening when the last one stops. Guests on the same network use the host’s local address. For writers on different networks, the panel offers an invite using the host’s Tailscale address once Tailscale is connected.
 - **A self-hosted relay.** `npx screenplay-relay --port 4455` (or `node packages/relay/src/cli.ts`). Writers enter its address under Settings > Co-writing; sharing then uses it instead of the embedded relay. Put it behind a TLS proxy and use `wss://` on the internet.
 
 Everyone, the host included, is an ordinary client of the relay. The relay keeps a Y.Doc per room, so a writer who joins late gets the whole script from the relay even if no other writer is online. Nothing is written to disk.
+
+### A Cold Open-operated relay (pilot proposal)
+
+A writer would choose **Invite over the internet**. Cold Open would connect to one project-operated relay and copy an editing or reading link. Their co-writer would open the link and choose **Join**. Neither person would need a Tailscale account or a server address. Today, the host supplies a team relay address in Settings. The guest already gets everything needed from the link.
+
+One always-on process can run the existing relay behind TLS. No database is needed for live rooms. Start with an existing MindInMotion server if it can accept secure WebSockets. An alternative for a small pilot is a single Render Starter instance, listed at $7/month for compute as of November 2, 2026, before bandwidth or other charges. Render's free instance can take around a minute to wake, longer than Cold Open's 15-second Join timeout. [WebSockets](https://render.com/docs/websocket), [pricing](https://render.com/pricing), [free service behavior](https://render.com/docs/free).
+
+Before a public pilot, limit who can create rooms, cap connections and document memory, and make **End session** invalidate both links. Today any writer key can claim its room. When the host leaves, other people can still join while the room exists. After expiry a writer can recreate an empty room with the same key. The current relay keeps a readable copy of the script in memory. TLS protects the network connection. The host should see who operates the relay before the script is sent, and the proxy and hosting platform must omit invite keys from access logs.
+
+Test the pilot with two Macs on different internet connections, including a host disconnect, relay restart and revoked invite. Keep the existing private-network option for writers who want the script to stay on their own machines.
 
 ### Invites
 

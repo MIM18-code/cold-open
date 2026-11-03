@@ -125,6 +125,25 @@ test("an unavailable local provider opens setup once, becomes ready and retries 
   } finally { await close(electronApp, page); await mock.close(); }
 });
 
+test("asking for AI after signing out of the selected ChatGPT provider offers sign-in or local setup", async () => {
+  const { electronApp, page } = await launch();
+  try {
+    await page.evaluate(async () => {
+      await (window as any).__app.setSetting("ai.provider", "chatgpt");
+      await (window as any).__app.setSetting("ai.ollama.endpoint", "http://127.0.0.1:1");
+    });
+    await loadScript(page, KITCHEN);
+    await openPanel(page, "assistant");
+    await page.getByLabel("Ask about the script").fill("What happens in the kitchen?");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    const sheet = page.getByRole("dialog", { name: "Set up AI", exact: true });
+    await expect(sheet.getByRole("button", { name: /Sign in with ChatGPT/ })).toBeVisible();
+    await expect(sheet.getByRole("button", { name: "Set up local AI for me" })).toBeVisible();
+    await sheet.getByRole("button", { name: "Not now" }).click();
+    expect(await page.evaluate(() => (window as any).__app.setting("ai.provider"))).toBe("chatgpt");
+  } finally { await close(electronApp, page); }
+});
+
 test("a signed-in ChatGPT never replaces the local model without a click", async () => {
   const unavailable = await mockOllama();
   await unavailable.close();

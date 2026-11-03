@@ -12,7 +12,7 @@ import {
 } from "../../shared/channels/dictation.ts";
 import { extractEditCommands } from "./commands.ts";
 import type { DictationConfig } from "./config.ts";
-import { explainError } from "./errors.ts";
+import { diagnoseTake, explainError } from "./errors.ts";
 import { wavInfo } from "./wav-info.ts";
 
 export interface PipelineDeps {
@@ -141,7 +141,7 @@ export class DictationPipeline {
         result.warnings = proposal.warnings;
         result.diagnostics = diagnostics.map((d) => ({ code: d.code, severity: d.severity, message: d.message, elementIndex: d.element_index }));
       } catch (error) {
-        result.error = explainError(error, config);
+        Object.assign(result, diagnoseTake(error, config));
       }
       result.timings.formatMs = this.now() - start;
     }

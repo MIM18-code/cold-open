@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AI_CHANNELS, AI_SETTINGS, sameOllamaModel, type AiStatus, type LocalAiSetup } from "../../../shared/channels/ai.ts";
-import { CHANNELS } from "../../../shared/api.ts";
+import { AI_CHANNELS, AI_SETTINGS, DEFAULT_OLLAMA_ENDPOINT, sameOllamaModel, type AiStatus, type LocalAiSetup } from "../../../shared/channels/ai.ts";
 import type { ModelProgress } from "../../../main/models/ollama.ts";
 import { app, type ModalProps } from "../../core/app.ts";
 import { desktop } from "../../core/platform.ts";
@@ -10,7 +9,7 @@ import { chatgptReady, setupStep } from "./setup-state.ts";
 
 export function AiSetup({ close }: ModalProps) {
   const [local, setLocal] = useState<LocalAiSetup | null>(null), [status, setStatus] = useState<AiStatus | null>(null);
-  const [progress, setProgress] = useState<ModelProgress | null>(null), [busy, setBusy] = useState(false), [starting, setStarting] = useState(false);
+  const [progress, setProgress] = useState<ModelProgress | null>(null), [busy, setBusy] = useState(false);
   const [canPause, setCanPause] = useState(false), [error, setError] = useState("");
   const mounted = useRef(true), notified = useRef<string | null>(null), polling = useRef(false), pulling = useRef(false);
   const refresh = useCallback(async () => {
@@ -55,7 +54,10 @@ export function AiSetup({ close }: ModalProps) {
     if (chosen) void desktop.invoke<{ models: string[] }>(AI_CHANNELS.models, "ollama")
       .then(({ models }) => models.some((m) => sameOllamaModel(m, chosen)) ? undefined : app.setSetting(AI_SETTINGS.model("ollama"), "")).then(() => refresh(), () => undefined);
   };
-  const step = setupStep(local, useChatgpt, busy ? progress?.state === "verifying" ? progress : { ...progress, state: "downloading", status: "" } : progress?.state === "paused" ? progress : null);
+  const activeProgress: ModelProgress | null = busy
+    ? progress ?? { state: "downloading", status: "" }
+    : progress?.state === "paused" ? progress : null;
+  const step = setupStep(local, useChatgpt, activeProgress);
   useEffect(() => {
     if ((step !== "ready" && step !== "chatgpt-ready") || (step === "ready" && !localChosen) || notified.current === step) return;
     notified.current = step;
@@ -74,21 +76,15 @@ export function AiSetup({ close }: ModalProps) {
     };
     void finish().catch(() => { notified.current = null; setError("Could not select AI. Close this sheet and try again."); });
   }, [step, localChosen]);
-  const start = async () => {
-    local_();
-    setStarting(true); setError("");
-    try { await desktop.invoke(AI_CHANNELS.startOllama); await refresh(); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setStarting(false); }
-  };
-  const pull = async () => {
+  const pull = async (setupOnMac = false) => {
+    if (pulling.current) return;
     local_();
     pulling.current = true;
-    setBusy(true); setCanPause(true); setProgress({ state: "downloading", status: "" }); setError("");
-    try { await desktop.invoke("models:pull", { fromAiSetup: true }); }
+    setBusy(true); setCanPause(true); setProgress(setupOnMac ? { state: "preparing", status: "Checking this Mac…" } : { state: "downloading", status: "" }); setError("");
+    try { await desktop.invoke("models:pull", { fromAiSetup: true, setupOnMac }); }
     catch (e) {
       // Pausing rejects the pull too; its progress event carries the paused state.
-      if (mounted.current && !pausing.current) setError("The download stopped. Retry keeps what already downloaded.");
+      if (mounted.current && !pausing.current) setError(setupOnMac && e instanceof Error ? e.message : "The model download stopped. Check your internet connection and free space, then try again.");
     } finally { pulling.current = false; pausing.current = false; if (mounted.current) { setBusy(false); await refresh(); } }
   };
   const pausing = useRef(false);
@@ -105,29 +101,29 @@ export function AiSetup({ close }: ModalProps) {
     </section>
     <section className="rewrite-item" aria-label="Run on this Mac">
       <h3>Run on this Mac</h3>
-      <p>Free and private: your script stays on this Mac. One-time download of 3.3 GB.</p>
+      <p>Cold Open can install Ollama and a writing model for you. Allow about 4 GB for the download. If a usable model is already here, Cold Open can use it.</p>
       <div role="status" aria-live="polite">
         {step === "checking" && <p>Checking AI on this Mac…</p>}
-        {step === "not-installed" && <><p>Get the free Ollama app, which runs AI on your Mac.</p>
-          <button className="button" onClick={() => { local_(); void desktop.invoke(CHANNELS.openExternal, "https://ollama.com/download").catch(() => setError("Could not open the download page. Try again.")); }}>Download Ollama</button>
-          <p className="ai-settings-hint">Open the app after installing it. This sheet checks every two seconds.</p></>}
-        {step === "not-running" && <><p>Ollama is installed but not running. Start it to use AI on this Mac.</p>
-          <button className="button" disabled={starting} onClick={() => void start()}>{starting ? "Starting…" : "Start Ollama"}</button></>}
+        {(step === "not-installed" || step === "not-running") && <>
+          <p>{step === "not-installed" ? "Cold Open will download the tools, check the files and start AI on this Mac." : "Cold Open will start Ollama and get a writing model if you need one."} Your script stays on this Mac.</p>
+          {app.setting<string>(AI_SETTINGS.ollamaEndpoint, DEFAULT_OLLAMA_ENDPOINT).trim().replace(/\/+$/, "") !== DEFAULT_OLLAMA_ENDPOINT &&
+            <p>This switches AI from the server in Settings to this Mac.</p>}
+          <button className="button primary" disabled={busy} onClick={() => void pull(true)}>Set up local AI for me</button></>}
         {(step === "no-model" || step === "paused") && <><p>{step === "paused" ? "Download paused. Resume keeps what already downloaded." : "Ollama is running. Download the AI model to use it on this Mac."}</p>
-          <button className="button primary" onClick={() => void pull()}>{step === "paused" ? "Resume download (3.3 GB)" : error ? "Retry download (3.3 GB)" : "Download (3.3 GB)"}</button></>}
-        {step === "downloading" && <><progress aria-label="AI download" value={percent} max={100} />
-          <p>{progress?.state === "verifying" ? "Checking the download…" : percent === undefined ? "Preparing download…" : `Downloading: ${percent}%`}</p>
+          <button className="button primary" disabled={busy} onClick={() => void pull()}>{step === "paused" ? "Resume model download" : error ? "Retry model download" : "Download writing model"}</button></>}
+        {(step === "preparing" || step === "downloading") && <><progress aria-label="AI download" value={percent} max={100} />
+          <p>{progress?.state === "preparing" ? progress.status : progress?.state === "verifying" ? "Checking the download…" : percent === undefined ? "Preparing download…" : `Downloading: ${percent}%`}</p>
           <button className="button" disabled={!canPause || pausing.current} onClick={() => {
             pausing.current = true;
             void desktop.invoke("models:cancel").catch(() => { pausing.current = false; setError("Could not pause the download. Try again."); });
-          }}>Pause</button><p className="ai-settings-hint">{canPause ? "You can pause and resume without starting over." : "This download started in another window. Pause it there."} Closing this sheet keeps the download running.</p></>}
+          }}>Pause</button><p className="ai-settings-hint">{canPause ? "You can pause setup. Completed model files are kept." : "This download started in another window. Pause it there."} Closing this sheet keeps the download running.</p></>}
         {step === "ready" && (localChosen ? <p>AI on this Mac is ready.</p>
           : <><p>AI on this Mac is ready to use.</p><button className="button" onClick={local_}>Use AI on this Mac</button></>)}
         {step === "chatgpt-ready" && <p>ChatGPT is selected. You can use AI now.</p>}
       </div>
     </section>
     {error && <p className="ai-settings-error" role="alert">{error}</p>}
-    <div className="ai-setup-actions"><button className="button" onClick={close}>Not now</button>
+    <div className="ai-setup-actions"><button className="button" onClick={close}>{busy ? "Close setup" : "Not now"}</button>
       {((step === "ready" && localChosen) || step === "chatgpt-ready") && <button className="button primary" onClick={close}>Done</button>}</div>
   </div>;
 }

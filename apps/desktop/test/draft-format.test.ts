@@ -109,7 +109,7 @@ function harness(extra: Partial<TakeResult> = {}, manual = false) {
       assert.equal(request.extractCommands, false);
       return new Promise<TakeResult>((resolve) => { finish = resolve; });
     }) as DesktopBridge["invoke"],
-    alwaysReview: () => manual, review: () => { review++; }, notify: (m) => notices.push(m),
+    alwaysReview: () => manual, offerFormatterSetup: () => notices.push("formatter setup"), review: () => { review++; }, notify: (m) => notices.push(m),
   });
   return { controller, notices, channels, session: () => current, swap: () => { current = session(); }, reviews: () => review,
     finish: () => finish({ takeId: requested, source: "text", transcript: "Maya says, No.", elements: formatted, diagnostics: [], warnings: [], commands: [], timings: { transcribeMs: 0, formatMs: 1, totalMs: 1 }, autoApplyErrors: [], ...extra }) };

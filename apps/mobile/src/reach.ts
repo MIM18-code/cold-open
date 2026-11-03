@@ -16,3 +16,6 @@ export function reachStatus(reason: ReachReason, options: { tailnet: boolean; fo
     : "Can’t reach the Mac. The Mac may be asleep or Cold Open may be closed, or this iPhone may be off your Wi-Fi.";
   return `${unreachable} ${later}`;
 }
+
+export const pairingEnded = (status: string) =>
+  ["Pairing expired", "Refused", "Host stopped sharing", "This Mac revoked the pairing"].includes(status);
