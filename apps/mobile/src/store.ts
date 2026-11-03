@@ -8,10 +8,32 @@ db.execSync(`CREATE TABLE IF NOT EXISTS takes (
   paragraphId TEXT NOT NULL, sourceText TEXT NOT NULL, scene TEXT NOT NULL,
   created INTEGER NOT NULL, outcome TEXT NOT NULL, error TEXT)`);
 
+export type Passage = Pick<import("./live").Row, "id" | "scene" | "text">;
+export type Composition = { kind: "draft" | "dictation" | "note"; row: Passage; text: string };
+db.execSync(`CREATE TABLE IF NOT EXISTS compositions (
+  room TEXT PRIMARY KEY, kind TEXT NOT NULL, paragraphId TEXT NOT NULL,
+  scene TEXT NOT NULL, sourceText TEXT NOT NULL, text TEXT NOT NULL)`);
+export function resumeComposition(room: string): Composition | null {
+  const item = db.getFirstSync<{ kind: Composition["kind"]; paragraphId: string; scene: string; sourceText: string; text: string }>(
+    "SELECT * FROM compositions WHERE room=?", room);
+  return item && { kind: item.kind, row: { id: item.paragraphId, scene: item.scene, text: item.sourceText }, text: item.text };
+}
+export function clearComposition(room: string) {
+  db.runSync("DELETE FROM compositions WHERE room=?", room);
+}
+export function keepComposition(room: string, item: Composition) {
+  if (!item.text) return clearComposition(room);
+  db.runSync("INSERT OR REPLACE INTO compositions VALUES (?,?,?,?,?,?)", room, item.kind,
+    item.row.id, item.row.scene, item.row.text, item.text);
+}
+
 export const listTakes = () => db.getAllSync<Take>("SELECT * FROM takes ORDER BY created DESC");
 export function saveTake(t: Take) {
-  db.runSync("INSERT INTO takes VALUES (?,?,?,?,?,?,?,?,?,NULL)", t.id, t.room, t.kind, t.text,
-    t.paragraphId, t.sourceText, t.scene, t.created, t.outcome);
+  db.withTransactionSync(() => {
+    db.runSync("INSERT INTO takes VALUES (?,?,?,?,?,?,?,?,?,NULL)", t.id, t.room, t.kind, t.text,
+      t.paragraphId, t.sourceText, t.scene, t.created, t.outcome);
+    clearComposition(t.room);
+  });
 }
 export function mark(id: string, state: Outcome, error?: string) {
   db.runSync("UPDATE takes SET outcome=?, error=? WHERE id=?", state, error ?? null, id);

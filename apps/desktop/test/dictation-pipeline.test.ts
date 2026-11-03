@@ -127,8 +127,8 @@ test("a formatting failure keeps the transcript and says what to do", async () =
   const take = await pipeline.processAudio({ takeId: 1, audio, context: EMPTY_CONTEXT }, config);
   assert.equal(take.transcript, SPOKEN);
   assert.deepEqual(take.elements, []);
-  assert.match(take.error ?? "", /Start Ollama/);
-  assert.match(take.error ?? "", /127\.0\.0\.1:11434/);
+  assert.equal(take.needsFormatterSetup, true);
+  assert.match(take.error ?? "", /Set up the local formatting model/);
 });
 
 test("typed text goes through the same formatting", async () => {
@@ -221,8 +221,8 @@ test("a path from Settings is used as given, even when it is wrong", () => {
 test("failures say what to do", () => {
   assert.match(explainError(new Error("Speech helper could not start: spawn /x ENOENT"), config), /swift build -c release/);
   assert.match(explainError(new Error("Parakeet Core ML weights are not downloaded. Run `speech-helper download --engine parakeet` once."), config), /download --engine parakeet/);
-  assert.match(explainError(new Error("Local model server returned HTTP 404. No cloud fallback was used. model 'qwen3.5:4b' not found"), config), /ollama pull qwen3.5:4b/);
-  assert.match(explainError(new Error("Could not use the local model server: fetch failed"), config), /Start Ollama/);
+  assert.match(explainError(new Error("Local model server returned HTTP 404. No cloud fallback was used. model 'qwen3.5:4b' not found"), config), /Set up the local formatting model/);
+  assert.match(explainError(new Error("Could not use the local model server: fetch failed"), config), /Set up the local formatting model/);
   assert.match(explainError(new Error("Could not use the local model server: The operation was aborted due to timeout"), config), /did not answer in time/);
   assert.equal(explainError(new Error("Something else."), config), "Something else.");
 });

@@ -8,6 +8,8 @@ import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { parseInvite } from "@screenplay/relay/protocol";
+import { SYNC, type JoinHandoff } from "../shared/channels/sync.ts";
 import { isTemplateId } from "@screenplay/engine";
 
 import { matchesKey } from "../shared/accelerator.ts";
@@ -43,6 +45,8 @@ const ready = new Set<number>();
 const queuedOpen = new Map<number, string[]>();
 // Quit asks each window in turn (unsaved changes); after a window agrees and closes, quitting continues.
 let quitRequested = false;
+const joins = new WeakMap<WebContents, JoinHandoff>();
+let launchInvite: JoinHandoff | undefined;
 let pendingOpen: string[] = process.argv.slice(app.isPackaged ? 1 : 2).filter(isDocumentPath).map((path) => resolve(path));
 let pendingTakes: string[] = process.argv.slice(app.isPackaged ? 1 : 2).filter(isTakesPath).map((path) => resolve(path));
 
@@ -356,6 +360,29 @@ ctx.handle("shell:message-box", async (event, options: Electron.MessageBoxOption
 
 registerServices(ctx);
 
+function openJoinWindow(join: JoinHandoff): void {
+  const window = createWindow();
+  joins.set(window.webContents, join);
+}
+ctx.handle(SYNC.newJoinWindow, (_event, invite: string) => {
+  parseInvite(invite);
+  openJoinWindow({ invite, confirm: false });
+});
+ctx.handle(SYNC.takeJoin, ({ sender }) => {
+  const join = joins.get(sender);
+  joins.delete(sender);
+  return join ?? null;
+});
+
+// Launch Services can deliver the invite before app.ready. Keep the key in memory, out of the window URL.
+app.on("open-url", (event, invite) => {
+  event.preventDefault();
+  if (!/^screenplay:\/\/join\?/i.test(invite) || invite.length > 8192) return;
+  const join = { invite, confirm: true };
+  if (app.isReady()) openJoinWindow(join);
+  else launchInvite = join;
+});
+
 app.on("open-file", (event, path) => {
   event.preventDefault();
   if (isTakesPath(path)) {
@@ -398,8 +425,10 @@ app.whenReady().then(() => {
     // Grant only the main-owned, validated saved-file list. Recovery remains a separate explicit prompt.
     for (const row of restore) ctx.allowPath(row.path);
     if (restore.length) for (const row of restore) createWindow(row.path, "open", undefined, row.bounds);
-    else createWindow();
+    else if (!launchInvite) createWindow();
   }
+  if (launchInvite) openJoinWindow(launchInvite);
+  launchInvite = undefined;
   pendingOpen = [];
   // The phone service waits for the restored renderer to register the script before importing takes.
   const takes = [...new Set(pendingTakes)];

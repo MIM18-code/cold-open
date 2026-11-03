@@ -8,7 +8,6 @@ import { createRelay, readKeyFor, type Relay } from "@screenplay/relay";
 import { RelayClient } from "@screenplay/relay/client";
 import { formatInvite, randomId } from "@screenplay/relay/protocol";
 
-import { CHANNELS } from "../src/shared/api.ts";
 import { SYNC, type HostInfo } from "../src/shared/channels/sync.ts";
 import { DocumentSession } from "../src/renderer/core/session.ts";
 
@@ -126,8 +125,7 @@ test("typing while Join waits keeps the window's script; the shared one opens in
   await joining;
   assert.equal(app.session, own);
   assert.equal(own.doc.toScript().paragraphs[0]!.runs[0]!.text, "INT. MY OWN SCENE - DAY");
-  assert.deepEqual(calls.filter((call) => call.channel === SYNC.queueJoin).map((call) => call.args[0]), [invite]);
-  assert.ok(calls.some((call) => call.channel === CHANNELS.newWindow));
+  assert.deepEqual(calls.filter((call) => call.channel === SYNC.newJoinWindow).map((call) => call.args[0]), [invite]);
   assert.equal(collab.state.mode, "idle");
 });
 
@@ -198,8 +196,7 @@ test("opening another script while Join waits keeps it; the shared one opens in 
   await shareScript("The host's script.");
   await joining;
   assert.equal(app.session, opened);
-  assert.deepEqual(calls.filter((call) => call.channel === SYNC.queueJoin).map((call) => call.args[0]), [invite]);
-  assert.ok(calls.some((call) => call.channel === CHANNELS.newWindow));
+  assert.deepEqual(calls.filter((call) => call.channel === SYNC.newJoinWindow).map((call) => call.args[0]), [invite]);
   assert.equal(collab.state.mode, "idle");
   deactivate();
 });

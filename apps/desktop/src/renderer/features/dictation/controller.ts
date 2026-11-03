@@ -196,6 +196,7 @@ function show(take: TakeResult): void {
     draft: take.source === "text" && !take.error ? "" : store.state.draft,
     suggestions: take.commands.map((command) => ({ command, status: "pending", scope: command.scope })),
   });
+  if (take.needsFormatterSetup) app.openModal("workspace.settings", { section: "modelManager" });
 }
 
 /** Back to idle once the writer has dealt with everything in the take. */

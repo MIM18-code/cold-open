@@ -3,6 +3,7 @@ import { ScrollView, View, Alert } from "react-native";
 import { phoneFolder } from "./folder";
 import type { Pairing } from "./pairing";
 import type { Take } from "./outbox";
+import { pairingEnded } from "./reach";
 import { unsentTakes } from "./takes-file";
 import { Action, c, Caption, Label, NavBar, StatusDot, Symbol, Warning } from "./ui";
 
@@ -18,7 +19,7 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
   const current = takes.filter(t => t.room === pair.invite.room);
   const previous = takes.filter(t => t.room !== pair.invite.room);
   const unsent = unsentTakes(pair, takes);
-  const terminal = ["Pairing expired", "Refused", "Host stopped sharing", "This Mac revoked the pairing"].includes(status);
+  const terminal = pairingEnded(status);
   async function send() {
     setSending(true); setSendNote(""); setSendError("");
     try {
@@ -27,6 +28,12 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
     } catch (e) { setSendError(String(e)); }
     finally { setSending(false); }
   }
+  const disconnect = <Action label="Disconnect and pair again" press={() => Alert.alert("Disconnect from this Mac?",
+        "Your takes stay on this iPhone. Pending takes won’t be sent to a different pairing.", [
+          { text: "Cancel", style: "cancel" }, { text: "Disconnect", style: "destructive", onPress: () => {
+            forget().catch(() => Alert.alert("Could not remove the pairing."));
+          } },
+        ])} />;
   return <><NavBar title="Status" leading={<Action label="Script" icon="chevron.left" press={back} />} />
     <ScrollView contentContainerStyle={{ padding: 20, gap: 18 }}>
       <View style={{ padding: 16, gap: 6, backgroundColor: c.group, borderRadius: 14 }}>
@@ -37,6 +44,7 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
         {pair.remembered && <Caption>Remembered until revoked on the Mac. This iPhone follows the script it was paired with.</Caption>}
         {!terminal && !pair.remembered && <Caption>Pairing ends {new Date(pair.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.</Caption>}
       </View>
+      {terminal && disconnect}
       {pair.remembered && <View style={{ gap: 8 }}>
         <Action label={folderChosen ? "Change iCloud Drive folder" : "Choose iCloud Drive fallback folder"} press={() => {
           void phoneFolder.pick().then(chosen => { if (chosen) { setFolderChosen(true); setFolderError(""); } },
@@ -69,11 +77,6 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
         {t.outcome === "pending" && (t.room !== pair.invite.room || terminal) &&
           <Caption>This pairing has ended. Copy the text to send it with a new pairing.</Caption>}
       </View>)}
-      <Action label="Disconnect and pair again" press={() => Alert.alert("Disconnect from this Mac?",
-        "Your takes stay on this iPhone. Pending takes won’t be sent to a different pairing.", [
-          { text: "Cancel", style: "cancel" }, { text: "Disconnect", style: "destructive", onPress: () => {
-            forget().catch(() => Alert.alert("Could not remove the pairing."));
-          } },
-        ])} />
+      {!terminal && disconnect}
     </ScrollView></>;
 }

@@ -3,11 +3,10 @@
 // a fresh session, so the host's script wins. Presence carries each writer's name, color and caret.
 import { ScreenplayDoc } from "@screenplay/engine";
 import { RelayClient, type ConnectionStatus } from "@screenplay/relay/client";
-import { deriveReadKey, deriveRoom, formatInvite, parseInvite, randomId, type Invite } from "@screenplay/relay/protocol";
+import { deriveReadKey, deriveRoom, formatInvite, parseInvite, randomId, validRelayAddress, type Invite } from "@screenplay/relay/protocol";
 import { Awareness } from "y-protocols/awareness";
 
-import { CHANNELS } from "../../../shared/api.ts";
-import { SYNC, type HostInfo } from "../../../shared/channels/sync.ts";
+import { SYNC, type HostInfo, type JoinHandoff } from "../../../shared/channels/sync.ts";
 import type { App } from "../../core/app.ts";
 import type { EditorBridge } from "../../core/editor-bridge.ts";
 import { desktop, isDesktop, messageBox } from "../../core/platform.ts";
@@ -28,12 +27,13 @@ export interface CollabState {
   /** Whether a local-network address or self-hosted relay is available. */
   lan: boolean;
   tailscale: HostInfo["tailscale"];
+  inviteRoute: "lan" | "remote" | "relay" | null;
   readOnly: boolean;
   folder: FolderState;
 }
 
 const IDLE: Omit<CollabState, "folder"> = {
-  mode: "idle", status: "idle", participants: [], invite: null, readOnlyInvite: null, address: null, lan: true, tailscale: null, readOnly: false,
+  mode: "idle", status: "idle", participants: [], invite: null, readOnlyInvite: null, address: null, lan: true, tailscale: null, inviteRoute: null, readOnly: false,
 };
 
 /** How long Join waits to reach the session before it gives up. */
@@ -110,7 +110,11 @@ export class CollabController {
         this.publishUser();
       }).catch(() => undefined);
       // A window opened to join a session from another window picks up the invite here.
-      void desktop.invoke<string | null>(SYNC.takeJoin).then((invite) => (invite ? this.join(invite) : undefined)).catch((error) => this.app.toast(String(error.message ?? error), "error"));
+      void desktop.invoke<JoinHandoff | null>(SYNC.takeJoin).then((join) => {
+        if (!join) return;
+        if (join.confirm) this.app.openModal("collab.join", { invite: join.invite });
+        else return this.join(join.invite);
+      }).catch((error) => this.app.toast(String(error.message ?? error), "error"));
     }
     return () => {
       offSession();
@@ -132,7 +136,7 @@ export class CollabController {
     this.app.flushPending();
     const relayUrl = this.app.setting<string>(RELAY_SETTING, "").trim();
     if (relayUrl) {
-      if (!/^wss?:\/\/[^\s/]+/.test(relayUrl)) throw new Error("The relay address in Settings must start with ws:// or wss://.");
+      if (!validRelayAddress(relayUrl)) throw new Error("Check the relay address in Settings › Co-writing. Paste the server address your team provided.");
       // The room name comes from the key, so only a writer can open the room on the relay (docs/sync-protocol.md).
       const key = randomId();
       const invite: Invite = { relay: relayUrl.replace(/\/+$/, ""), room: await deriveRoom(key), key, readOnly: false };
@@ -141,6 +145,7 @@ export class CollabController {
         invite: formatInvite(invite),
         readOnlyInvite: formatInvite({ ...invite, key: readKey, readOnly: true }),
         address: invite.relay,
+        inviteRoute: "relay",
         lan: true,
         tailscale: null,
       });
@@ -150,9 +155,30 @@ export class CollabController {
       this.connect(this.app.session, { relay: info.relay, room: info.room, key: info.key, readOnly: false }, "host", true, {
         invite: info.invite, readOnlyInvite: info.readOnlyInvite, address: info.address, lan: info.lan, tailscale: info.tailscale,
       });
-      if (!info.lan && !info.tailscale) this.app.toast("No network found. The invite works only on this Mac until you connect to Wi-Fi.", "info");
     }
     this.app.togglePanel("collab", true);
+  }
+
+  chooseRoute(inviteRoute: "lan" | "remote"): void {
+    this.set({ inviteRoute });
+  }
+
+  get selectedInvites() {
+    const state = this.state;
+    if (state.status !== "connected" || !state.inviteRoute) return null;
+    if (state.inviteRoute === "remote") return state.tailscale;
+    return state.invite && state.readOnlyInvite ? { invite: state.invite, readOnlyInvite: state.readOnlyInvite } : null;
+  }
+
+  /** The main process returns the same room and keys with fresh network addresses. */
+  async recheckNetwork(): Promise<void> {
+    const live = this.live;
+    if (!live?.embedded) return;
+    const { lan, tailscale, address, invite, readOnlyInvite } = await desktop.invoke<HostInfo>(SYNC.hostStart);
+    if (this.live === live) {
+      this.set({ lan, tailscale, address, invite, readOnlyInvite });
+      if (!tailscale) this.app.toast("Still looking for Tailscale. Open it on this Mac and check that it says Connected.");
+    }
   }
 
   /** Join from an invite. The host's script opens in this window if it is untitled and unchanged, otherwise in a new one. */
@@ -170,8 +196,7 @@ export class CollabController {
         cancelId: 1,
       });
       if (choice !== 0) return;
-      await desktop.invoke(SYNC.queueJoin, text.trim());
-      await desktop.invoke(CHANNELS.newWindow);
+      await desktop.invoke(SYNC.newJoinWindow, text.trim());
       return;
     }
     // Start from an empty document so nothing of ours mixes into the host's script. The window keeps its own
@@ -193,7 +218,7 @@ export class CollabController {
       if (status === "denied") throw new Error(`The invite was refused: ${reason || "wrong key"}.`);
       if (status === "ended") throw new Error("That session is no longer open. Ask the writer for a new invite.");
       if (status === "stopped") return;
-      throw new Error(`Could not reach the session at ${invite.relay.replace(/^wss?:\/\//, "")}. Check that the writer is still sharing and that you are on the same network.`);
+      throw new Error("Could not reach the session. Ask the writer to keep sharing and send an invite for your location. If you’re using Tailscale, check that it’s connected and you have access to their Mac.");
     } finally {
       clearTimeout(timer);
     }
@@ -205,8 +230,7 @@ export class CollabController {
     if (this.app.session !== original || !original.pristine) {
       await this.stop();
       if (!isDesktop) throw new Error("This window's script changed while joining. Start a new script, then join again.");
-      await desktop.invoke(SYNC.queueJoin, text.trim());
-      await desktop.invoke(CHANNELS.newWindow);
+      await desktop.invoke(SYNC.newJoinWindow, text.trim());
       this.app.toast("This script changed while you were joining, so the shared script opens in a new window.");
       return;
     }
@@ -235,7 +259,7 @@ export class CollabController {
   }
 
   private connect(session: DocumentSession, invite: Invite, mode: Exclude<Mode, "idle">, embedded: boolean,
-    info: Pick<CollabState, "invite" | "readOnlyInvite" | "address" | "lan" | "tailscale">): Live {
+    info: Pick<CollabState, "invite" | "readOnlyInvite" | "address" | "lan" | "tailscale"> & { inviteRoute?: "relay" }): Live {
     const awareness = new Awareness(session.doc.ydoc);
     awareness.setLocalState(this.presence(session, mode, invite.readOnly, awareness.clientID));
     const client = new RelayClient({ relay: invite.relay, room: invite.room, key: invite.key, doc: session.doc.ydoc, awareness, readOnly: invite.readOnly });
@@ -321,6 +345,7 @@ export class CollabController {
     // Presence changes with every remote caret move; rebuild the native menu only when a command's state can change.
     const after = this.state;
     if (before.mode !== after.mode || before.invite !== after.invite || before.readOnlyInvite !== after.readOnlyInvite
+      || before.inviteRoute !== after.inviteRoute || before.status !== after.status || before.tailscale !== after.tailscale
       || before.folder.active !== after.folder.active) this.app.refreshMenu();
   }
 }

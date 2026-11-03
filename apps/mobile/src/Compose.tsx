@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ComponentRef } from "react";
 import { Alert, AccessibilityInfo, AppState, KeyboardAvoidingView, Pressable, ScrollView, TextInput, View } from "react-native";
 import { NativeModule, requireNativeModule } from "expo";
 import { insertCue, replaceSelection, type Cue, type Selection } from "./writing";
-import type { Row } from "./live";
+import type { Composition } from "./store";
 import { Action, c, Caption, Label, NavBar, Symbol } from "./ui";
 
 declare class Speech extends NativeModule<{
@@ -11,8 +11,8 @@ declare class Speech extends NativeModule<{
   authorize(): Promise<boolean>; start(): Promise<void>; finish(): void; cancel(): void;
 }
 const speech = requireNativeModule<Speech>("InklotLocalSpeech");
-export function Compose({ row, kind, close, send }: {
-  row: Row; kind: "draft" | "dictation" | "note"; close(): void; send(text: string, destination?: "after" | "end"): void;
+export function Compose({ row, kind, text: initialText, keep, ended, close, send }: Composition & {
+  keep(text: string): void; ended: boolean; close(): void; send(text: string, destination?: "after" | "end"): void;
 }) {
   const note = kind === "note", draft = kind === "draft";
   const input = useRef<ComponentRef<typeof TextInput>>(null);
@@ -23,7 +23,21 @@ export function Compose({ row, kind, close, send }: {
     const next = insertCue(text, selection, kind);
     setText(next.text); setSelection(next.selection); input.current?.focus();
   }
-  const [text, setText] = useState(""), [phase, setPhase] = useState("idle"), [error, setError] = useState("");
+  const [text, updateText] = useState(initialText), [phase, setPhase] = useState("idle"), [error, setError] = useState("");
+  function setText(value: string) {
+    updateText(value);
+    try { keep(value); }
+    catch { setError("Your iPhone couldn’t save this edit. Copy the text before leaving."); }
+  }
+  function cancel() {
+    const discard = () => {
+      try { close(); } catch { setError("Couldn’t discard this draft. Try again."); }
+    };
+    if (!text) { discard(); return; }
+    Alert.alert("Discard this unsent text?", "You can keep writing or discard it from this iPhone.", [
+      { text: "Keep writing", style: "cancel" }, { text: "Discard", style: "destructive", onPress: discard },
+    ]);
+  }
   const [voiceOver, setVoiceOver] = useState(false);
   const held = useRef(false), active = useRef(false), mounted = useRef(true), prefix = useRef("");
   useEffect(() => {
@@ -67,11 +81,12 @@ export function Compose({ row, kind, close, send }: {
   }, [draft, phase]);
   function finish() { held.current = false; if (active.current) { setPhase("finishing"); speech.finish(); } }
   return <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
-    <NavBar title={draft ? "Write" : note ? "Note" : "Dictate"} leading={<Action label="Cancel" press={close} />}
-      trailing={<Action label={note ? "Send" : "Save as take"} disabled={!text.trim() || phase !== "idle"} press={() => {
+    <NavBar title={draft ? "Write" : note ? "Note" : "Dictate"} leading={<Action label="Cancel" press={cancel} />}
+      trailing={<Action label={note ? "Send" : "Save as take"} disabled={ended || !text.trim() || phase !== "idle"} press={() => {
         try { send(text); } catch (e) { setError(String(e)); }
       }} />} />
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 24, gap: 18, flexGrow: 1 }}>
+      {ended && <Label accessibilityRole="alert">This pairing ended. Copy your text, then cancel and pair with the Mac again.</Label>}
       <View style={{ borderLeftWidth: 2, borderColor: c.accent, paddingLeft: 12 }}>
         <Caption>{row.scene ? `${row.scene} · attached passage` : "Attached passage"}</Caption><Label numberOfLines={4}
           style={{ fontFamily: "CourierPrime_400Regular", marginTop: 6 }}>{row.text || "Empty paragraph"}</Label>
@@ -87,7 +102,7 @@ export function Compose({ row, kind, close, send }: {
           style={{ minHeight: draft ? 240 : 124, flexGrow: draft ? 1 : 0, textAlignVertical: "top", fontSize: 18,
             fontFamily: draft ? "CourierPrime_400Regular" : undefined, color: c.ink }} />
       </View>
-      {!note && <Action label="Send to script" disabled={!text.trim() || phase !== "idle"} press={() => {
+      {!note && <Action label="Send to script" disabled={ended || !text.trim() || phase !== "idle"} press={() => {
         Alert.alert("Send to script", "It arrives on your Mac for you to accept.", [
           { text: "After the Mac’s current scene", onPress: () => { try { send(text, "after"); } catch (e) { setError(String(e)); } } },
           { text: "At the end", onPress: () => { try { send(text, "end"); } catch (e) { setError(String(e)); } } },

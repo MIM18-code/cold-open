@@ -15,7 +15,7 @@ What's in it:
 - Templates for features, one-hour drama, half-hour single-camera, multi-camera and stage plays.
 - Story Map and Structure Points, reports, cross-script search, compare and history.
 - Live co-writing over the local network or a relay, with presence and conflict notices.
-- Dictation that formats screenplay elements as you speak, running on the Mac (Parakeet through Core ML).
+- Dictation that formats screenplay elements as you speak, using the Parakeet speech model included in the Mac app. You can also dictate into the editor with Wispr Flow and choose Format Draft. Screenplay formatting uses a separate local writing model.
 - Table reads with local voices (Phonon, Kokoro and others, downloaded on request), casting from the script.
 - Optional AI: proofreading suggestions, questions about the script, casting help and sentence completion. It runs
   on a local model through Ollama, or on ChatGPT (Sign in with ChatGPT) or your own Anthropic, OpenAI or Google key.
@@ -73,7 +73,10 @@ npm run package -w @screenplay/desktop    # an unsigned Cold Open.app and .dmg i
 
 A signed release needs `SCREENPLAY_RELEASE=1`, `SCREENPLAY_SIGN=developer-id`, both compiled helpers and
 notarization credentials (`APPLE_KEYCHAIN_PROFILE`). `npm run release:prepare` builds it, prepares this source
-snapshot and the native source archives, and checks the result.
+snapshot and the native source archives, and checks the result. Before preparing release files it runs
+`npm run test:packaged` against the built app in disposable profiles. That gate exercises core file/PDF
+workflows and bundled speech inference with network access and the user's FluidAudio cache denied to
+the speech helper. The screenplay fixtures and attributed speech sample are included with this source.
 
 ## Layout
 

@@ -47,6 +47,7 @@ test("the sheet advances through installation, start, download and readiness", (
   assert.equal(setupStep(null, false), "checking");
   assert.equal(setupStep({ installed: false, running: false, model: false }, false), "not-installed");
   assert.equal(setupStep({ installed: true, running: false, model: false }, false), "not-running");
+  assert.equal(setupStep({ installed: false, running: false, model: false }, false, { state: "preparing", status: "Installing" }), "preparing");
   const running = { installed: true, running: true, model: false };
   assert.equal(setupStep(running, false), "no-model");
   assert.equal(setupStep(running, false, { state: "downloading", status: "", completed: 10, total: 100 }), "downloading");

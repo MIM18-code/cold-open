@@ -74,6 +74,15 @@ export function formatInvite(invite: Invite): string {
   return `screenplay://join?${params}`;
 }
 
+/** Check the base URL before opening a socket or putting it in a shareable invite. */
+export function validRelayAddress(relay: string): boolean {
+  if (!/^wss?:\/\/[^/]/i.test(relay) || /[?#\\\s]/.test(relay)) return false;
+  try {
+    const endpoint = new URL(relay);
+    return !!endpoint.hostname && !endpoint.username && !endpoint.password;
+  } catch { return false; }
+}
+
 export function parseInvite(text: string): Invite {
   let url: URL;
   try {
@@ -81,13 +90,16 @@ export function parseInvite(text: string): Invite {
   } catch {
     throw new Error("That is not a co-writing invite.");
   }
-  if (url.protocol !== "screenplay:") throw new Error("That is not a co-writing invite.");
+  if (url.protocol !== "screenplay:" || url.host !== "join" || (url.pathname && url.pathname !== "/") || url.username || url.password)
+    throw new Error("That is not a co-writing invite.");
   const params = url.searchParams;
   const host = params.get("host");
   const relay = host ? `ws://${host}` : params.get("relay");
   const room = params.get("room") ?? "";
   const key = params.get("key") ?? "";
-  if (!relay || !/^wss?:\/\/[^/?#\s]+/.test(relay)) throw new Error("The invite has no relay address.");
+  if (!relay) throw new Error("The invite has no relay address.");
+  if (!validRelayAddress(relay) || (host && host.includes("/")))
+    throw new Error("The invite has an invalid server address. Ask the writer for a new invite.");
   if (!ID_PATTERN.test(room) || !ID_PATTERN.test(key)) throw new Error("The invite is incomplete. Copy the whole invite and try again.");
   return { relay: relay.replace(/\/+$/, ""), room, key, readOnly: params.get("access") === "read" };
 }

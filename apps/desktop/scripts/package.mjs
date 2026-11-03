@@ -1,7 +1,8 @@
 // Builds the Mac app (.app and .dmg) into release/. Main, preload and renderer are bundled, so the staged app
-// carries no node_modules: just dist/, the icon, and the native speech helper when it has been built.
+// carries no node_modules: just dist/, the icon, and native speech and voice resources.
 // Unsigned by default; set SCREENPLAY_SIGN=developer-id to sign with the keychain's Developer ID.
 import { build, Platform } from "electron-builder";
+import { stageParakeet } from "./parakeet-resources.mjs";
 import { releasePolicy } from "./release-policy.mjs";
 import { cpSync, existsSync, readdirSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -37,21 +38,20 @@ else if (policy.release) throw new Error("Run node scripts/prepare-licenses.mjs 
 const strip = (file) => execFileSync("/usr/bin/strip", ["-S", "-x", file]);
 const builtHelper = join(repo, "native/speech-helper/.build/release/speech-helper");
 const helper = join(stage, "speech-helper");
-if (existsSync(builtHelper)) { cpSync(builtHelper, helper); strip(helper); }
-const extraResources = existsSync(helper) ? [{ from: helper, to: "speech-helper" }] : [];
-if (!extraResources.length) console.warn("Speech helper not built; dictation will need a helper path in Settings.");
+cpSync(builtHelper, helper); strip(helper);
+const parakeet = join(stage, "parakeet-tdt-0.6b-v3");
+await stageParakeet(parakeet);
+const extraResources = [{ from: helper, to: "speech-helper" }, { from: parakeet, to: "parakeet-tdt-0.6b-v3" }];
 
 const voiceBuild = join(repo, "native/voice-helper/.build/release");
-if (existsSync(join(voiceBuild, "voice-helper"))) {
-  const voiceStage = join(stage, "voice-resources"); mkdirSync(voiceStage, { recursive: true });
-  for (const name of readdirSync(voiceBuild)) if (name === "voice-helper" || /\.(bundle|metallib|dylib)$/.test(name)) cpSync(join(voiceBuild, name), join(voiceStage, name), { recursive: true });
-  for (const name of readdirSync(voiceStage)) if (name === "voice-helper" || name.endsWith(".dylib")) strip(join(voiceStage, name));
-  // MLX loads its Metal library from this bundle. Without it every engine, including Phonon and Kokoro, dies at load.
-  if (!existsSync(join(voiceStage, "mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"))) {
-    throw new Error("Voice helper is missing mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib. Rebuild it with `swift build -c release` (not --build-system native) in native/voice-helper.");
-  }
-  extraResources.push({ from: voiceStage, to: "voice-helper" });
-} else console.warn("Voice helper not built; table reads offer installed Mac voices only.");
+const voiceStage = join(stage, "voice-resources"); mkdirSync(voiceStage, { recursive: true });
+for (const name of readdirSync(voiceBuild)) if (name === "voice-helper" || /\.(bundle|metallib|dylib)$/.test(name)) cpSync(join(voiceBuild, name), join(voiceStage, name), { recursive: true });
+for (const name of readdirSync(voiceStage)) if (name === "voice-helper" || name.endsWith(".dylib")) strip(join(voiceStage, name));
+// MLX loads its Metal library from this bundle. Without it every engine, including Phonon and Kokoro, dies at load.
+if (!existsSync(join(voiceStage, "mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"))) {
+  throw new Error("Voice helper is missing mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib. Rebuild it with `swift build -c release` (not --build-system native) in native/voice-helper.");
+}
+extraResources.push({ from: voiceStage, to: "voice-helper" });
 
 const document = (ext, name, role = "Editor", rank = "Default") => ({ ext, name, role, rank, icon: join(root, "build/icon.icns") });
 
@@ -88,6 +88,7 @@ await build({
         NSLocalNetworkUsageDescription: "Cold Open connects to co-writers or a paired phone only when you start sharing.",
       },
     },
+    protocols: [{ name: "Cold Open co-writing invite", schemes: ["screenplay"] }],
     fileAssociations: [
       document("screenplay", "Screenplay", "Editor", "Owner"),
       document("fdx", "Final Draft Document", "Editor", "Alternate"),

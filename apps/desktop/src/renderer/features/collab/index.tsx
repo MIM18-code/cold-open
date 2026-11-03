@@ -1,6 +1,7 @@
 // Live co-writing (share, join, presence) and folder sync through iCloud Drive or Dropbox.
 import { useState, useSyncExternalStore } from "react";
 
+import { parseInvite } from "@screenplay/relay/protocol";
 import { app, type Feature, type ModalProps } from "../../core/app.ts";
 import { useSessionState, useSetting } from "../../core/hooks.ts";
 import { isDesktop } from "../../core/platform.ts";
@@ -34,8 +35,12 @@ async function copyText(text: string, what: string): Promise<void> {
     area.style.opacity = "0";
     document.body.append(area);
     area.select();
-    document.execCommand("copy");
+    const copied = document.execCommand("copy");
     area.remove();
+    if (!copied) {
+      app.toast("Select the invite text and copy it manually.", "error");
+      return;
+    }
   }
   app.toast(`${what} copied`, "success");
 }
@@ -50,42 +55,53 @@ function InviteField({ label, value, className, note }: { label: string; value: 
       <div className="collab-invite-label">{label}</div>
       <div className="collab-invite-row">
         <input className={`input ${className}`} readOnly value={value} aria-label={label} onFocus={(event) => event.target.select()} />
-        <button className="button" onClick={() => void copyText(value, label)}>Copy</button>
+        <button className="button" aria-label={`Copy ${label.toLowerCase()}`} onClick={() => void copyText(value, label)}>Copy</button>
       </div>
       <div className="collab-note">{note}</div>
     </div>
   );
 }
 
-// The panel's "Invite over" choice, shared with the Copy commands so both hand out the same invite.
-let overTailscaleChoice = false, choiceFor: string | null = null;
-const chosenInvites = (state: CollabState) => overTailscaleChoice && state.tailscale ? state.tailscale : { invite: state.invite, readOnlyInvite: state.readOnlyInvite };
+function RemoteSetup({ connected }: { connected: boolean }) {
+  const [checking, setChecking] = useState(false);
+  async function recheck() {
+    setChecking(true);
+    try { await collab.recheckNetwork(); }
+    finally { setChecking(false); }
+  }
+  return (
+    <div className="collab-remote">
+      <h3>{connected ? "Tailscale is connected on this Mac" : "Connect your Macs with Tailscale"}</h3>
+      <ol className="collab-steps">
+        <li>{connected ? "Ask your co-writer to" : "On both Macs,"} <a href="https://tailscale.com/download/mac" target="_blank" rel="noreferrer">install Tailscale</a>, sign in and connect.</li>
+        <li>If your co-writer can’t see this Mac in Tailscale, find it on your <a href="https://login.tailscale.com/admin/machines" target="_blank" rel="noreferrer">Machines page</a>. Choose <strong>Share</strong> from its menu and send the invitation privately. Your co-writer accepts it in their browser to get access to this Mac.</li>
+      </ol>
+      {!connected && <button className="button" disabled={checking} onClick={() => run(recheck)}>{checking ? "Checking…" : "Check Tailscale again"}</button>}
+    </div>
+  );
+}
 
 function HostInvites({ state }: { state: CollabState }) {
-  // A new share starts on this network (Tailscale when there's no network); reopening the panel keeps the choice.
-  const [overTailscale, setOverTailscale] = useState(() => {
-    if (choiceFor !== state.invite) { choiceFor = state.invite; overTailscaleChoice = !state.lan; }
-    return overTailscaleChoice;
-  });
-  if (!state.invite || !state.readOnlyInvite) return null;
-  const invites = chosenInvites(state) as { invite: string; readOnlyInvite: string };
-  const selfHosted = /^wss?:\/\//.test(state.address ?? "");
+  const invites = collab.selectedInvites;
+  const relay = state.inviteRoute === "relay";
   return (
     <section className="collab-section">
-      {state.tailscale ? <>
-        <label className="field">
-          <span>Invite over</span>
-          <select value={overTailscale ? "tailscale" : "lan"} onChange={(event) => setOverTailscale(overTailscaleChoice = event.target.value === "tailscale")}>
-            <option value="lan" disabled={!state.lan}>This network ({state.lan ? state.address?.split(":")[0] : "unavailable"})</option>
-            <option value="tailscale">Tailscale ({state.tailscale.address.split(":")[0]})</option>
-          </select>
-        </label>
-        {overTailscale ? <p className="collab-note">Works for anyone on your Tailscale network, or anyone you share this Mac with in Tailscale. Tailscale encrypts the connection.</p> : null}
-      </> : null}
-      <InviteField label="Invite" value={invites.invite} className="collab-invite-write" note="Anyone with this invite can edit. Send it privately." />
-      <InviteField label="Read-only invite" value={invites.readOnlyInvite} className="collab-invite-read" note="For Backlot or a reader: sees changes, cannot edit." />
-      {!state.lan && !state.tailscale ? <p className="collab-error">No network found. These invites work only on this Mac.</p> : null}
-      {!state.tailscale && !selfHosted ? <p className="collab-note">To write with someone on another network, use Tailscale on both Macs, or set a self-hosted relay in Settings &gt; Co-writing.</p> : null}
+      {relay ? <h3>Share through your team's relay</h3> :
+        <fieldset className="collab-location">
+          <legend>Where is your co-writer?</legend>
+          <label><input type="radio" name="invite-location" checked={state.inviteRoute === "remote"} onChange={() => collab.chooseRoute("remote")} /> On a different network</label>
+          <label><input type="radio" name="invite-location" disabled={!state.lan && !!state.tailscale} checked={state.inviteRoute === "lan"} onChange={() => collab.chooseRoute("lan")} /> {state.lan || state.tailscale ? "On the same Wi-Fi or local network" : "On this Mac only"}</label>
+        </fieldset>}
+      {state.inviteRoute === "remote" && <RemoteSetup connected={!!state.tailscale} />}
+      {state.inviteRoute === "remote" && !state.tailscale && <p className="collab-note">Once this Mac connects, check again to get the script invite. If your team runs a co-writing relay, you can also stop sharing and enter its address in Settings › Co-writing.</p>}
+      {state.inviteRoute && state.status !== "connected" && <p className="collab-note" role="status">{relay ? "Waiting for your team's relay. If this continues, stop sharing and check the relay address in Settings › Co-writing." : "Waiting for the session to connect."}</p>}
+      {invites && <>
+        <h3>Send a script invite</h3>
+        <p className="collab-note">Send one invite in a private message. Your co-writer opens the link and chooses <strong>Join</strong> in Cold Open. If their messaging app shows plain text, they can paste it into <strong>File › Join Co-writing Session…</strong>.</p>
+        <InviteField label="Editing invite" value={invites.invite} className="collab-invite-write" note="Anyone with this invite can change the script." />
+        <InviteField label="Read-only invite" value={invites.readOnlyInvite} className="collab-invite-read" note="Readers can follow along as you write." />
+        {!relay && <p className="collab-note">Keep this Mac awake with the script open while you write together.</p>}
+      </>}
     </section>
   );
 }
@@ -118,7 +134,7 @@ function CollabPanel() {
     <div className="collab-panel">
       {state.mode === "idle" ? (
         <section className="collab-section">
-          <p className="collab-note">Write together in real time. Sharing opens a session on your network; others join with the invite.</p>
+          <p className="collab-note">Share this script with another writer, or join a script they’ve shared with you.</p>
           <div className="collab-actions">
             <button className="button primary" onClick={() => run(() => collab.share())}>Share for Co-writing</button>
             <button className="button" onClick={() => app.openModal("collab.join")}>Join…</button>
@@ -129,7 +145,7 @@ function CollabPanel() {
           <section className="collab-section">
             <div className="collab-status-line">
               <span className={`collab-dot collab-dot-${state.status}`} aria-hidden="true" />
-              <span className="collab-status-text">{STATUS_LABEL[state.status]}</span>
+              <span className="collab-status-text">{state.mode === "host" && state.status === "connected" && state.participants.length === 1 ? "Waiting for a co-writer" : STATUS_LABEL[state.status]}</span>
               <span className="collab-note">{state.mode === "host" ? "Sharing" : "Joined"}{state.readOnly ? ", read-only" : ""}</span>
             </div>
             {state.readOnly ? <p className="collab-note">This invite is read-only. You can follow the script here but not change it.</p> : null}
@@ -147,12 +163,13 @@ function CollabPanel() {
             <HostInvites key={state.invite} state={state} />
           ) : null}
           <section className="collab-section">
-            <button className="button collab-stop" onClick={() => run(() => collab.stop())}>{state.mode === "host" ? "Stop Sharing" : "Leave Session"}</button>
+            {state.inviteRoute === "relay" && <p className="collab-note">Leaving disconnects this Mac. Other writers can keep working, and existing invites can still be used.</p>}
+            <button className="button collab-stop" onClick={() => run(() => collab.stop())}>{state.mode === "host" && state.inviteRoute !== "relay" ? "Stop Sharing" : "Leave Session"}</button>
           </section>
         </>
       )}
       <details><summary>Connection diagnostics</summary>
-        <p>Live connection: {STATUS_LABEL[state.status]}. {state.lan || state.tailscale ? "The invite has a network address." : "The invite works only on this Mac."}</p>
+        <p>Live connection: {STATUS_LABEL[state.status]}.</p>
         <p>Access: {state.readOnly ? "read-only" : "editable"}. Local draft: {app.session.dirty ? "has unsaved changes" : "no unsaved changes"}. Connected means a live transport, not that every peer saved a copy to disk.</p>
         <p>Use private invites. For the local-network invite, ws: traffic is not encrypted; use a trusted network, Tailscale, or a configured wss: relay. Incoming edits merge through the document; saving and cloud-folder delivery are separate.</p>
       </details>
@@ -173,8 +190,8 @@ function CollabStatus() {
   );
 }
 
-function JoinModal({ close }: ModalProps) {
-  const [text, setText] = useState("");
+function JoinModal({ close, props }: ModalProps<{ invite?: string } | undefined>) {
+  const [text, setText] = useState(props?.invite ?? "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const submit = async () => {
@@ -189,14 +206,27 @@ function JoinModal({ close }: ModalProps) {
       setBusy(false);
     }
   };
+  let preview: { host: string; readOnly: boolean } | undefined;
+  if (props?.invite) {
+    try {
+      const invite = parseInvite(text);
+      preview = { host: new URL(invite.relay).host, readOnly: invite.readOnly };
+    } catch { /* A damaged link can be replaced with a fresh invite. */ }
+  }
   return (
     <form onSubmit={(event) => (event.preventDefault(), void submit())}>
+      {props?.invite && !preview && <p className="collab-error" role="alert">This link is incomplete or damaged. Ask the writer to copy a fresh script invite.</p>}
+      {preview ? <>
+        <p>{preview.readOnly ? "You’ve been invited to read a script." : "You’ve been invited to write together."}</p>
+        <p className="collab-note">Only join an invite you expected from a writer you trust. Choosing Join connects to <strong>{preview.host}</strong> and shares your display name.</p>
+      </> :
       <label className="field">
         <span>Paste the invite from the writer who is sharing</span>
         <textarea className="collab-join-input" rows={3} value={text} autoFocus spellCheck={false}
           placeholder="screenplay://join?host=…" onChange={(event) => setText(event.target.value)} />
-      </label>
-      {error ? <p className="collab-error">{error}</p> : null}
+      </label>}
+      <p className="collab-note">{!preview && <>Use the script invite that starts with <code>screenplay://</code>. </>}If the writer also sent a Tailscale invitation, accept it in your browser and connect Tailscale before joining.</p>
+      {error ? <p className="collab-error" role="alert">{error}</p> : null}
       <div className="modal-actions">
         <button type="button" className="button" onClick={() => (busy && void collab.stop(), close())}>Cancel</button>
         <button type="submit" className="button primary collab-join-submit" disabled={busy || !text.trim()}>{busy ? "Connecting…" : "Join"}</button>
@@ -218,7 +248,7 @@ function CollabSettings() {
         <span>Self-hosted relay (optional)</span>
         <input value={relay} placeholder="wss://relay.example.com" spellCheck={false} onChange={(event) => setRelay(event.target.value)} />
       </label>
-      <p className="collab-note">Leave the relay empty to share over your local network from this Mac. With Tailscale running, the share dialog also offers a Tailscale invite. Run your own with <code>npx screenplay-relay</code> to write together across the internet.</p>
+      <p className="collab-note">Leave this blank for Wi-Fi or Tailscale. If your team runs a relay, enter its address here before sharing. Guests only need the script invite.</p>
     </div>
   );
 }
@@ -230,14 +260,14 @@ const feature: Feature = {
       enabled: () => collab.state.mode !== "guest", run: () => collab.share() },
     { id: "collab.join", label: "Join Co-writing Session…", menu: "File", group: "collab",
       enabled: () => collab.state.mode === "idle", run: (a) => a.openModal("collab.join") },
-    { id: "collab.copyInvite", label: "Copy Co-writing Invite", enabled: () => !!collab.state.invite,
-      run: () => copyText(chosenInvites(collab.state).invite!, "Invite") },
-    { id: "collab.copyReadOnlyInvite", label: "Copy Read-only Invite", enabled: () => !!collab.state.readOnlyInvite,
-      run: () => copyText(chosenInvites(collab.state).readOnlyInvite!, "Read-only invite") },
+    { id: "collab.copyInvite", label: "Copy Co-writing Invite", enabled: () => !!collab.selectedInvites,
+      run: () => copyText(collab.selectedInvites!.invite, "Invite") },
+    { id: "collab.copyReadOnlyInvite", label: "Copy Read-only Invite", enabled: () => !!collab.selectedInvites,
+      run: () => copyText(collab.selectedInvites!.readOnlyInvite, "Read-only invite") },
     { id: "collab.stop", label: "Stop Sharing", menu: "File", group: "collab",
-      enabled: () => collab.state.mode === "host", run: () => collab.stop() },
+      enabled: () => collab.state.mode === "host" && collab.state.inviteRoute !== "relay", run: () => collab.stop() },
     { id: "collab.leave", label: "Leave Session", menu: "File", group: "collab",
-      enabled: () => collab.state.mode === "guest", run: () => collab.stop() },
+      enabled: () => collab.state.mode === "guest" || collab.state.inviteRoute === "relay", run: () => collab.stop() },
     { id: "collab.folderSync", label: "Sync Through Folder", menu: "File", group: "collab",
       enabled: (a) => collab.state.folder.active || collab.folder.eligible(a.session),
       checked: () => collab.state.folder.active, run: (a) => collab.folder.toggle(a.session) },

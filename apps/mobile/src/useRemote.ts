@@ -8,8 +8,8 @@ import { folderProduction } from "./production.ts";
 import { readScript, connect, type Presence, type Row } from "./live";
 import { sendPending, deviceStatus, permanentFailure, validateTakeSize, DeliveryError, syncReceipts, type Take } from "./outbox";
 import { phoneFolder, saveToFolder } from "./folder";
-import { cacheProduction, cachedProduction, cacheRows, cachedRows, endedPairing, listTakes, mark, rememberEnd, saveTake } from "./store";
-import { isTailnet, reachStatus, type ReachReason } from "./reach.ts";
+import { cacheProduction, cachedProduction, cacheRows, cachedRows, endedPairing, listTakes, mark, rememberEnd, saveTake, type Passage } from "./store";
+import { isTailnet, reachStatus, pairingEnded, type ReachReason } from "./reach.ts";
 import { shareTakes } from "./share.ts";
 import { takesFile, takesFileName, takesBatch } from "./takes-file.ts";
 
@@ -133,7 +133,10 @@ export function useRemote() {
     await Keychain.setItemAsync(key, raw, { keychainAccessible: Keychain.WHEN_UNLOCKED_THIS_DEVICE_ONLY });
     setPair(next); setError("");
   }
-  function submit(kind: Take["kind"], row: Row, text: string, destination?: "after" | "end") {
+  function submit(kind: Take["kind"], row: Passage, text: string, destination?: "after" | "end") {
+    if (!pair || pair.expiresAt <= Date.now() || pairingEnded(status) || endedPairing(pair.invite.room)) {
+      throw new Error("This pairing ended. Copy your text before pairing with your Mac again.");
+    }
     if (destination === "after") {
       const index = rows.findIndex(r => r.id === people.cursor);
       const scene = rows.slice(0, index + 1).findLast(r => r.type === "sceneHeading");
@@ -141,7 +144,7 @@ export function useRemote() {
       row = scene;
     }
     if (destination) kind = destination === "after" ? "scene-after" : "scene-end";
-    if (!pair || !text.trim()) throw new Error("Enter some text.");
+    if (!text.trim()) throw new Error("Enter some text.");
     const item: Take = { id: randomUUID(), room: pair.invite.room, kind, text: text.trim(),
       paragraphId: row.id, sourceText: row.text.slice(0, 1500), scene: row.scene, created: Date.now(), outcome: "pending" };
     validateTakeSize(item);

@@ -23,7 +23,10 @@ OpenAI's ChatGPT logo, unchanged from developers.openai.com/assets/siwc/sign-in-
 ChatGPT" button that OpenAI's Sign in with ChatGPT guidelines call for. The logo is OpenAI's trademark and is not
 covered by Cold Open's license.
 
-Voice packs, dictation models and local AI models are not part of the release. Cold Open downloads them only when
+Cold Open includes the default Parakeet dictation weights by NVIDIA, converted to Core ML by FluidInference.
+The model, vocabulary and attribution ship in `Contents/Resources/parakeet-tdt-0.6b-v3`. [Original model](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), [Core ML conversion](https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml/tree/7dd20fe6b1797d35f5e3307e8b1732d9a178edfe), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+Additional voice packs and local writing models are separate downloads. Cold Open downloads them only when
 the writer asks, from pinned revisions, and keeps each one's license and attribution beside it; see
 [docs/OPTIONAL_DOWNLOADS.md](docs/OPTIONAL_DOWNLOADS.md).
 

@@ -139,3 +139,20 @@ test("reader reuses unrevised line measurements when revision metadata arrives w
   assert.equal(paragraph({ ...revised, rows: [{ ...revised.rows[0], text: "Changed text" }] })
     .some(n => n.props.accessibilityElementsHidden), false);
 });
+
+test("an ended pairing lets a writer read cached pages and pair again without composing into a dead inbox", () => {
+  for (const status of ["Pairing expired", "This Mac revoked the pairing", "Host stopped sharing", "Refused"]) {
+    ui.reset();
+    const row = { id: "p", type: "action", runs: [{ text: "Cached." }], text: "Cached.", scene: "Scene 1" };
+    let statusOpened = false;
+    const tree = render(ui.Reader, { rows: [row], people: { title: "Script", writers: [], cursor: null, offset: 0 },
+      status, secure: true, showStatus() { statusOpened = true; }, compose() { assert.fail("Pairing ended"); } });
+    for (const action of ["Write", "Dictate", "Note"]) assert.equal(button(tree, action).props.disabled, true);
+    const list = tree.find(n => n.type === "FlatList")!;
+    const passage = list.props.renderItem({ item: row });
+    assert.equal(passage.props.onLongPress, undefined);
+    assert.deepEqual(passage.props.accessibilityActions, []);
+    button(nodes(list.props.ListHeaderComponent), "Pair again").props.onPress();
+    assert.ok(statusOpened);
+  }
+});

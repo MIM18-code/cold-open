@@ -14,6 +14,7 @@ const texts = (page: Page) => page.evaluate(() =>
 
 async function share(page: Page): Promise<{ write: string; read: string }> {
   await runCommand(page, "collab.share");
+  await page.getByRole("radio", { name: "On this Mac only" }).check();
   await expect(page.locator(".collab-invite-write")).toHaveValue(/^screenplay:\/\/join\?/);
   return { write: await page.locator(".collab-invite-write").inputValue(), read: await page.locator(".collab-invite-read").inputValue() };
 }

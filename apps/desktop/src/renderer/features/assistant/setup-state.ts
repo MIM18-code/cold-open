@@ -2,17 +2,18 @@ import type { AiStatus, LocalAiSetup } from "../../../shared/channels/ai.ts";
 import type { ModelProgress } from "../../../main/models/ollama.ts";
 
 export const AI_SETUP_MESSAGE = "Set up AI to use this feature.";
-export type SetupStep = "checking" | "not-installed" | "not-running" | "no-model" | "downloading" | "paused" | "ready" | "chatgpt-ready";
+export type SetupStep = "checking" | "preparing" | "not-installed" | "not-running" | "no-model" | "downloading" | "paused" | "ready" | "chatgpt-ready";
 
 /** `chatgptChosen` means the writer picked ChatGPT in the sheet, not merely that it's signed in: a signed-in ChatGPT
  * never replaces the local model the writer chose without a click. */
 export function setupStep(local: LocalAiSetup | null, chatgptChosen: boolean, progress?: ModelProgress | null): SetupStep {
   if (chatgptChosen) return "chatgpt-ready";
+  if (progress?.state === "preparing") return "preparing";
+  if (progress?.state === "downloading" || progress?.state === "verifying") return "downloading";
   if (!local) return "checking";
   if (local.running && local.model) return "ready";
   if (!local.installed) return "not-installed";
   if (!local.running) return "not-running";
-  if (progress?.state === "downloading" || progress?.state === "verifying") return "downloading";
   if (progress?.state === "paused") return "paused";
   return "no-model";
 }

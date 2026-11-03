@@ -5,6 +5,7 @@ import { AI_CHANNELS, PROVIDER_LABELS, type AiStatus } from "../../../shared/cha
 import { DICTATION } from "../../../shared/channels/dictation.ts";
 import { TABLE_READ } from "../../../shared/channels/table-read.ts";
 
+import { openAiSetup } from "../assistant/setup.ts";
 import { VoicePacks } from "./voice-packs.tsx";
 
 function LocalFeatures(){
@@ -22,7 +23,7 @@ function LocalFeatures(){
     <button className="button" onClick={()=>app.openModal("workspace.settings",{section:"modelManager"})}>Download / manage formatting model</button><button className="button" onClick={()=>app.openModal("workspace.settings",{section:"dictation"})}>Configure local formatter and microphone</button>
     <details><summary>Speech-helper diagnostic status</summary><pre style={{whiteSpace:"pre-wrap",overflowWrap:"anywhere"}}>{speech?JSON.stringify(speech,null,2):"Not available"}</pre></details>
     <h3>Optional AI analysis</h3>{ai?<><p>Selected provider: {PROVIDER_LABELS[ai.active.provider]}</p><p>{ai.providers.find((p)=>p.provider===ai.active.provider)?.ready?"Provider reports ready. Individual requests can still fail or reach usage limits.":"This provider is not currently ready. Sign-in alone does not enable an unavailable integration."}</p></>:<p>Provider status unavailable.</p>}
-    <button className="button" onClick={()=>app.openModal("workspace.settings",{section:"ai"})}>Configure optional AI</button>
+    <button className="button" onClick={openAiSetup}>Set up AI…</button>
     {error&&<p role="alert">{error}</p>}<div className="preference-actions"><button className="button" onClick={()=>void refresh()}>Refresh readiness</button><button className="button" onClick={()=>void desktop.invoke(TABLE_READ.clearCache).then(()=>refresh(),(e)=>setError(String(e)))}>Clear generated speech cache</button></div>
     <p>Clearing speech cache does not remove model weights. Nothing automatically switches from local to cloud.</p>
   </div>;

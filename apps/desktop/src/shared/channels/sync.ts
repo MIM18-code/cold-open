@@ -7,8 +7,8 @@ export const SYNC = {
   hostStop: "sync:host-stop",
   /** The macOS user's full name, the default name shown to other writers. */
   userName: "sync:user-name",
-  /** Hand an invite to the next window that asks for one (joining from a window that already has a script). */
-  queueJoin: "sync:queue-join",
+  /** Open a dedicated window after the writer has confirmed Join. */
+  newJoinWindow: "sync:new-join-window",
   takeJoin: "sync:take-join",
   /** Whether folder sync is on for a document: the writer's choice, or a sync folder already next to the file. */
   folderEnabled: "sync:folder-enabled",
@@ -24,6 +24,11 @@ export const SYNC = {
   /** main → renderer: folder sync hit an error. Args: path, message. */
   folderError: "sync:folder-error",
 } as const;
+
+export interface JoinHandoff {
+  invite: string;
+  confirm: boolean;
+}
 
 export interface HostInfo {
   /** WebSocket URL this window connects to (the relay on 127.0.0.1). */
