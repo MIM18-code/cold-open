@@ -36,6 +36,10 @@ brew install --cask cold-open
 
 It needs an Apple silicon Mac running macOS 14 Sonoma or later. Local table-read voices need macOS 15.
 
+## User guide
+
+[Read the Cold Open guide](https://mindinmotionsoftware.com/guides/cold-open/index.html) for getting started, writing, AI setup, co-writing and troubleshooting. It includes screenshots, captioned walkthroughs and sample scripts. [Download the complete guide](https://mindinmotionsoftware.com/downloads/ColdOpen-user-guide.zip) to read it and watch the videos offline.
+
 ## Build from source
 
 Needs macOS and Node 22.18 or newer.
