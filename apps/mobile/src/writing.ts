@@ -16,3 +16,8 @@ export function insertCue(text: string, selection: Selection, cue: Cue) {
   if (cue === "Parenthetical") result.selection.start = --result.selection.end;
   return result;
 }
+
+/** What the writer sees for sent writing: Fountain's forced-character "@" stays in what the Mac parses, not on screen. */
+export function shownText(kind: string, text: string) {
+  return kind === "draft" || kind.startsWith("scene-") ? text.replace(/^@(?=\S)/gm, "") : text;
+}

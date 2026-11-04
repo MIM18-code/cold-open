@@ -64,10 +64,32 @@ is missing or invalid, or the iPhone is unknown or revoked. Old unsigned exports
 be sent again from an updated phone. See the
 [AirDrop takes file format](../../docs/sync-protocol.md#airdrop-takes-file).
 
+## Notes
+
+The app opens on **Note**, paired or not, with the keyboard up. Type, or tap **Dictate**
+and tap **Stop** when done. The text is kept on the iPhone from the first keystroke.
+**Save** files the note and clears the box for the next one; leaving the app files it
+too, so opening the app, speaking and closing it is enough. A note needs no passage.
+To attach one, long-press a paragraph in the script, or select it and choose **Note**;
+**Detach** removes the attachment.
+
+Notes go straight into the script's Notes on the Mac, tagged Phone, without review,
+because they never change the script. Writing and dictation still wait for the writer to
+accept them. A note whose passage has since changed is kept, unattached. Notes written
+before pairing, or after a pairing ended, wait on the iPhone ("Waiting for a Mac" in
+Activity) and go to the next script this iPhone pairs with.
+
+Swipe left on the note screen, or tap **Script** (**Pair** before pairing), to open the
+reader. **Note** in the reader's toolbar comes back.
+
+## Reading, writing and dictating
+
 Use the list button to jump to a scene or search paragraph text. **Follow the writer**
 tracks the host caret. Select a paragraph, choose **Dictate**, hold to record, release to
-finish, and review the transcript before tapping **Send**. Long-press a paragraph for a
-note. The tray shows delivery and desktop review decisions. If the selected paragraph was
+finish, and review the transcript before tapping **Send**. **Send** asks where the text
+goes: as a take to review (dictation), after the attached passage (writing), after the
+Mac's current scene, or at the end of the script. The tray shows delivery and desktop
+review decisions. If the selected paragraph was
 deleted, the phone proposes a nearby surviving passage and asks before attaching to it.
 The complete serialized request, including its anchor, must fit 24,000 UTF-8 bytes.
 Oversize text must be shortened or split. Permanently rejected items show their reason
@@ -77,7 +99,7 @@ Choose **Write** to type a Fountain passage in Courier Prime. The keyboard toolb
 Scene, Character, Parenthetical and Transition cues. Its microphone dictates at the
 cursor in the same field; tap it again to finish. Separate scenes and speeches with
 blank lines, and put dialogue directly below the character name or parenthetical.
-The attached passage stays visible for context. Unsent writing, notes and dictated text reopen at the same passage after the app closes.
+The attached passage stays visible for context. Unsent writing and dictated text reopen at the same passage after the app closes.
 Cancel asks before discarding text. If the Mac ends pairing mid-edit, copy the text
 before discarding and pairing again. After Send, the complete draft and receipt ID
 are saved synchronously in the same SQLite outbox as other takes before delivery, so
@@ -118,8 +140,12 @@ pair_dir=$(mktemp -d)
 node apps/mobile/scripts/simulator-host.ts "$pair_dir/code"
 ```
 
-In another terminal, pass that file to `xcrun simctl pbcopy booted`, then paste it in the
-app. The host serves only synthetic text and removes the code file on Ctrl-C.
+Then put the code on the simulator's clipboard and choose **Paste a pairing code**. On the
+iOS 27 simulator `xcrun simctl pbcopy booted < "$pair_dir/code"` can leave the clipboard
+empty; if Paste finds nothing, copy the code inside the simulator another way (for example
+`agent-device clipboard write`), or type it. The host serves only synthetic text with one
+Blue revision, so **Changes** and revision marks can be checked, and removes the code file
+on Ctrl-C.
 
 ## Data and tests
 

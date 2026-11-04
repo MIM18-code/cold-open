@@ -47,7 +47,7 @@ test("named history restores an old draft only after saving the outgoing draft, 
 test("notes follow a source edit, alternatives preserve outgoing wording, and saved cuts remain outside the screenplay", async()=>{
   const run=await launch();
   try{
-    await draft(run.page);await runCommand(run.page,"rewrite.new.note");
+    await draft(run.page);await runCommand(run.page,"rewrite.new.note.form");
     await run.page.getByRole("textbox",{name:"Project item name"}).fill("Performance note");
     await run.page.getByRole("textbox",{name:"Project item text"}).fill("Keep the reply quiet.");
     await run.page.getByRole("button",{name:"Keep note",exact:true}).click();

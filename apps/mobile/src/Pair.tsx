@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Image, Keyboard, KeyboardAvoidingView, Linking, ScrollView, TextInput, View, type ScrollViewInstance } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { Action, c, Caption, Heading, Label, Symbol } from "./ui";
+import { Action, c, Caption, Heading, Label, NavBar, Symbol } from "./ui";
 import { decodePairing } from "./pairing";
 
-export function Pair({ scan, initialError }: { scan(raw: string): Promise<void>; initialError: string }) {
+export function Pair({ scan, initialError, back }: { scan(raw: string): Promise<void>; initialError: string; back?(): void }) {
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollViewInstance>(null), inputY = useRef(0);
   const [permission, ask] = useCameraPermissions();
@@ -44,9 +44,11 @@ export function Pair({ scan, initialError }: { scan(raw: string): Promise<void>;
     showCamera(true);
   }
   return <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={insets.top} style={{ flex: 1 }}>
+    {back && <NavBar title="" leading={<Action label="Note" icon="chevron.left" press={back} />} />}
     <ScrollView ref={scroll} style={{ flex: 1 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive"
       contentContainerStyle={{ flexGrow: 1, padding: 24, paddingBottom: 32, gap: 16 }}>
-      {!manual && <Image source={require("../assets/mark.png")} style={{ height: 66, width: 66, marginLeft: -7 }} />}
+      {!manual && <Image accessible={false} accessibilityElementsHidden importantForAccessibility="no"
+        source={require("../assets/mark.png")} style={{ height: 66, width: 66, marginLeft: -7 }} />}
       <View><Heading>Pair with your Mac</Heading>
         <Label style={{ color: c.sub }}>{manual
           ? "On the Mac, choose Copy app pairing code. Paste that code here, then tap Pair."

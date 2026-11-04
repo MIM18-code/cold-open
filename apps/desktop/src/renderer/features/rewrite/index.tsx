@@ -7,6 +7,7 @@ import { selectedParagraphs } from "../editor/clipboard.ts";
 import { inOtherTextField } from "../../core/keyboard.ts";
 import { anchorAt, createRecord, putRecord, records, resolveAnchor, RECORD_PREFIX, type ProjectRecord, type RecordKind } from "./records.ts";
 import { revealScene } from "../navigator/structure-data.ts";
+import { openQuickNote } from "../quick-notes/box.ts";
 import "./rewrite.css";
 
 function capture(kind: RecordKind): ProjectRecord {
@@ -108,6 +109,9 @@ function RewritePanel() {
 function BeatsView() { useDocVersion();const {readOnly}=useSessionState();return <section className="beats-view"><h2>Unassigned beats</h2><p>Ideas live here until you choose to write them. Adding an idea never inserts a hidden scene.</p><button className="button primary" disabled={readOnly} onClick={()=>openNew("beat")}>New beat</button><div>{records(app.session.doc,"beat").map((record)=><ProjectItem key={record.id} record={record}/>)}</div></section>; }
 const feature:Feature={id:"rewrite",panels:[{id:"rewrite",title:"Notes",side:"right",order:5,component:RewritePanel}],views:[{id:"beats",title:"Beats",order:40,component:BeatsView}],modals:[{id:"rewrite.edit",title:"Project note / saved material",width:720,component:EditRecord}],commands:[
   {id:"rewrite.open",label:"Notes, Bookmarks and Alternatives",menu:"Tools",group:"rewrite",run:(a)=>{a.setFocusMode(false);a.togglePanel("rewrite",true);}},
-  ...(["note","bookmark","cut","alternative","beat"] as RecordKind[]).map((kind)=>({id:`rewrite.new.${kind}`,label:kind==="cut"?"Save Selected Passage to Cuts…":`New ${kind[0]!.toUpperCase()+kind.slice(1)}…`,menu:"Tools" as const,group:"rewrite",...(kind==="note"?{accelerator:"CmdOrCtrl+Shift+M"}:kind==="bookmark"?{accelerator:"CmdOrCtrl+Shift+B"}:{}),enabled:()=>!app.session.readOnly&&(kind==="beat"||!!app.editor)&&!inOtherTextField(),run:()=>openNew(kind)})),
+  // A note is a quick capture: a small box that saves as you type and works with the caret anywhere. The form below keeps the title field.
+  {id:"rewrite.new.note",label:"New Note",menu:"Tools",group:"rewrite",accelerator:"CmdOrCtrl+Shift+M",enabled:()=>!app.session.readOnly,run:()=>openQuickNote()},
+  {id:"rewrite.new.note.form",label:"New Note with Title…",menu:"Tools",group:"rewrite",enabled:()=>!app.session.readOnly&&!!app.editor&&!inOtherTextField(),run:()=>openNew("note")},
+  ...(["bookmark","cut","alternative","beat"] as RecordKind[]).map((kind)=>({id:`rewrite.new.${kind}`,label:kind==="cut"?"Save Selected Passage to Cuts…":`New ${kind[0]!.toUpperCase()+kind.slice(1)}…`,menu:"Tools" as const,group:"rewrite",...(kind==="bookmark"?{accelerator:"CmdOrCtrl+Shift+B"}:{}),enabled:()=>!app.session.readOnly&&(kind==="beat"||!!app.editor)&&!inOtherTextField(),run:()=>openNew(kind)})),
 ]};
 export default feature;

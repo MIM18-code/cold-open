@@ -273,10 +273,11 @@ test("saved phone inbox survives a stopped connection; accepting a note leaves s
         writeFileSync(join(folder, key + ".json"), JSON.stringify([{ id: "phone-message-0001", kind: "note", text: "Hold on the key.", cueId: "captured-cue", paragraphId: "a", revision: "older-draft", created: "2026-10-31T00:00:00Z", sourceText: "A brass key rests on the table." }]));
         await r.page.evaluate(() => { const s = (window as any).__app.session; s.edit(() => s.doc.insertText("a", 0, "Now ")); });
         const before = await script(r.page);
+        // Phone notes need no review: refreshing files the saved note straight into project notes.
         await r.page.getByRole("button", { name: "Refresh connection" }).click();
-        await expect(r.page.getByText("Hold on the key.", { exact: true })).toBeVisible();
-        await r.page.getByRole("button", { name: "Accept as project note" }).click();
-        await expect(r.page.getByText("Hold on the key.", { exact: true })).toHaveCount(0);
+        await expect(r.page.getByRole("region", { name: "Phone companion" }).getByText("Hold on the key.", { exact: true })).toHaveCount(0);
+        await expect.poll(() => r.page.evaluate(() => [...(window as any).__app.session.doc.meta.keys()]
+            .filter((k: string) => k.startsWith("workbench.record.")).length)).toBe(1);
         const notes = await r.page.evaluate(() => [...(window as any).__app.session.doc.meta.entries()].filter(([k]: [
             string
         ]) => k.startsWith("workbench.record.")).map(([, v]: [
@@ -291,6 +292,32 @@ test("saved phone inbox survives a stopped connection; accepting a note leaves s
         expect(status.active).toBe(false);
         expect(status.url).toBe("");
         await r.page.screenshot({ path: "test-results/roadmap-phone.png" });
+    }
+    finally {
+        await close(r.electronApp, r.page);
+    }
+});
+test("a phone note a full script can't take stays listed with Discard, and the Phone panel still loads", async () => {
+    const r = await launch();
+    try {
+        await draft(r.page);
+        await r.page.evaluate(() => {
+            const s = (window as any).__app.session, now = new Date().toISOString();
+            s.edit(() => { for (let i = 0; i < 400; i++) {
+                const id = `full-script-item-${String(i).padStart(4, "0")}`;
+                s.doc.meta.set(`workbench.record.${id}`, { id, revision: "r", kind: "note", title: "", text: "x", created: now, updated: now });
+            } });
+        });
+        await runCommand(r.page, "phone.open");
+        const key = await r.page.evaluate(() => (window as any).__app.session.id);
+        const folder = join(r.userData, "phone-inbox");
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(join(folder, key + ".json"), JSON.stringify([{ id: "phone-message-0003", kind: "note", text: "No room for me.", cueId: "c", paragraphId: "", revision: "r", created: "2026-10-31T00:00:00Z", sourceText: "" }]));
+        await r.page.getByRole("button", { name: "Refresh connection" }).click();
+        const panel = r.page.getByRole("region", { name: "Phone companion" });
+        await expect(panel.getByText("No room for me.", { exact: true })).toBeVisible();
+        // Both come from the loaded phone status, which a failed filing used to leave empty.
+        await expect(panel.getByRole("button", { name: "Discard" })).toBeVisible();
     }
     finally {
         await close(r.electronApp, r.page);

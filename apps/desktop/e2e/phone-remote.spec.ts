@@ -50,11 +50,18 @@ test("pair the iPhone reader, follow typing and review an anchored suggestion", 
       text: "Keep the thermos.", created: Date.now(), scene: "Scene 1", outcome: "pending" };
     const signal = new AbortController().signal;
     await deliver(pair, take, signal);
-    await expect(page.getByText(take.text, { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Accept as project note" }).click();
+    // Notes skip review: they go straight into project notes, tagged Phone and pinned to their passage.
     await expect.poll(async () => (await syncReceipts(pair, signal, [take])).get(take.id)).toBe("accepted");
+    const phoneNotes = () => page.evaluate(() => [...(window as any).__app.session.doc.meta.values()]
+      .filter((v: any) => v?.kind === "note" && v.author === "Phone").map((v: any) => ({ text: v.text, pinned: !!v.anchor })));
+    await expect.poll(phoneNotes).toEqual([{ text: take.text, pinned: true }]);
+    await expect(page.getByRole("region", { name: "Phone companion" }).getByText(take.text, { exact: true })).toHaveCount(0);
     await deliver(pair, take, signal);
-    await expect(page.getByText(take.text, { exact: true })).toHaveCount(0);
+    expect(await phoneNotes()).toHaveLength(1);
+    const loose: Take = { ...take, id: randomUUID(), paragraphId: "", sourceText: "", scene: "", text: "Two chipped cups." };
+    await deliver(pair, loose, signal);
+    await expect.poll(async () => (await phoneNotes()).sort((a, b) => a.text.localeCompare(b.text)))
+      .toEqual([{ text: take.text, pinned: true }, { text: loose.text, pinned: false }]);
     expect(rows.find(r => r.id === id)?.text).toBe(text);
     const dictation: Take = { ...take, id: randomUUID(), kind: "dictation", text: "Take the last boat." };
     await deliver(pair, dictation, signal);
@@ -140,12 +147,12 @@ test("remember an iPhone on a saved script and revoke it from the Phone panel", 
     await mkdir(inbox, { recursive: true });
     await writeFile(join(inbox, ".phone-item.tmp"), await folderItem(pair, take));
     await rename(join(inbox, ".phone-item.tmp"), join(inbox, take.id + ".json"));
-    await expect(page.getByText(take.text, { exact: true })).toBeVisible({ timeout: 10000 });
-    await page.getByRole("button", { name: "Accept as project note" }).click();
     const signal = new AbortController().signal;
-    await expect.poll(async () => (await syncReceipts(pair, signal, [take])).get(take.id)).toBe("accepted");
+    await expect.poll(async () => (await syncReceipts(pair, signal, [take])).get(take.id), { timeout: 10000 }).toBe("accepted");
+    await expect.poll(() => page.evaluate(text => [...(window as any).__app.session.doc.meta.values()]
+      .filter((v: any) => v?.kind === "note" && v.text === text).length, take.text)).toBe(1);
     await deliver(pair, take, signal);
-    await expect(page.getByText(take.text, { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Phone companion" }).getByText(take.text, { exact: true })).toHaveCount(0);
     await confirmNextPrompt(electronApp);
     await page.getByRole("button", { name: "Revoke Maya’s iPhone" }).click();
     await expect.poll(() => status).toBe("Refused");

@@ -98,6 +98,13 @@ export class DictationPipeline {
     }
     const text = transcript.text.trim();
     if (!text) throw new Error("No speech was found in the recording. Check the microphone and try again.");
+    if (request.transcribeOnly) {
+      const transcribeMs = heardAt.end - heardAt.start;
+      return {
+        takeId: request.takeId, source: "audio", transcript: text, engine: transcript.engine, audioSeconds: transcript.audioSeconds,
+        elements: [], diagnostics: [], warnings: [], commands: [], timings: { transcribeMs, formatMs: 0, totalMs: this.now() - started },
+      };
+    }
     const take = await this.formatText(text, request, config, progress);
     return {
       ...take, source: "audio", engine: transcript.engine, audioSeconds: transcript.audioSeconds,

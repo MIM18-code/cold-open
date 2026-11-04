@@ -9,7 +9,8 @@ import { readScript, connect, type Presence, type Row } from "./live";
 import { sendPending, deviceStatus, permanentFailure, validateTakeSize, DeliveryError, syncReceipts, type Take } from "./outbox";
 import { phoneFolder, saveToFolder } from "./folder";
 import { errorText } from "./errors";
-import { cacheProduction, cachedProduction, cacheRows, cachedRows, endedPairing, listTakes, mark, rememberEnd, saveTake, type Passage } from "./store";
+import { cacheProduction, cachedProduction, cacheRows, cachedRows, claimUnpairedNotes, endedPairing, listTakes, mark, rememberEnd,
+  saveNote, saveTake, UNPAIRED, type Passage } from "./store";
 import { isTailnet, reachStatus, pairingEnded, type ReachReason } from "./reach.ts";
 import { shareTakes } from "./share.ts";
 import { takesFile, takesFileName, takesBatch } from "./takes-file.ts";
@@ -32,6 +33,7 @@ export function useRemote() {
     setRows(pair ? cachedRows(pair.invite.room) : []); setPeople({ title: "", writers: [], cursor: null, offset: 0,
       production: pair ? cachedProduction(pair.invite.room) : undefined }); setStatus("Connecting");
     if (!pair) return;
+    if (pair.expiresAt > Date.now() && !endedPairing(pair.invite.room) && claimUnpairedNotes(pair.invite.room)) setTakes(listTakes());
     let stopped = false, busy = false, reported = false, wait = 1000;
     let timer: ReturnType<typeof setTimeout>, expiry: ReturnType<typeof setTimeout>;
     let disconnect: (() => void) | undefined;
@@ -152,6 +154,18 @@ export function useRemote() {
     saveTake(item);
     setTakes(listTakes()); wake.current();
   }
+  /** Save a note on this iPhone. It goes to the paired script, or waits for the next pairing. Never throws for a missing Mac. */
+  function note(text: string, row: Passage | null) {
+    if (!text.trim()) throw new Error("Enter some text.");
+    const live = !!pair && pair.expiresAt > Date.now() && !pairingEnded(status) && !endedPairing(pair.invite.room);
+    const item: Take = { id: randomUUID(), room: live ? pair!.invite.room : UNPAIRED, kind: "note", text: text.trim(),
+      paragraphId: live && row ? row.id : "", sourceText: live && row ? row.text.slice(0, 1500) : "",
+      scene: live && row ? row.scene : "", created: Date.now(), outcome: "pending" };
+    validateTakeSize(item);
+    saveNote(item);
+    setTakes(listTakes()); if (live) wake.current();
+    return live;
+  }
   async function sendToMac() {
     if (!pair) throw new Error("Pair with your Mac first.");
     const items = takesBatch(pair, listTakes());
@@ -161,5 +175,5 @@ export function useRemote() {
     return items.length;
   }
   async function forget() { await Keychain.deleteItemAsync(key); setPair(null); }
-  return { pair, rows, people, status, takes, ready, error, scan, submit, forget, sendToMac };
+  return { pair, rows, people, status, takes, ready, error, scan, submit, note, forget, sendToMac };
 }

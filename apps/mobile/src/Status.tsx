@@ -5,6 +5,8 @@ import type { Pairing } from "./pairing";
 import type { Take } from "./outbox";
 import { pairingEnded } from "./reach";
 import { unsentTakes } from "./takes-file";
+import { shownText } from "./writing";
+import { UNPAIRED } from "./store";
 import { Action, c, Caption, errorText, Label, NavBar, StatusDot, Symbol, Warning } from "./ui";
 
 export function Status({ pair, status, takes, back, forget, sendToMac }: {
@@ -63,20 +65,27 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
         {sendError && <Label accessibilityRole="alert">{sendError}</Label>}
       </View>}
       <Label accessibilityRole="header" style={{ fontWeight: "700", fontSize: 22 }}>Activity</Label>
-      {!current.length && <Caption>Notes and dictation will appear here after you send them.</Caption>}
+      {!current.length && <Caption>Notes, writing and dictation appear here after you send them.</Caption>}
       {previous.length > 0 && <Action label={history ? "Hide earlier pairings" : `Earlier pairings (${previous.length})`}
         press={() => showHistory(!history)} />}
-      {(history ? [...current, ...previous] : current).map(t => <View key={t.id} style={{ paddingBottom: 14, gap: 6, borderBottomWidth: 0.5, borderColor: c.line }}>
+      {(history ? [...current, ...previous] : current).map(t => {
+        const kind = t.kind.startsWith("scene-") ? "Scene suggestion" : t.kind === "note" ? "Note" : t.kind === "draft" ? "Writing" : "Dictation";
+        const outcome = t.outcome === "saved" ? "Saved to iCloud" : t.outcome === "airdropped" ? "Sent by AirDrop" : t.outcome === "rejected" ? "Rejected" : t.outcome[0].toUpperCase() + t.outcome.slice(1);
+        const where = [t.room === UNPAIRED ? "Waiting for a Mac" : t.room !== pair.invite.room ? "Earlier pairing" : "", t.scene,
+          new Date(t.created).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })].filter(Boolean).join(" · ");
+        const text = shownText(t.kind, t.text);
+        // One VoiceOver stop per take, read as "Note, Delivered, <text>. Scene 1 · 7:17 PM".
+        return <View key={t.id} accessible accessibilityLabel={`${kind}, ${outcome}, ${text.trimEnd()}${/[.!?…]$/.test(text.trimEnd()) ? "" : "."} ${where}${t.error ? `. ${t.error}` : ""}`}
+          style={{ paddingBottom: 14, gap: 6, borderBottomWidth: 0.5, borderColor: c.line }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
-          <Label style={{ flex: 1, fontWeight: "600" }}>{t.kind.startsWith("scene-") ? "Scene suggestion" : t.kind === "note" ? "Note" : t.kind === "draft" ? "Writing" : "Dictation"}</Label>
-          <Caption>{t.outcome === "saved" ? "Saved to iCloud" : t.outcome === "airdropped" ? "Sent by AirDrop" : t.outcome === "rejected" ? "Rejected" : t.outcome[0].toUpperCase() + t.outcome.slice(1)}</Caption>
+          <Label style={{ flex: 1, fontWeight: "600" }}>{kind}</Label>
+          <Caption>{outcome}</Caption>
         </View>
-        <Label selectable>{t.text}</Label><Caption>{[t.room !== pair.invite.room ? "Earlier pairing" : "", t.scene, new Date(t.created).toLocaleTimeString([], {
-          hour: "numeric", minute: "2-digit" })].filter(Boolean).join(" · ")}</Caption>
+        <Label selectable>{text}</Label><Caption>{where}</Caption>
         {t.error && <Caption>{t.error}</Caption>}
-        {t.outcome === "pending" && (t.room !== pair.invite.room || terminal) &&
+        {t.outcome === "pending" && t.room !== UNPAIRED && (t.room !== pair.invite.room || terminal) &&
           <Caption>This pairing has ended. Copy the text to send it with a new pairing.</Caption>}
-      </View>)}
+      </View>; })}
       {!terminal && disconnect}
     </ScrollView></>;
 }

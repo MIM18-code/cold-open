@@ -10,6 +10,7 @@ import { buildTakeContext } from "./context.ts";
 import { applyMatches, findMatches } from "./edits.ts";
 import { captureDelivery, deliverElements, scriptEnd, type DeliveryTarget } from "./delivery.ts";
 import { INITIAL_STATE, prepareMessage, store } from "./store.ts";
+import { transcribing } from "./transcribe.ts";
 
 const STAGES: Record<TakeProgress["stage"], string> = {
   saved: "Saved the recording",
@@ -81,6 +82,7 @@ export function unresolved(): boolean {
 export async function startRecording(): Promise<void> {
   const { phase } = store.state;
   if (phase === "recording" || starting) return;
+  if (transcribing()) return app.toast("Finish the note recording first.");
   if (phase === "working") return app.toast("Still working on the last take.");
   if (unresolved()) return app.toast("Insert or discard the take in the Dictate panel first.");
   try {

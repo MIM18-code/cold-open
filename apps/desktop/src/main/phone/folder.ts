@@ -16,7 +16,7 @@ export function validateFolderItem(value: unknown, deviceId: string, scriptId: s
       || typeof item.id !== "string" || !receiptId.test(item.id)
       || !["scene-after", "scene-end", "draft", "note", "dictation"].includes(item.kind as string)
       || typeof item.text !== "string" || !item.text.trim() || item.text.length > 20000
-      || typeof item.paragraphId !== "string" || !item.paragraphId.trim() || item.paragraphId.length > 160
+      || typeof item.paragraphId !== "string" || !item.paragraphId.trim() && item.kind !== "note" || item.paragraphId.length > 160
       || typeof item.sourceText !== "string" || item.sourceText.length > 1500
       || Buffer.byteLength(JSON.stringify({ id: item.id, kind: item.kind, text: item.text,
         paragraphId: item.paragraphId, sourceText: item.sourceText })) > 24000)

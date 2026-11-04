@@ -35,6 +35,36 @@ export function saveTake(t: Take) {
     clearComposition(t.room);
   });
 }
+/** Notes written before pairing, or after a pairing ended, wait under no room until a Mac is paired. */
+export const UNPAIRED = "";
+export function claimUnpairedNotes(room: string) {
+  if (!room) return 0;
+  return db.runSync("UPDATE takes SET room=? WHERE room=? AND kind='note' AND outcome='pending'", room, UNPAIRED).changes;
+}
+// The note screen's unsent text, kept on every keystroke so closing the app never loses it.
+const CAPTURE = "\u0000capture";
+export type Capture = { row: Passage | null; text: string };
+export function resumeCapture(): Capture {
+  const item = resumeComposition(CAPTURE);
+  return item ? { row: item.row.id ? item.row : null, text: item.text } : { row: null, text: "" };
+}
+export function keepCapture(item: Capture) {
+  keepComposition(CAPTURE, { kind: "note", row: item.row ?? { id: "", scene: "", text: "" }, text: item.text });
+}
+/** A note left in an earlier version's note editor moves to the note screen, after any text already there. */
+export function moveNoteComposition(room: string, old: Composition) {
+  const current = resumeCapture();
+  keepCapture(current.text.trim() ? { row: current.row, text: `${current.text.trimEnd()}\n\n${old.text}` }
+    : { row: old.row.id ? old.row : null, text: old.text });
+  clearComposition(room);
+}
+export function saveNote(t: Take) {
+  db.withTransactionSync(() => {
+    db.runSync("INSERT INTO takes VALUES (?,?,?,?,?,?,?,?,?,NULL)", t.id, t.room, t.kind, t.text,
+      t.paragraphId, t.sourceText, t.scene, t.created, t.outcome);
+    clearComposition(CAPTURE);
+  });
+}
 export function mark(id: string, state: Outcome, error?: string) {
   db.runSync("UPDATE takes SET outcome=?, error=? WHERE id=?", state, error ?? null, id);
 }

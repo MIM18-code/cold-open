@@ -18,8 +18,8 @@
           "NSAllowsLocalNetworking": true
         },
         "NSPhotoLibraryUsageDescription": "A built-in file-sharing component can open photos. Cold Open shares writing as text files and does not need your photos. You can choose Don’t Allow.",
-        "NSMicrophoneUsageDescription": "Record a take while you hold the dictate button.",
-        "NSSpeechRecognitionUsageDescription": "Transcribe takes on this iPhone."
+        "NSMicrophoneUsageDescription": "Dictate notes and drafts for your Mac script.",
+        "NSSpeechRecognitionUsageDescription": "Turn your dictated notes and drafts into text on this iPhone."
       }
     },
     "plugins": [

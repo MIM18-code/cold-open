@@ -12,7 +12,7 @@ import { useSession, useSessionState, useDocVersion } from "../../core/hooks.ts"
 import { createRecord } from "../rewrite/records.ts";
 import { historyId } from "../history/index.tsx";
 import { draftElements } from "./draft.ts";
-import { acceptPhoneRecord, phoneAttachment, phoneSceneAttachment } from "./receipts.ts";
+import { acceptPhoneRecord, filePhoneNotes, phoneAttachment, phoneSceneAttachment } from "./receipts.ts";
 import { setupChecklist } from "./checklist.ts";
 import "./phone.css";
 import { phoneDocumentKey, phoneIdentity, watchPhoneDocumentKey } from "./identity.ts";
@@ -122,6 +122,7 @@ function PhonePanel() {
     const [sceneDestinations, setSceneDestinations] = useState<Record<string, string>>({});
     const attempted = useRef(new Set<string>());
     const [error, setError] = useState("");
+    const [notesUnfiled, setNotesUnfiled] = useState(false);
     const identity = phoneIdentity(session, historyId);
     const documentId = resolvedKey?.identity === identity ? resolvedKey.key : null;
     const isCurrent = () => app.session === session && identity === phoneIdentity(session, historyId);
@@ -131,8 +132,22 @@ function PhonePanel() {
     const refresh = async (recheck = false) => {
         try {
             if (!documentId) return;
-            const next = await desktop.invoke<Status>("phone:status", documentId, recheck);
+            let next = await desktop.invoke<Status>("phone:status", documentId, recheck);
             if (!isCurrent()) return;
+            let unfiled = false;
+            try {
+                if (!session.readOnly && next.inbox.some(i => i.kind === "note")
+                    && await filePhoneNotes(session, next.inbox, isCurrent,
+                        (id, deviceId) => desktop.invoke("phone:acknowledge", documentId, id, "accepted", deviceId))) {
+                    app.toast("Added notes from your iPhone to Notes.", "success");
+                    next = await desktop.invoke<Status>("phone:status", documentId, false);
+                    if (!isCurrent()) return;
+                }
+            } catch (e) {
+                // Notes that can't be filed (a full script, say) stay listed below, where they can be discarded.
+                setError(String(e)); unfiled = true;
+            }
+            setNotesUnfiled(unfiled);
             setStatus(next);
             setPort(String(next.port));
             setAddress(a => a || next.addresses[0]?.address || "");
@@ -266,7 +281,7 @@ function PhonePanel() {
     const protection = tail ? "https" : transport;
     return <section className="roadmap-dialog phone-panel" aria-label="Phone companion">
     <div className="panel-header"><h2>Phone companion</h2></div>
-    <p className="phone-lede">Read the script on your iPhone, and write, dictate or leave notes. What you send arrives here for you to accept or ignore.</p>
+    <p className="phone-lede">Read the script on your iPhone, and write, dictate or leave notes. Notes go straight into Notes. Writing and dictation arrive here for you to accept or ignore.</p>
     {status && <section className="phone-setup" aria-label="Use from anywhere">
       <div className="phone-setup-head"><h3>Use from anywhere</h3>
         <button className="button" disabled={busy} onClick={() => void refresh(true)}>Check again</button></div>
@@ -373,7 +388,7 @@ function PhonePanel() {
     <h3>Review inbox</h3>
     <button className="button" disabled={busy || !documentId}
       onClick={() => void run("phone:clear-old-inboxes", documentId)}>Clear inboxes for other scripts…</button>
-    {status?.inbox.map(item => <article key={phoneReceiptKey(item)}>
+    {status?.inbox.filter(item => item.kind !== "note" || session.readOnly || notesUnfiled).map(item => <article key={phoneReceiptKey(item)}>
       <strong>{item.kind.startsWith("scene-") ? "Scene suggestion" : item.kind === "bookmark" ? "Phone bookmark" : item.kind === "note" ? "Phone note" : item.kind === "draft" ? "Phone draft" : "Rough dictation"}</strong>
       <small>{item.created} · captured draft {item.revision}</small>
       <p style={{ whiteSpace: "pre-wrap" }}>{item.text}</p>
@@ -428,15 +443,30 @@ function SharingStatus() {
 const feature: Feature = { id: "phone", status: [{ id: "phone.sharing", order: 91, component: SharingStatus }], panels: [{ id: "phone", title: "Phone", side: "right", order: 80, component: PhonePanel }], commands: [{ id: "phone.open", label: "Phone Companion…", menu: "Tools", group: "listen", run: () => { app.setFocusMode(false); app.togglePanel("phone", true); } }, { id: "phone.stop", label: "Stop Phone Sharing", menu: "Tools", group: "listen", run: () => { disconnectPublisher?.(); return desktop.invoke("phone:stop"); } }], activate(a) {
         const watch = () => {
             const session = a.session;
-            let disposed = false, lastIdentity = "", resuming = false;
+            let disposed = false, lastIdentity = "", resuming = false, key = "", filing = false, again = false;
+            const live = () => !disposed && a.session === session;
+            const fileNotes = async (): Promise<void> => {
+                if (!key || !live() || session.readOnly) return;
+                if (filing) { again = true; return; }
+                filing = true;
+                try {
+                    const documentKey = key;
+                    const inbox = await desktop.invoke<PhoneInbox[]>("phone:inbox", documentKey);
+                    const added = await filePhoneNotes(session, inbox, live,
+                        (id, deviceId) => desktop.invoke("phone:acknowledge", documentKey, id, "accepted", deviceId));
+                    if (added && live()) a.toast(added === 1 ? "Added a note from your iPhone to Notes." : `Added ${added} notes from your iPhone to Notes.`, "success");
+                } catch (e) { if (live()) a.toast(String(e), "error"); }
+                finally { filing = false; if (again) { again = false; void fileNotes(); } }
+            };
             const resume = async (force = false) => {
                 if (disposed || a.session !== session || resuming) return;
                 const identity = phoneIdentity(session, historyId);
                 if (!force && identity === lastIdentity) return;
                 lastIdentity = identity; resuming = true;
                 try {
-                    const key = await phoneDocumentKey(session, historyId, pathKey, moveInbox, claimKey, adoptLegacy);
+                    key = await phoneDocumentKey(session, historyId, pathKey, moveInbox, claimKey, adoptLegacy);
                     if (disposed || a.session !== session) return;
+                    void fileNotes();
                     const result = await desktop.invoke<{ publishers: Invite[] }>("phone:resume", key, snapshot());
                     if (!disposed && a.session === session) result.publishers.forEach(attachPublisher);
                 } catch (e) { if (!disposed) a.toast(String(e), "error"); }
@@ -453,8 +483,9 @@ const feature: Feature = { id: "phone", status: [{ id: "phone.sharing", order: 9
             });
             const offState = session.onState(() => { void resume(); });
             const offSharing = desktop.on("phone:sharing-changed", () => { void resume(true); });
+            const offInbox = desktop.on("phone:inbox-changed", () => { void fileNotes(); });
             void resume();
-            return () => { disposed = true; clearTimeout(publishTimer); offProduction(); offKey(); offState(); offSharing(); };
+            return () => { disposed = true; clearTimeout(publishTimer); offProduction(); offKey(); offState(); offSharing(); offInbox(); };
         };
         let offIdentity = watch();
         const offSession = a.onSession(() => {

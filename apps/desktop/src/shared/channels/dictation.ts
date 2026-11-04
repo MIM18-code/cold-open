@@ -131,6 +131,8 @@ export interface ProcessAudioRequest {
   context: TakeContext;
   /** Pick out spoken edit commands. Off when the writer chose to keep them as script text. */
   extractCommands?: boolean;
+  /** Return only what was heard: no formatting model, no elements. For the quick note box. */
+  transcribeOnly?: boolean;
 }
 
 export interface FormatTextRequest {

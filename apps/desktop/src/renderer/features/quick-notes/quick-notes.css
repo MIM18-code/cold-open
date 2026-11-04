@@ -1,0 +1,48 @@
+/* Quick note box and the "Since last time" tray. Both float above the window (z-index 150, under toasts). */
+.quick-note {
+  position: fixed; top: calc(var(--titlebar-height) + 56px); left: 0; right: 0; margin: 0 auto; z-index: 150;
+  width: min(460px, calc(100vw - 32px)); display: grid; gap: 8px; padding: 12px 14px 10px;
+  background: var(--bg-raised); color: var(--ink); border-radius: var(--radius-l); box-shadow: var(--shadow-2);
+  animation: shell-rise 160ms var(--ease);
+}
+.quick-note-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.quick-note-head strong { font-size: var(--text-m); }
+.quick-note-where { flex: 1; min-width: 0; color: var(--ink-3); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quick-note textarea {
+  width: 100%; resize: vertical; min-height: 80px; max-height: 40vh; padding: 8px 10px; border-radius: var(--radius);
+  border: 1px solid var(--line-strong); background: var(--paper); color: var(--ink); font: var(--text-m)/1.5 var(--ui-font);
+}
+.quick-note textarea:focus-visible { outline: var(--focus-ring); outline-offset: 0; }
+.quick-note-foot { display: flex; align-items: center; gap: 8px; }
+.quick-note-mic { display: inline-flex; align-items: center; gap: 6px; }
+.quick-note-mic.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.quick-note-meter { width: 64px; flex: none; }
+.quick-note-hint { flex: 1; text-align: right; color: var(--ink-3); font-size: var(--text-xs); }
+.quick-note-message { margin: 0; min-height: 1.2em; color: var(--ink-2); font-size: var(--text-s); }
+.quick-note-message:empty { display: none; }
+
+.since-tray {
+  position: fixed; bottom: calc(var(--statusbar-height) + 12px); z-index: 150; width: min(340px, calc(100vw - 32px));
+  max-height: min(60vh, 520px); display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px;
+  background: var(--bg-raised); color: var(--ink); border-radius: var(--radius-l); box-shadow: var(--shadow-2);
+  animation: shell-rise 180ms var(--ease);
+}
+.since-head { display: flex; align-items: center; gap: 8px; }
+.since-head h2 { margin: 0; flex: 1; font-size: var(--text-m); font-weight: 600; }
+.since-count {
+  min-width: 18px; padding: 1px 6px; border-radius: 9px; background: var(--accent-soft); color: var(--ink);
+  font-size: var(--text-xs); text-align: center; box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+.since-new { align-self: stretch; }
+.since-list { display: grid; gap: 8px; overflow-y: auto; min-height: 0; }
+.since-empty { margin: 0; padding: 6px 2px; color: var(--ink-3); font-size: var(--text-s); line-height: 1.45; }
+.since-item { padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); overflow-wrap: anywhere; }
+.since-item header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-size: var(--text-xs); color: var(--ink-3); }
+.since-author { font-weight: 600; color: var(--ink-2); }
+.since-author.phone { padding: 1px 6px; border-radius: 9px; background: var(--accent-soft); color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.since-pinned::before { content: "·"; margin-right: 6px; }
+.since-item h3 { margin: 6px 0 0; font-size: var(--text-s); }
+.since-item p { margin: 5px 0 8px; font-size: var(--text-s); line-height: 1.45; white-space: pre-wrap; max-height: 9em; overflow-y: auto; user-select: text; }
+.since-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.since-actions .button { font-size: var(--text-s); padding: 3px 8px; }
+.since-item .since-message { margin: 8px 0 0; color: var(--error); }

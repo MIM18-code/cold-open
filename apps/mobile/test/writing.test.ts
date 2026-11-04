@@ -25,3 +25,11 @@ test("speech partials replace the captured selection without consuming text afte
     text: "Before. New words. After.", selection: { start: 18, end: 18 },
   });
 });
+
+test("sent writing hides Fountain's forced-character @ but notes keep what was typed", async () => {
+  const { shownText } = await import("../src/writing.ts");
+  assert.equal(shownText("draft", "INT. HALL - DAY\n\n@Nora\nYou kept the light on."), "INT. HALL - DAY\n\nNora\nYou kept the light on.");
+  assert.equal(shownText("scene-end", "@NORA\nHi."), "NORA\nHi.");
+  assert.equal(shownText("note", "@Nora should sound tired"), "@Nora should sound tired");
+  assert.equal(shownText("draft", "Email me @ home"), "Email me @ home");
+});

@@ -7,6 +7,7 @@ public final class LocalSpeechModule: Module {
   private var request: SFSpeechAudioBufferRecognitionRequest?
   private var task: SFSpeechRecognitionTask?
   private var generation = 0
+  private var sessionActive = false
 
   public func definition() -> ModuleDefinition {
     Name("InklotLocalSpeech")
@@ -20,9 +21,17 @@ public final class LocalSpeechModule: Module {
         AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
       }
     }
-    AsyncFunction("start") {
-      try self.start()
-    }.runOnQueue(.main)
+    AsyncFunction("start") { () async throws in
+      // setCategory and setActive can block for seconds while CoreAudio starts. On the main thread that
+      // deadlocked the first dictation ("Initialize: RPC timeout"), so the session is activated off it.
+      // Stop any earlier take first: its deactivation is queued ahead of this activation on the same queue.
+      await MainActor.run { self.reset() }
+      try await self.activateSession()
+      try await MainActor.run {
+        self.sessionActive = true
+        do { try self.start() } catch { self.reset(); throw error }
+      }
+    }
     Function("finish") {
       DispatchQueue.main.async { self.finish() }
     }
@@ -33,7 +42,6 @@ public final class LocalSpeechModule: Module {
   }
 
   private func start() throws {
-    reset()
     guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable,
           recognizer.supportsOnDeviceRecognition else {
       throw NSError(domain: "Inklot", code: 1, userInfo: [
@@ -45,9 +53,6 @@ public final class LocalSpeechModule: Module {
     request.shouldReportPartialResults = true
     request.taskHint = .dictation
     let engine = AVAudioEngine()
-    let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.record, mode: .measurement)
-    try session.setActive(true)
     self.engine = engine
     self.request = request
     let node = engine.inputNode
@@ -71,6 +76,21 @@ public final class LocalSpeechModule: Module {
     }
   }
 
+  private let audio = DispatchQueue(label: "com.mindinmotion.inklot.speech-session")
+
+  private func activateSession() async throws {
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      audio.async {
+        do {
+          let session = AVAudioSession.sharedInstance()
+          try session.setCategory(.record, mode: .measurement)
+          try session.setActive(true)
+          continuation.resume()
+        } catch { continuation.resume(throwing: error) }
+      }
+    }
+  }
+
   private func finish() {
     if let engine, engine.isRunning {
       engine.stop()
@@ -83,7 +103,10 @@ public final class LocalSpeechModule: Module {
     generation += 1
     finish()
     task?.cancel()
-    if engine != nil { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
+    if sessionActive {
+      sessionActive = false
+      audio.async { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
+    }
     task = nil
     request = nil
     engine = nil

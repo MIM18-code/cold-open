@@ -2,7 +2,7 @@ import { plainText, type ScreenplayDoc } from "@screenplay/engine";
 import type { ProposedElement } from "../../../shared/channels/dictation.ts";
 import type { Position } from "../../core/editor-bridge.ts";
 import type { DocumentSession } from "../../core/session.ts";
-import { anchorAt, putRecord, records, RECORD_PREFIX, type ProjectRecord } from "../rewrite/records.ts";
+import { anchorAt, createRecord, putRecord, records, RECORD_PREFIX, type ProjectRecord } from "../rewrite/records.ts";
 
 const LEGACY_PREFIX = "phone.accepted.";
 
@@ -86,4 +86,28 @@ export async function acceptPhoneRecord(
   });
   session.undo.stopCapturing();
   return inserted;
+}
+
+/** Phone notes never change the script, so they skip review and go straight into project notes. A note whose
+ * passage has changed is still kept, unattached, rather than held back. Returns how many were added. */
+export async function filePhoneNotes(
+  session: DocumentSession, inbox: { id: string; deviceId?: string; kind: string; text: string; paragraphId: string; sourceText?: string }[],
+  isCurrent: () => boolean, acknowledge: (id: string, deviceId?: string) => Promise<unknown>,
+): Promise<number> {
+  let added = 0;
+  for (const item of inbox.filter(i => i.kind === "note")) {
+    if (!isCurrent() || session.readOnly) break;
+    const key = item.deviceId ? `${item.deviceId}:${item.id}` : item.id;
+    const note = () => createRecord("note", "Phone note", item.text, { author: "Phone" });
+    const attachment = item.paragraphId ? { paragraphId: item.paragraphId, sourceText: item.sourceText ?? "" } : undefined;
+    let inserted: boolean;
+    try { inserted = await acceptPhoneRecord(session, key, note(), isCurrent, attachment); }
+    catch (e) {
+      if (!attachment || !isCurrent() || session.readOnly) throw e;
+      inserted = await acceptPhoneRecord(session, key, note(), isCurrent);
+    }
+    if (inserted) added++;
+    await acknowledge(item.id, item.deviceId);
+  }
+  return added;
 }

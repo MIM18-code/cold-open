@@ -36,7 +36,9 @@ export function connect(pair: Pairing, script: (rows: Row[]) => void,
     const doc = new ScreenplayDoc();
     const client = new RelayClient({ ...pair.invite, doc: doc.ydoc, readOnly: true });
     client.awareness.setLocalState({ user: { name: "Cold Open Remote", app: "inklot-phone", readOnly: true }, cursor: null });
-    const update = () => { if (readPresence(client.awareness.getStates().values())) script(readScript(doc)); };
+    // Each reconnect starts from an empty doc. Until the relay's sync arrives, an update would replace the cached reader with nothing.
+    const update = () => { if (client.synced && readPresence(client.awareness.getStates().values())) script(readScript(doc)); };
+    const offSynced = client.onSynced(update);
     const people = () => { presence(readPresence(client.awareness.getStates().values())); update(); };
     doc.ydoc.on("update", update);
     client.awareness.on("change", people);
@@ -44,7 +46,7 @@ export function connect(pair: Pairing, script: (rows: Row[]) => void,
     cleanup = () => {
       if (disposed) return;
       disposed = true;
-      doc.ydoc.off("update", update); client.awareness.off("change", people);
+      doc.ydoc.off("update", update); client.awareness.off("change", people); offSynced();
       client.destroy(); doc.ydoc.destroy();
     };
     client.onStatus(s => {

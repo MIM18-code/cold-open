@@ -51,6 +51,8 @@ A **main-process service** is `src/main/services/<id>.ts` exporting `register(ct
 | `dictation` | The native speech helper and the local formatting model; the microphone permission. |
 | `ai` | Ollama, Anthropic, Google and OpenAI over HTTP; API keys stay in the main process. Sign in with ChatGPT signs in through Codex, but requests to it are turned off: Codex 0.166's app-server could not be stopped from reading files outside the request or calling the writer's MCP tools. |
 
+**Quick notes and "Since last time"** (`features/quick-notes`). Cmd+Shift+M (`rewrite.new.note`) opens a small floating box, not a dialog. The note is created in the document meta on the first words, rewritten as the writer types (400 ms pause, and on blur, close, flush and unload) and removed again if the box ends empty. Its mic button records with the dictation `Recorder` and sends the WAV through `dictation:process` with `transcribeOnly`, which returns the heard words and never calls the formatting model. When a script opens, the tray lists unresolved top-level notes created after the writer last worked on it. That time is per script and local to this Mac, in the setting `notes.since.<sha256 of the script's history ID, else its path>` as `{ seenAt, dismissed }`, never in the document. A session reads it once as its baseline, then rewrites it every minute and on leaving; a note that arrived while the tray was closed holds `seenAt` back until it has been shown. A script this Mac has not seen shows nothing. The tray and the box are portals mounted from a toolbar item, so they float above the window and move no layout.
+
 Element-type shortcuts follow Final Draft: Cmd+1 to Cmd+9 (and Cmd+0) set the element type.
 
 ### Keyboard shortcuts and the menu

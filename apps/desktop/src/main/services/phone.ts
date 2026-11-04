@@ -246,6 +246,11 @@ export function register(ctx: ServiceContext,
             ...[...sessions.values()].map(s => s.documentId)]);
         ctx.broadcast("phone:inbox-changed");
     });
+    // The inbox alone, without the network and Tailscale checks, so phone notes can be filed while the panel is closed.
+    ctx.handle("phone:inbox", async (event, key: unknown) => {
+        await ready;
+        return typeof key === "string" && owns(event.sender, key) ? await store.list(key) : [];
+    });
     ctx.handle("phone:status", async (event, key?: string, recheck = false) => {
         await ready;
         const session = sessions.get(event.sender.id);

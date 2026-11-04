@@ -72,6 +72,21 @@ test("an audio take is transcribed, formatted and mapped to engine types", async
   assert.ok(take.timings.totalMs >= take.timings.formatMs);
 });
 
+test("a transcript-only take returns what was heard and never calls the formatter", async () => {
+  const stages: ProgressStage[] = [];
+  const pipeline = new DictationPipeline({
+    speech: () => fakeSpeech(`  ${SPOKEN} `),
+    formatter: () => { throw new Error("The formatter must not be used."); },
+  });
+  const take = await pipeline.processAudio({ takeId: 9, audio, context: EMPTY_CONTEXT, transcribeOnly: true }, config, (stage) => stages.push(stage));
+  assert.equal(take.transcript, SPOKEN);
+  assert.equal(take.source, "audio");
+  assert.deepEqual(take.elements, []);
+  assert.deepEqual(take.commands, []);
+  assert.equal(take.error, undefined);
+  assert.deepEqual(stages, ["saved", "transcribing"]);
+});
+
 test("the recording is deleted after the helper has read it", async () => {
   const before = readdirSync(tmpdir()).filter((name) => name.startsWith("screenplay-dictation-"));
   const pipeline = new DictationPipeline({ speech: () => fakeSpeech(SPOKEN), formatter: () => fakeFormatter(proposal) });

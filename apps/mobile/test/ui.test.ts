@@ -5,11 +5,11 @@ import { resolve } from "node:path";
 
 // Exercise native component props and handlers without a Simulator or a JS renderer dependency.
 const result = await build({ stdin: { contents: `export { Pair } from "./src/Pair";
-  export { Reader } from "./src/Reader"; export { begin, reset } from "react";
-  export { opened, keyboard } from "react-native";`, resolveDir: resolve(import.meta.dirname, "..") },
+  export { Reader } from "./src/Reader"; export { Capture } from "./src/Capture"; export { begin, reset } from "react";
+  export { opened, keyboard, appState } from "react-native"; export { speech } from "expo";`, resolveDir: resolve(import.meta.dirname, "..") },
   bundle: true, write: false, platform: "node", format: "esm", jsx: "automatic",
   plugins: [{ name: "native-controls", setup(b) {
-    b.onResolve({ filter: /^(react|react\/jsx-runtime|react-native|expo-camera|expo-symbols|react-native-safe-area-context)$/ }, args =>
+    b.onResolve({ filter: /^(react|react\/jsx-runtime|react-native|expo|expo-camera|expo-symbols|react-native-safe-area-context)$/ }, args =>
       ({ path: args.path, namespace: "controls" }));
     b.onResolve({ filter: /\.png$/ }, () => ({ path: "image", namespace: "controls" }));
     b.onLoad({ filter: /.*/, namespace: "controls" }, ({ path }) => ({ contents: path === "react" ? `
@@ -21,17 +21,30 @@ const result = await build({ stdin: { contents: `export { Pair } from "./src/Pai
       export function useRef(value) { return useState({ current: value })[0]; }
       export function useEffect(fn) { fn(); }
       export function useCallback(fn) { return fn; }
+      export function useMemo(fn) { return fn(); }
+      export function createContext(value) { return { Provider: "Provider", value }; }
+      export function useContext(context) { return context.value; }
     ` : path === "react/jsx-runtime" ? `export const Fragment = "Fragment";
       export function jsx(type, props) { return { type, props }; } export const jsxs = jsx;`
       : path === "react-native" ? `
       export const View = "View", Text = "Text", Pressable = "Pressable", Image = "Image", TextInput = "TextInput",
         ScrollView = "ScrollView", FlatList = "FlatList", KeyboardAvoidingView = "KeyboardAvoidingView";
-      export const opened = [], keyboard = {};
+      export const opened = [], keyboard = {}, appState = [];
+      export const AppState = { currentState: "active", addEventListener(name, fn) { appState.push(fn); return { remove() {
+        appState.splice(appState.indexOf(fn), 1); } }; } };
+      export const PanResponder = { create(config) { return { panHandlers: {}, config }; } };
       export const Linking = { openURL(url) { opened.push(url); } };
       export const Keyboard = { addListener(name, fn) { keyboard[name] = fn; return { remove() {} }; } };
       export const Alert = { alert() { throw Error("Unexpected alert"); } };
       export const PlatformColor = name => name;
       export const useColorScheme = () => "dark";
+    ` : path === "expo" ? `
+      const listeners = { result: [], ended: [] };
+      export const speech = { started: 0, finished: 0, listeners, async authorize() { return true; },
+        async start() { this.started++; }, finish() { this.finished++; }, cancel() {},
+        addListener(name, fn) { listeners[name].push(fn); return { remove() { listeners[name].splice(listeners[name].indexOf(fn), 1); } }; } };
+      export class NativeModule {}
+      export const requireNativeModule = () => speech;
     ` : path === "expo-camera" ? `export const CameraView = "CameraView";
       export const useCameraPermissions = () => [{ granted: true }, async () => ({ granted: true })];`
       : path === "expo-symbols" ? `export const SymbolView = "SymbolView";`
@@ -140,19 +153,112 @@ test("reader reuses unrevised line measurements when revision metadata arrives w
     .some(n => n.props.accessibilityElementsHidden), false);
 });
 
-test("an ended pairing lets a writer read cached pages and pair again without composing into a dead inbox", () => {
+test("an ended pairing lets a writer read cached pages, keep taking notes, and pair again without writing into a dead inbox", () => {
   for (const status of ["Pairing expired", "This Mac revoked the pairing", "Host stopped sharing", "Refused"]) {
     ui.reset();
     const row = { id: "p", type: "action", runs: [{ text: "Cached." }], text: "Cached.", scene: "Scene 1" };
     let statusOpened = false;
+    const notes: unknown[] = [];
     const tree = render(ui.Reader, { rows: [row], people: { title: "Script", writers: [], cursor: null, offset: 0 },
-      status, secure: true, showStatus() { statusOpened = true; }, compose() { assert.fail("Pairing ended"); } });
-    for (const action of ["Write", "Dictate", "Note"]) assert.equal(button(tree, action).props.disabled, true);
+      status, secure: true, showStatus() { statusOpened = true; }, compose() { assert.fail("Pairing ended"); },
+      note(passage?: unknown) { notes.push(passage); } });
+    for (const action of ["Write", "Dictate"]) assert.equal(button(tree, action).props.disabled, true);
+    // Notes still work: they wait on the iPhone for the next pairing.
+    assert.equal(button(tree, "Note").props.disabled, undefined);
+    button(tree, "Note").props.onPress();
+    assert.deepEqual(notes, [undefined], "no passage was selected, so the note is loose");
     const list = tree.find(n => n.type === "FlatList")!;
     const passage = list.props.renderItem({ item: row });
-    assert.equal(passage.props.onLongPress, undefined);
-    assert.deepEqual(passage.props.accessibilityActions, []);
+    passage.props.onLongPress();
+    assert.equal(notes.at(-1), row);
+    assert.deepEqual(passage.props.accessibilityActions, [{ name: "note", label: "Add note" }]);
     button(nodes(list.props.ListHeaderComponent), "Pair again").props.onPress();
     assert.ok(statusOpened);
   }
+});
+
+test("the note screen keeps every keystroke, saves without a passage, saves on leaving, and dictates with one tap", async () => {
+  ui.reset();
+  const kept: { text: string; row: unknown }[] = [], saved: { text: string; row: unknown }[] = [];
+  let opened = 0;
+  const props = { initial: { row: null, text: "" }, script: "The Last Crossing", waiting: 2,
+    keep(d: { text: string; row: unknown }) { kept.push(d); },
+    save(text: string, row: unknown) { saved.push({ text, row }); return true; }, reader() { opened++; }, readerLabel: "Script" };
+  let tree = render(ui.Capture, props);
+  const input = () => tree.find(n => n.type === "TextInput")!;
+  assert.equal(input().props.autoFocus, true, "the keyboard is up on open");
+  assert.ok(tree.some(n => n.type === "Text" && n.props.children === "For “The Last Crossing”"));
+  assert.ok(tree.some(n => n.type === "Text" && Array.isArray(n.props.children) && n.props.children.join("") === "2 notes are waiting for your Mac."));
+  assert.equal(button(tree, "Save").props.disabled, true);
+  input().props.onChangeText("Eli should sound tired");
+  assert.deepEqual(kept.at(-1), { text: "Eli should sound tired", row: null }, "kept on the first keystroke");
+  tree = render(ui.Capture, props);
+  button(tree, "Save").props.onPress();
+  assert.deepEqual(saved, [{ text: "Eli should sound tired", row: null }]);
+  tree = render(ui.Capture, props);
+  assert.equal(input().props.value, "");
+  assert.ok(tree.some(n => n.props.accessibilityRole === "alert" && /Notes in “The Last Crossing”/.test(n.props.children)));
+
+  input().props.onChangeText("Lamp on the water");
+  tree = render(ui.Capture, props);
+  for (const fn of [...ui.appState]) fn("background");
+  assert.deepEqual(saved.at(-1), { text: "Lamp on the water", row: null }, "leaving the app files the note");
+
+  tree = render(ui.Capture, props);
+  input().props.onChangeText("Open on");
+  tree = render(ui.Capture, props);
+  button(tree, "Dictate a note").props.onPress();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(ui.speech.started, 1);
+  for (const fn of ui.speech.listeners.result) fn({ text: "the ferry at dawn" });
+  tree = render(ui.Capture, props);
+  assert.equal(input().props.value, "Open on the ferry at dawn");
+  button(tree, "Stop dictation").props.onPress();
+  assert.equal(ui.speech.finished, 1);
+  for (const fn of ui.speech.listeners.ended) fn({ error: "Failed to initialize recognizer" });
+  tree = render(ui.Capture, props);
+  assert.ok(tree.some(n => n.props.accessibilityRole === "alert" && /^Dictation stopped\. Check that Dictation is on/.test(n.props.children)));
+
+  const pan = tree.find(n => n.type === "KeyboardAvoidingView")!;
+  assert.ok(pan);
+  button(tree, "Script").props.onPress();
+  assert.equal(opened, 1);
+});
+
+test("an attached passage shows on the note screen and Detach makes the note loose", () => {
+  ui.reset();
+  const row = { id: "p", scene: "Scene 1", text: "NORA sets a thermos on the counter." };
+  const saved: unknown[] = [];
+  const props = { initial: { row, text: "Two cups" }, script: null, waiting: 0, keep() {},
+    save(_: string, r: unknown) { saved.push(r); return false; }, reader() {}, readerLabel: "Pair" };
+  let tree = render(ui.Capture, props);
+  assert.ok(tree.some(n => n.type === "Text" && n.props.children === "No Mac paired yet. Notes wait on this iPhone."));
+  assert.ok(tree.some(n => n.type === "Text" && n.props.children === "Scene 1 · attached passage"));
+  button(tree, "Detach").props.onPress();
+  tree = render(ui.Capture, props);
+  assert.ok(!tree.some(n => n.type === "Text" && n.props.children === "Scene 1 · attached passage"));
+  button(tree, "Save").props.onPress();
+  assert.deepEqual(saved, [null]);
+  tree = render(ui.Capture, props);
+  assert.ok(tree.some(n => n.props.accessibilityRole === "alert" && /Pair with your Mac/.test(n.props.children)));
+});
+
+test("leaving the app mid-dictation files the note once the last words arrive", async () => {
+  ui.reset();
+  ui.appState.length = 0;
+  const saved: string[] = [];
+  const props = { initial: { row: null, text: "" }, script: "Ferry", waiting: 0, keep() {},
+    save(text: string) { saved.push(text); return true; }, reader() {}, readerLabel: "Script" };
+  let tree = render(ui.Capture, props);
+  button(tree, "Dictate a note").props.onPress();
+  await new Promise(r => setTimeout(r, 0));
+  tree = render(ui.Capture, props);
+  for (const fn of ui.speech.listeners.result) fn({ text: "the lamp on the" });
+  tree = render(ui.Capture, props);
+  for (const fn of [...new Set(ui.appState)]) fn("background");
+  assert.deepEqual(saved, [], "nothing is filed while the take is still being transcribed");
+  for (const fn of ui.speech.listeners.result) fn({ text: "the lamp on the water" });
+  for (const fn of ui.speech.listeners.ended) fn({ error: "" });
+  render(ui.Capture, props);
+  assert.deepEqual(saved, ["the lamp on the water"]);
 });

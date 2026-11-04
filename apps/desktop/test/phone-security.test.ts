@@ -125,7 +125,10 @@ test("live anchors and review outcomes require the pairing token and bounded con
   const item = { id: message.id, kind: "note", text: "Prop", paragraphId: "p", sourceText: "Door" };
   try {
     assert.equal((await fetch(u.origin + "/api/receipts")).status, 401);
-    assert.equal((await post(u, { ...item, paragraphId: "" })).status, 400);
+    assert.equal((await post(u, { ...item, kind: "draft", paragraphId: "" })).status, 400);
+    assert.equal((await post(u, { ...item, kind: "draft", paragraphId: " " })).status, 400);
+    // A note written without choosing a passage is accepted unattached.
+    assert.equal((await post(u, { ...item, id: message.id + "-loose", paragraphId: "", sourceText: "" })).status, 200);
     assert.equal((await post(u, { ...item, sourceText: "s".repeat(1501) })).status, 400);
     assert.equal((await post(u, { ...item, kind: "bookmark" })).status, 400);
     assert.equal((await post(u, item)).status, 200);

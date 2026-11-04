@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 
 /** Write an executable fake helper into `folder` that hears `spoken` for every take. Returns its path. */
-export function fakeSpeechHelper(folder: string, spoken: string): string {
+export function fakeSpeechHelper(folder: string, spoken: string, delayMs = 0): string {
   // Chosen through the Choose dialog in tests; the name does not matter.
   const path = join(folder, "speech-helper");
   writeFileSync(path, `#!${process.execPath}
@@ -21,7 +21,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
   if (request.op === "prepare") return reply({ id: request.id, ok: true, loadMs: 1 });
   if (request.op === "transcribe") {
-    return reply({ id: request.id, ok: true, result: { engine: "fake", text: ${JSON.stringify(spoken)}, words: [], audioSeconds: 1, transcribeMs: 1 } });
+    return setTimeout(() => reply({ id: request.id, ok: true, result: { engine: "fake", text: ${JSON.stringify(spoken)}, words: [], audioSeconds: 1, transcribeMs: 1 } }), ${delayMs});
   }
   reply({ id: request.id, ok: false, error: "unknown op" });
 });

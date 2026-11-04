@@ -226,7 +226,8 @@ export class PhoneServer {
             return this.json(res, 404, { error: "Not found." });
         const body = await this.body(req);
         const anchored = req.url === "/api/inbox" && body?.paragraphId !== undefined;
-        if (anchored && (typeof body.paragraphId !== "string" || !body.paragraphId.trim()
+        // A note may be loose: written on the phone without choosing a passage.
+        if (anchored && (typeof body.paragraphId !== "string" || !body.paragraphId.trim() && body.kind !== "note"
             || body.paragraphId.length > 160 || typeof body.sourceText !== "string"
             || body.sourceText.length > 1500 || !["scene-after", "scene-end", "draft", "note", "dictation"].includes(body.kind))) {
             return this.json(res, 400, { error: "Invalid paragraph anchor." });

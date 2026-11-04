@@ -121,10 +121,13 @@ test("folder imports only validated remembered-script items, including while tha
     await f.devices.receive(f.device.id, scriptId, item, f.store);
     assert.equal((await f.store.list(scriptId)).length, 0);
     assert.equal(f.devices.decisions(f.device.id)[item.id]?.outcome, "ignored");
-    for (const change of [{ scriptId: "b".repeat(64) }, { deviceId: "unknown-device" }, { paragraphId: "" },
+    for (const change of [{ scriptId: "b".repeat(64) }, { deviceId: "unknown-device" }, { kind: "draft", paragraphId: "" },
       { text: "字".repeat(20000) }, { text: 4 }, { kind: "bookmark" }, { id: "../bad" }])
       assert.throws(() => validateFolderItem({ ...payload, ...change }, f.device.id, scriptId,
         f.devices.verifyTake.bind(f.devices)));
+    const loose = signEnvelope({ v: 1, deviceId: f.device.id, scriptId, id: "loose-note-000001", kind: "note", text: "Lamp on the water.",
+      paragraphId: "", sourceText: "" }, f.device.tokenHash);
+    assert.equal(validateFolderItem(loose, f.device.id, scriptId, f.devices.verifyTake.bind(f.devices)).paragraphId, "");
     await writeFile(path, JSON.stringify({ ...payload, scriptId: "b".repeat(64) })); await folder.scan();
     assert.ok(errors.some(e => e.includes("Invalid phone inbox")));
     await f.devices.revoke(f.device.id);
