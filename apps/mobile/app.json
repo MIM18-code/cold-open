@@ -10,7 +10,7 @@
     ],
     "ios": {
       "bundleIdentifier": "com.mindinmotion.inklot.remote",
-      "buildNumber": "2",
+      "buildNumber": "3",
       "supportsTablet": false,
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Connect to Cold Open on your Mac over private Wi-Fi.",
