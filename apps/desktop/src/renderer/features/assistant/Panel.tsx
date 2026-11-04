@@ -4,7 +4,7 @@ import { CHANNELS } from "../../../shared/api.ts";
 import { AI_CHANNELS, AI_SETTINGS, CHATGPT_USAGE_URL, judgesWholeScript, PROVIDER_LABELS, type AiStatus, WHOLE_SCRIPT_NEEDS } from "../../../shared/channels/ai.ts";
 import { app } from "../../core/app.ts";
 import { useApp, useSessionState, useSetting } from "../../core/hooks.ts";
-import { desktop } from "../../core/platform.ts";
+import { desktop, messageBox } from "../../core/platform.ts";
 import { hasSelection as selectionExists } from "../format-draft/target.ts";
 import { applySuggestion } from "./apply.ts";
 import { type ChatMessage, Chat } from "./chat.ts";
@@ -88,11 +88,15 @@ function Message({ message }: { message: ChatMessage }) {
   );
 }
 
+// The side panel remounts when the writer switches tabs, so the unsent question lives outside the component.
+let questionDraft = "";
+
 export function AssistantPanel() {
   const current = useChat();
   const backlotPath = useApp((a) => a.setting<string>(AI_SETTINGS.backlotPath, ""));
   const hasSelection = useApp((a) => selectionExists(a.editor?.getSelection()));
-  const [text, setText] = useState("");
+  const [text, setTextState] = useState(questionDraft);
+  const setText = (value: string) => { questionDraft = value; setTextState(value); };
   const [useBacklot, setUseBacklot] = useState(true);
   const [useSelection, setUseSelection] = useState(true);
   const [status, setStatus] = useState<AiStatus | null>(null);
@@ -123,7 +127,10 @@ export function AssistantPanel() {
         <span title="Change the provider in Settings, under AI">
           {active ? `${PROVIDER_LABELS[active.provider]}${active.model ? `, ${active.model}` : ""}` : "Assistant"}
         </span>
-        {current.messages.length ? <button className="icon-button" onClick={() => current.clear()}>Clear</button> : null}
+        {current.messages.length ? <button className="icon-button" onClick={async () => {
+          const response = await messageBox({ type: "warning", message: "Clear this conversation?", detail: "Every message in the conversation is removed.", buttons: ["Keep", "Clear"], defaultId: 0, cancelId: 0 });
+          if (response === 1) current.clear();
+        }}>Clear</button> : null}
       </div>
       {active?.provider === "chatgpt" && ready ? <div className="assistant-plan">
         <span>Using ChatGPT plan</span>

@@ -5,10 +5,11 @@ import { useMemo, useState, type KeyboardEvent } from "react";
 
 import { SETTING_DEFAULTS, SETTING_KEYS, type ProposedElement, type TakeResult } from "../../../shared/channels/dictation.ts";
 import { useScript, useSessionState, useSetting } from "../../core/hooks.ts";
+import { messageBox } from "../../core/platform.ts";
 import { formatAccelerator } from "../../shell/Shell.tsx";
 import {
   acceptSuggestion, discardTake, formatText, ignoreSuggestion, insertTake, keepCommandsAsText, pushStart, pushStop, retryAudio, setEditing,
-  setScope, toggleRecording, caretParagraph,
+  setScope, toggleRecording, caretParagraph, unresolved,
 } from "./controller.ts";
 import { findMatches } from "./edits.ts";
 import { store, useDictation, type Suggestion } from "./store.ts";
@@ -62,7 +63,7 @@ function Capture() {
           : push ? `Hold the button while you talk. ${formatAccelerator(SHORTCUT)} also starts and stops.`
             : `Press ${formatAccelerator(SHORTCUT)} to start and stop. Talk the scene in order; no commands needed.`}
       </div>
-      <p className="dictation-hint">Built-in dictation uses your selected speech engine. Parakeet comes with Cold Open. To use Wispr Flow, place the cursor in the script and use Flow’s shortcut.</p>
+      <p className="dictation-hint">Dictation continues at the end of your script. Highlight text first to replace it with a reviewed take. For Wispr Flow, choose Continue at end, dictate into the page, then press {formatAccelerator("CmdOrCtrl+Shift+Enter")} to format.</p>
     </section>
   );
 }
@@ -157,10 +158,17 @@ function SuggestionCard({ suggestion, index }: { suggestion: Suggestion; index: 
 }
 
 function Review() {
-  const { take, inserted, editing, editText, suggestions } = useDictation();
+  const { take, inserted, editing, editText, suggestions, replacing, selectedText } = useDictation();
   // A read-only co-writing session: the take can be read and discarded, never inserted.
   const { readOnly } = useSessionState();
   if (!take) return null;
+  const discard = async () => {
+    if (!inserted) {
+      const response = await messageBox({ type: "warning", message: "Discard this take?", detail: "The transcript and proposed script have not been inserted and will be lost.", buttons: ["Keep", "Discard"], defaultId: 0, cancelId: 0 });
+      if (response !== 1) return;
+    }
+    discardTake();
+  };
   const flags = new Map<number, string[]>();
   for (const d of take.diagnostics) if (d.elementIndex !== null) flags.set(d.elementIndex, [...(flags.get(d.elementIndex) ?? []), d.message]);
   take.elements.forEach((element, i) => element.uncertainty && flags.set(i, [...(flags.get(i) ?? []), element.uncertainty]));
@@ -182,14 +190,16 @@ function Review() {
       {count ? (
         <section className="dictation-block">
           <div className="dictation-label">Proposed script</div>
+          <p className="dictation-hint">{replacing ? "Replaces only the text you highlighted before this take. Review the transcript and formatted text before applying." : "Adds to the end of your script."}</p>
+          {replacing ? <details><summary>Original selected text</summary><p className="dictation-transcript">{selectedText}</p></details> : null}
           <div className="dictation-script">
             {take.elements.map((element, i) => <ElementPreview key={i} element={element} flagged={(flags.get(i) ?? []).join(" ")} />)}
           </div>
           <div className="dictation-row">
             {inserted ? <span className="dictation-hint">Inserted.</span>
               : <button className="button primary" disabled={readOnly} title={readOnly ? "This script is read-only." : undefined} onClick={insertTake}>
-                Insert {count} element{count === 1 ? "" : "s"}</button>}
-            <button className="button" onClick={discardTake}>{inserted ? "Done" : "Discard"}</button>
+                {replacing ? "Replace selected text" : `Insert ${count} element${count === 1 ? "" : "s"}`}</button>}
+            <button className="button" onClick={() => void discard()}>{inserted ? "Done" : "Discard"}</button>
           </div>
         </section>
       ) : null}
@@ -203,7 +213,7 @@ function Review() {
         </section>
       ) : null}
       {!count && !suggestions.length && !take.error ? (
-        <div className="dictation-row"><button className="button" onClick={discardTake}>Discard</button></div>
+        <div className="dictation-row"><button className="button" onClick={() => void discard()}>Discard</button></div>
       ) : null}
     </div>
   );
@@ -211,6 +221,7 @@ function Review() {
 
 function TextBox() {
   const { draft, phase } = useDictation();
+  const pending = unresolved();
   return (
     <section className="dictation-block">
       <div className="dictation-label">Paste or type a transcript</div>
@@ -218,10 +229,11 @@ function TextBox() {
         placeholder="Text from Wispr Flow or another dictation app goes through the same formatting."
         onChange={(event) => store.set({ draft: event.target.value })} />
       <div className="dictation-row">
-        <button className="button" disabled={!draft.trim() || phase === "working" || phase === "recording"} onClick={() => void formatText(draft)}>
+        <button className="button" disabled={!draft.trim() || pending || phase === "working" || phase === "recording"} onClick={() => void formatText(draft)}>
           Format
         </button>
       </div>
+      {pending ? <p className="dictation-hint">Insert or discard the current take before formatting another. Your next transcript stays here.</p> : null}
     </section>
   );
 }
@@ -236,6 +248,10 @@ export function DictationPanel() {
         <div className="dictation-error" role="alert">
           {error}
           {retryable ? <div className="dictation-row"><button className="button" onClick={() => void retryAudio()}>Try again</button></div> : null}
+          {retryable ? <button className="button" onClick={async () => {
+            const response = await messageBox({ type: "warning", message: "Discard this recording?", detail: "The audio has not been transcribed and cannot be tried again.", buttons: ["Keep", "Discard"], defaultId: 0, cancelId: 0 });
+            if (response === 1) discardTake();
+          }}>Discard recording</button> : null}
         </div>
       ) : null}
       <Review />

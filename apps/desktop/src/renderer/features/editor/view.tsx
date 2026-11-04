@@ -249,14 +249,14 @@ function FindBar() {
       <div className="editor-find-row">
         <input ref={input} className="input editor-find-input" placeholder="Find" aria-label="Find" value={state.query}
           onChange={(event) => find.update({ query: event.target.value })} onKeyDown={(event) => keys(event, () => find.next())} />
-        <span className="editor-find-count">{state.query ? position : ""}</span>
+        <span className="editor-find-count" role="status">{state.query ? position : ""}</span>
         <button className="icon-button" title="Previous match" aria-label="Previous match" onClick={() => find.next(true)}>‹</button>
         <button className="icon-button" title="Next match" aria-label="Next match" onClick={() => find.next()}>›</button>
         <label className="editor-find-option"><input type="checkbox" checked={state.matchCase}
           onChange={(event) => find.update({ matchCase: event.target.checked })} />Match case</label>
         <label className="editor-find-option"><input type="checkbox" checked={state.wholeWord}
           onChange={(event) => find.update({ wholeWord: event.target.checked })} />Whole word</label>
-        <button className="icon-button" title={state.replacing ? "Hide replace" : "Show replace"} onClick={() => find.update({ replacing: !state.replacing })}>
+        <button className="icon-button" title={state.replacing ? "Hide replace" : "Replace…"} aria-expanded={state.replacing} onClick={() => find.update({ replacing: !state.replacing })}>
           Replace…
         </button>
         <button className="icon-button" aria-label="Close find" title="Close" onClick={() => find.close()}>×</button>

@@ -2,13 +2,24 @@ import {
   applyDocumentTemplate, captureScriptNotes, ELEMENT_TYPES, FDX_STYLE_NAMES, TEMPLATE_IDS, TEMPLATE_NAMES, TEMPLATE_NOTES,
   pageLocks, readStyle, templateStyle, underlineEntrances, writeStyle, type DocumentStyle, type ElementType, type TemplateId,
 } from "@screenplay/engine";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { CHANNELS } from "../../../shared/api.ts";
 import { app, type Feature, type ModalProps } from "../../core/app.ts";
 import { desktop, isDesktop, messageBox } from "../../core/platform.ts";
 import { DocumentSession } from "../../core/session.ts";
 import { paginateForPrint, readPrintSettings } from "../print/options.ts";
+
+/** A number field that keeps what is typed and passes up only valid numbers. */
+function NumField({ value, onValue, ...rest }: { value: number; onValue: (n: number) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type">) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => { setText((t) => (t.trim() !== "" && Number(t) === value ? t : String(value))); }, [value]);
+  return <input {...rest} type="number" value={text}
+    onChange={(e) => { setText(e.target.value); const n = Number(e.target.value); if (e.target.value.trim() !== "" && Number.isFinite(n)) onValue(n); }}
+    onBlur={() => setText(String(value))} />;
+}
+const ELEMENT_FIELD_LABELS = { left: "Left indent", right: "Right indent", firstIndent: "First-line indent", spaceBefore: "Space before", spacing: "Line spacing" } as const;
+const MARGIN_LABELS = { top: "Top", bottom: "Bottom", header: "Header", footer: "Footer" } as const;
 
 function NewTemplateDialog({ close }: ModalProps) {
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
@@ -106,9 +117,9 @@ function StyleDialog({ close }: ModalProps) {
     {template === "multiCamera" && <label><input type="checkbox" aria-label="Underline entrances and exits" checked={underline} onChange={(e) => setUnderline(e.target.checked)}/>Underline character entrances and exits in action</label>}
     {template === "stage" && <label><input type="checkbox" aria-label="Parenthesize stage directions" checked={parenthesize} onChange={(e) => setParenthesize(e.target.checked)}/>Put action paragraphs in parentheses</label>}
     <p>Existing act breaks and text are not added or removed. Templates are editable starting points, not broadcaster- or theatre-certified delivery specifications.</p>
-    <fieldset><legend>Page margins (inches)</legend><div className="roadmap-grid">{(["top", "bottom", "header", "footer"] as const).map((key) => <label key={key}>{key}<input aria-label={`Page ${key}`} type="number" min={0} max={3} step={0.05} value={style.page[key]} onChange={(e) => setStyle({ ...style, page: { ...style.page, [key]: Number(e.target.value) } })}/></label>)}</div></fieldset>
+    <fieldset><legend>Page margins (inches)</legend><div className="roadmap-grid">{(["top", "bottom", "header", "footer"] as const).map((key) => <label key={key}>{MARGIN_LABELS[key]}<NumField aria-label={`Page ${key}`} min={0} max={3} step={0.05} value={style.page[key]} onValue={(n) => setStyle({ ...style, page: { ...style.page, [key]: n } })}/></label>)}</div></fieldset>
     <label className="field"><span>Element</span><select aria-label="Layout element" value={type} onChange={(e) => setType(e.target.value as ElementType)}>{ELEMENT_TYPES.filter((t) => !["section", "synopsis", "note"].includes(t)).map((t) => <option value={t} key={t}>{FDX_STYLE_NAMES[t]}</option>)}</select></label>
-    <div className="roadmap-grid">{(["left", "right", "firstIndent", "spaceBefore", "spacing"] as const).map((key) => <label key={key}>{key}<input aria-label={`Element ${key}`} type="number" step={0.05} value={current[key] ?? (key === "spacing" ? 1 : 0)} onChange={(e) => update(key, Number(e.target.value))}/></label>)}</div>
+    <div className="roadmap-grid">{(["left", "right", "firstIndent", "spaceBefore", "spacing"] as const).map((key) => <label key={key}>{ELEMENT_FIELD_LABELS[key]}<NumField aria-label={`Element ${key}`} step={0.05} value={current[key] ?? (key === "spacing" ? 1 : 0)} onValue={(n) => update(key, n)}/></label>)}</div>
     <label>Alignment <select aria-label="Element alignment" value={current.align} onChange={(e) => update("align", e.target.value)}>{["left", "center", "right"].map((align) => <option key={align}>{align}</option>)}</select></label>
     <div className="roadmap-grid">{(["caps", "bold", "italic", "underline"] as const).map((key) => <label key={key}><input type="checkbox" checked={!!current[key]} onChange={(e) => update(key, e.target.checked)}/>{key}</label>)}</div>
     <label>After Return <select aria-label="Element return key" value={style.returns[type] ?? ""} onChange={(e) => setStyle({ ...style, returns: { ...style.returns, [type]: e.target.value as ElementType } })}><option value="" disabled>Application default</option>{ELEMENT_TYPES.map((t) => <option key={t} value={t}>{FDX_STYLE_NAMES[t]}</option>)}</select></label>

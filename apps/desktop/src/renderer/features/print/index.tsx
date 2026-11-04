@@ -57,7 +57,8 @@ async function confirmUnprintable(drawings: readonly PageDrawing[]): Promise<boo
   return choice === 0;
 }
 
-async function exportPdf(target: App, revisedOnly = false): Promise<void> {
+/** Resolves true once the file is written; false when the writer cancels a prompt. */
+async function exportPdf(target: App, revisedOnly = false): Promise<boolean> {
   target.flushPending();
   const session = target.session;
   resolveSceneNumbersForDelivery(session);
@@ -72,17 +73,18 @@ async function exportPdf(target: App, revisedOnly = false): Promise<void> {
   const systemPdf = isDesktop && (missingGlyphs.length > 0 || rtlLines);
   if (systemPdf && missingGlyphs.length) {
     const choice = await messageBox({ type: "info", message: "Use system-font PDF rendering for this draft?", detail: `${describeUnprintable(missingGlyphs)} need fallback fonts. The fixed page layout is retained, but review non-Latin shaping and glyph coverage in the exported file.`, buttons: ["Use system fonts", "Cancel"], defaultId: 0, cancelId: 1 });
-    if (choice !== 0) return;
-  } else if (!(await confirmUnprintable(drawings))) return;
+    if (choice !== 0) return false;
+  } else if (!(await confirmUnprintable(drawings))) return false;
   const path = await desktop.invoke<string | null>(CHANNELS.saveDialog, {
     title: "Export PDF", defaultPath: `${session.name}.pdf`, filters: [{ name: "PDF", extensions: ["pdf"] }],
   });
-  if (!path) return;
+  if (!path) return false;
   const bytes = systemPdf
     ? await desktop.invoke<Uint8Array>("print:pdf", { title: info.title, width: page.width, height: page.height, html: printDocument(drawings, page, info.title) })
     : await buildPdf(drawings, page, info);
   await desktop.invoke(CHANNELS.writeFile, path, bytes);
   target.toast(`Exported ${path.split("/").pop()}${revisedOnly ? " (revised pages only)" : ""}`, "success");
+  return true;
 }
 
 async function sendToPrinter(target: App, drawings: readonly PageDrawing[], page: PageLayout, script: Script): Promise<void> {
@@ -144,8 +146,8 @@ function PreviewModal({ close }: ModalProps) {
           <input type="checkbox" checked={revisedOnly} onChange={(event) => setRevisedOnly(event.target.checked)} />
           <span>Revised pages only</span>
         </label>
-        <button className="button" disabled={busy} onClick={() => void run(async () => (close(), await exportPdf(app, revisedOnly)))}>Save PDF…</button>
-        <button className="button primary" disabled={busy} onClick={() => void run(() => sendToPrinter(app, drawings, page, script))}>Print…</button>
+        <button className="button" disabled={busy} onClick={() => void run(async () => { if (await exportPdf(app, revisedOnly)) close(); })}>Save PDF…</button>
+        <button className="button primary" autoFocus disabled={busy} onClick={() => void run(() => sendToPrinter(app, drawings, page, script))}>Print…</button>
       </div>
       <div className="print-pages">
         {drawings.map((drawing) => (

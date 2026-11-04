@@ -30,6 +30,14 @@ function savedSession(path: string, text: string): DocumentSession {
   return session;
 }
 
+async function until(check: () => boolean, ms = 3000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > end) throw new Error("Timed out waiting for folder sync.");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 test("changes typed while folder sync starts still reach the log", async () => {
   const session = savedSession("/scripts/Draft.screenplay", "INT. LAB - NIGHT");
   const app = { session, toast: () => undefined };
@@ -49,10 +57,11 @@ test("changes typed while folder sync starts still reach the log", async () => {
 
   const client = new FolderSyncClient(app, () => undefined);
   client.watch(session);
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  assert.equal(client.state.active, true);
+  // Poll rather than sleep a fixed time: under a loaded test run the start can take longer than a few ticks.
+  await until(() => client.state.active);
+  const before = appended.length;
   session.edit(() => session.doc.insertText(id, 0, "1. "));
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await until(() => appended.length > before);
 
   // Another device rebuilds the script from the log alone.
   const other = new Y.Doc();

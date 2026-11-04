@@ -2,6 +2,7 @@
 // browser (vite dev server, tests) a fallback keeps the app usable: settings in localStorage, files through
 // download and file inputs, and no native services.
 import { CHANNELS, type DesktopBridge, type OpenedFile } from "../../shared/api.ts";
+import { confirmResponse } from "./message-box.ts";
 
 declare global {
   interface Window {
@@ -73,13 +74,15 @@ function browserBridge(): DesktopBridge {
     [CHANNELS.newWindow]: () => void window.open(location.pathname, "_blank"),
     [CHANNELS.newTab]: () => void window.open(location.pathname, "_blank"),
     [CHANNELS.openExternal]: (url: string) => void window.open(url, "_blank"),
-    "shell:message-box": (options: { message: string; detail?: string; buttons?: string[] }) => {
+    "shell:message-box": (options: { message: string; detail?: string; buttons?: string[]; cancelId?: number }) => {
       const buttons = options.buttons ?? ["OK"];
       if (buttons.length <= 1) {
         window.alert([options.message, options.detail].filter(Boolean).join("\n\n"));
         return { response: 0 };
       }
-      return { response: window.confirm([options.message, options.detail].filter(Boolean).join("\n\n")) ? 0 : buttons.length - 1 };
+      const action = buttons[confirmResponse(buttons, options.cancelId, true)];
+      const text = [options.message, options.detail, `OK: ${action}`].filter(Boolean).join("\n\n");
+      return { response: confirmResponse(buttons, options.cancelId, window.confirm(text)) };
     },
   };
   return {

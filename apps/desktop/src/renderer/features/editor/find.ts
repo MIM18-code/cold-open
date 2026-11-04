@@ -5,6 +5,7 @@ import * as Y from "yjs";
 import { scopedMatches, type SearchScope, type SearchContext } from "./search-scope.ts";
 
 import { app } from "../../core/app.ts";
+import { formatAccelerator } from "../../shell/Shell.tsx";
 import { findMatches, typedText, type Match } from "./rules.ts";
 
 const SOURCE = "find";
@@ -200,7 +201,7 @@ class Find {
     });
     session.undo.stopCapturing();
     this.refresh();
-    app.toast(`Replaced ${matches.length} match${matches.length === 1 ? "" : "es"}.`, "success");
+    app.toast(`Replaced ${matches.length} match${matches.length === 1 ? "" : "es"} ${formatAccelerator("CmdOrCtrl+Z")} undoes it.`, "success");
     return matches.length;
   }
 }

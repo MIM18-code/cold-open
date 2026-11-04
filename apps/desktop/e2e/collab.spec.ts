@@ -5,7 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
 
-import { launch, runCommand } from "./helpers.ts";
+import { confirmNextPrompt, launch, runCommand } from "./helpers.ts";
 import type { HostInfo } from "../src/shared/channels/sync.ts";
 
 /** Quit without the "Save changes?" sheet: a native sheet on a hidden window would show the window. */
@@ -134,6 +134,7 @@ test("a clicked relay invite opens a separate preview and joins only after confi
     expect(await second.evaluate(() => (window as any).__app.session.readOnly)).toBe(true);
     expect(await paragraphs(guest.page)).toContain("My unsaved draft.");
     expect(await paragraphs(host.page)).not.toContain("My unsaved draft.");
+    await confirmNextPrompt(host.electronApp);
     await host.page.getByRole("button", { name: "Leave Session" }).click();
     await expect(second.locator(".collab-status-text")).toHaveText("Connected");
   } finally {
@@ -242,6 +243,7 @@ async function fakeEditor(page: Page): Promise<void> {
       getSelection: () => state.selection,
       setRemoteCursors: (cursors: unknown[]) => void (state.cursors = cursors),
       onSelectionChange: (listener: (selection: unknown) => void) => (listeners.add(listener), () => listeners.delete(listener)),
+      onPlainTextPaste: () => noop,
     });
   });
 }

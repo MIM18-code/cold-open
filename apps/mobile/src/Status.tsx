@@ -5,7 +5,7 @@ import type { Pairing } from "./pairing";
 import type { Take } from "./outbox";
 import { pairingEnded } from "./reach";
 import { unsentTakes } from "./takes-file";
-import { Action, c, Caption, Label, NavBar, StatusDot, Symbol, Warning } from "./ui";
+import { Action, c, Caption, errorText, Label, NavBar, StatusDot, Symbol, Warning } from "./ui";
 
 export function Status({ pair, status, takes, back, forget, sendToMac }: {
   pair: Pairing; status: string; takes: Take[]; back(): void; forget(): Promise<void>;
@@ -25,7 +25,7 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
     try {
       const count = await sendToMac();
       if (count) setSendNote(`Sent ${count} ${count === 1 ? "take" : "takes"} by AirDrop.`);
-    } catch (e) { setSendError(String(e)); }
+    } catch (e) { setSendError(errorText(e)); }
     finally { setSending(false); }
   }
   const disconnect = <Action label="Disconnect and pair again" press={() => Alert.alert("Disconnect from this Mac?",
@@ -48,7 +48,7 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
       {pair.remembered && <View style={{ gap: 8 }}>
         <Action label={folderChosen ? "Change iCloud Drive folder" : "Choose iCloud Drive fallback folder"} press={() => {
           void phoneFolder.pick().then(chosen => { if (chosen) { setFolderChosen(true); setFolderError(""); } },
-            e => setFolderError(String(e)));
+            e => setFolderError(errorText(e)));
         }} />
         <Caption>Choose the same folder in the Mac’s Phone panel. When live delivery fails,
           this iPhone saves pending items there. Accepted and Ignored arrive when the live link returns.</Caption>

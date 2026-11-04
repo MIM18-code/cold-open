@@ -74,6 +74,7 @@ async function stubEditor(page: Page): Promise<void> {
       focus: noop, getSelection: () => null, setSelection: noop, currentParagraphId: () => null, currentElementType: () => null,
       setElementType: noop, toggleMark: noop, activeMarks: () => ({}), insertParagraphs: () => [], replaceText: noop, setRemoteCursors: noop, setPageBreaks: noop,
       onSelectionChange: () => noop,
+      onPlainTextPaste: () => noop,
       revealParagraph: (id: string, options: unknown) => calls.push(["reveal", id, options]),
       setDecorations: (source: string, decorations: unknown[]) => calls.push(["decorations", source, decorations]),
     });

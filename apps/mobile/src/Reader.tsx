@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, FlatList, Pressable, ScrollView, TextInput, useColorScheme, View } from "react-native";
-import { ELEMENT_LAYOUT, runRevision } from "@screenplay/engine";
+import { ELEMENT_LAYOUT, FDX_STYLE_NAMES, runRevision } from "@screenplay/engine";
 import { revisionColor, revisionLines, type ReaderLine } from "./reader-revisions";
 import { pairingEnded } from "./reach";
 import { readerAnchor } from "./reader-anchor";
@@ -57,7 +57,7 @@ export function Reader({ rows, people, status, secure, showStatus, compose }: Pr
     const measured = layouts[item.id];
     const marks = revisionLines(item, measured?.text === item.text ? measured.lines : [], people.production);
     return <Pressable accessibilityRole="button"
-      accessibilityLabel={`${heading ? item.scene : item.type}, ${item.text || "Empty paragraph"}${revision ? `, Revised, ${revision.label}` : ""}`}
+      accessibilityLabel={`${heading ? item.scene : FDX_STYLE_NAMES[item.type] ?? item.type}, ${item.text || "Empty paragraph"}${revision ? `, Revised, ${revision.label}` : ""}`}
       accessibilityHint="Tap to select. Long press to write a note."
       accessibilityState={{ selected: item.id === selected }}
       accessibilityActions={ended ? [] : [{ name: "write", label: "Write" }, { name: "note", label: "Add note" }, { name: "dictate", label: "Dictate" }]}

@@ -8,6 +8,7 @@ import { ELEMENT_LABELS } from "../editor/rules.ts";
 import { formatAccelerator } from "../../shell/Shell.tsx";
 import { DraftFormatController } from "./controller.ts";
 import { hasSelection } from "./target.ts";
+import { AUTO_INCOMING, AUTO_INCOMING_DEFAULT, IncomingFormatter } from "./incoming.ts";
 import "./format-draft.css";
 
 const SHORTCUT = "CmdOrCtrl+Shift+Enter";
@@ -20,11 +21,20 @@ export const draftFormatter = new DraftFormatController({
   review: () => app.openModal("format-draft.review"),
   notify: (message, error) => app.toast(message, error ? "error" : "success"),
 });
+export const incomingFormatter = new IncomingFormatter({
+  session: () => app.session, editor: () => app.editor,
+  context: target => buildTakeContext(app.session.script(), target.from.paragraphId, target.from.offset),
+  invoke: (...args) => desktop.invoke(...args),
+  enabled: () => app.setting(AUTO_INCOMING, AUTO_INCOMING_DEFAULT),
+  notify: (message, error) => app.toast(message, error ? "error" : "info"),
+});
 function useDraftFormat() { return useSyncExternalStore(draftFormatter.subscribe, draftFormatter.snapshot); }
 function FormatButton() {
   const state = useDraftFormat();
   const editor = useEditor();
   const { readOnly } = useSessionState();
+  const [automatic, setAutomatic] = useSetting(AUTO_INCOMING, AUTO_INCOMING_DEFAULT);
+  const pending = useSyncExternalStore(incomingFormatter.subscribe, incomingFormatter.snapshot);
   const [scope,setScope] = useState("current paragraph");
   useEffect(() => {
     const update = () => { const s=editor?.getSelection(); setScope(s && (s.anchor.paragraphId!==s.head.paragraphId || s.anchor.offset!==s.head.offset) ? "selected passage" : "current paragraph"); };
@@ -40,6 +50,13 @@ function FormatButton() {
       <kbd>{formatAccelerator(app.commands.find((c)=>c.id==="draftFormat.run")?.accelerator ?? SHORTCUT)}</kbd><small className="draft-target-label">{scope}</small>
     </button>
     {state.phase === "working" ? <button className="icon-button" onClick={() => draftFormatter.cancel()}>Cancel</button> : null}
+    <button className="button" aria-label={`Auto-format ${automatic ? "on" : "off"} incoming text`} aria-pressed={automatic}
+      title="Automatically format new text from Wispr Flow and plain-text paste. Earlier writing stays outside the formatting range."
+      onMouseDown={event => event.preventDefault()} onClick={() => {
+        if (automatic) incomingFormatter.cancel();
+        setAutomatic(!automatic);
+      }}>Auto-format {automatic ? "on" : "off"}</button>
+    {pending ? <span className="incoming-format-status" role="status">Formatting incoming text…</span> : null}
   </div>;
 }
 function Review({ close }: ModalProps) {
@@ -59,9 +76,16 @@ function Review({ close }: ModalProps) {
 }
 function FormatSettings() {
   const [review, setReview] = useSetting("draftFormat.alwaysReview", false);
+  const [automatic, setAutomatic] = useSetting(AUTO_INCOMING, AUTO_INCOMING_DEFAULT);
   return <div><p>Dictate with Wispr Flow, paste a rough passage, or type directly on the page. Select the text and use <strong>Format Draft</strong>.</p>
+    <label className="field"><span><input type="checkbox" checked={automatic} onChange={e => {
+      if (!e.target.checked) incomingFormatter.cancel();
+      setAutomatic(e.target.checked);
+    }} /> Automatically format incoming text from Wispr Flow and plain-text paste</span></label>
+    <p>Incoming text gets its own paragraph and formats while you keep writing on the next line. Only that new passage can change. Uncertain results stay as dictated. Switching this off keeps pending text in the draft.</p>
+    <p>A highlighted selection uses normal paste and manual Format Draft. Text copied within Cold Open keeps its existing screenplay formatting.</p>
     <p>Without a selection, only the current paragraph is formatted. The local model configured under Dictation is used; no microphone is required and there is no cloud fallback.</p>
-    <label className="field"><span><input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} /> Always preview before replacing the draft</span></label>
+    <label className="field"><span><input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} /> Always preview manual Format Draft changes</span></label>
     <p>Uncertain results, wording changes and styled text always require review. Source edits, document switches and cancellation prevent a late result from replacing your work.</p>
     <button className="button" onClick={() => app.openModal("workspace.settings", { section: "dictation" })}>Configure local formatter…</button>
   </div>;
@@ -75,11 +99,21 @@ const feature: Feature = {
   modals: [{ id: "format-draft.review", title: "Review draft formatting", width: 920, component: Review }],
   settings: [{ id: "format-draft", title: "Draft formatting", order: 35, component: FormatSettings }],
   activate(a) {
-    const off = a.onSession(() => draftFormatter.cancel());
+    const off = a.onSession(() => { draftFormatter.cancel(); incomingFormatter.cancel(); });
+    let editor = a.editor;
+    let offPaste = editor?.onPlainTextPaste(incomingFormatter.accept);
+    const appState = a.subscribe(() => {
+      if (!a.setting(AUTO_INCOMING, AUTO_INCOMING_DEFAULT) && incomingFormatter.snapshot()) incomingFormatter.cancel();
+      if (a.editor === editor) return;
+      offPaste?.();
+      incomingFormatter.cancel();
+      editor = a.editor;
+      offPaste = editor?.onPlainTextPaste(incomingFormatter.accept);
+    });
     const state = draftFormatter.subscribe(() => a.refreshMenu());
     // UI testing uses the same controller; this does not expose any credentials or file access.
     (window as unknown as { __draftFormatter: unknown }).__draftFormatter = draftFormatter;
-    return () => { off(); state(); draftFormatter.cancel(); };
+    return () => { off(); state(); appState(); offPaste?.(); draftFormatter.cancel(); incomingFormatter.cancel(); };
   },
 };
 export { hasSelection };

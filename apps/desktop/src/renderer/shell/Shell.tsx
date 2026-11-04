@@ -1,5 +1,5 @@
 // The document chrome stays separate from the writing tools, so a visual redesign can reuse either.
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject } from "react";
 import { app, type Command } from "../core/app.ts";
 import { useApp, useSessionState, useSetting } from "../core/hooks.ts";
 import { desktop } from "../core/platform.ts";
@@ -78,11 +78,11 @@ function TitleBar({ leftVisible, toggleScenes }: { leftVisible: boolean; toggleS
     <header className="titlebar">
       <div className="titlebar-left">
         <button className={`icon-button ${leftVisible ? "on" : ""}`} aria-label="Toggle left sidebar"
-          aria-pressed={leftVisible} title="Scenes and navigation" onClick={toggleScenes}>
+          aria-pressed={leftVisible} title={withShortcut("Scenes and navigation", "workspace.leftSidebar")} onClick={toggleScenes}>
           <SidebarIcon side="left" />
         </button>
         <span className="titlebar-name" title={name}>{name}{dirty ? <span className="titlebar-dot" title="Unsaved changes">•</span> : null}</span>
-        {readOnly ? <span className="titlebar-state">Read-only</span> : <button className="save-state" title={dirty || !path ? "Save the current draft (⌘S). Recovery backups are separate from saving." : "Saved to disk"} onClick={() => void app.runCommand("file.save")}>{dirty ? "Unsaved" : path ? "Saved" : "Not saved"}</button>}
+        {readOnly ? <span className="titlebar-state">Read-only</span> : <button className="save-state" title={dirty || !path ? `${withShortcut("Save the current draft", "file.save")}. Recovery backups are separate from saving.` : "Saved to disk"} onClick={() => void app.runCommand("file.save")}>{dirty ? "Unsaved" : path ? "Saved" : "Not saved"}</button>}
       </div>
       <WritingNavigation />
       <div className="titlebar-right">
@@ -90,15 +90,15 @@ function TitleBar({ leftVisible, toggleScenes }: { leftVisible: boolean; toggleS
           aria-pressed={right === "tableRead" && !focus}
           className={`icon-button header-tool ${right === "tableRead" && !focus ? "on" : ""}`}
           onClick={() => void app.runCommand("tableRead.open")}
-          title="Table Read (⌘⇧L)"
+          title={withShortcut("Table Read", "tableRead.open")}
         >Listen</button>
         <button className="icon-button header-tool" onClick={() => void app.runCommand("reports.open")} title="Script reports and exports">Reports</button>
         <button className="command-trigger" title={`Find a command (${formatAccelerator("CmdOrCtrl+K")})`} aria-label={`Commands ${formatAccelerator("CmdOrCtrl+K")}`} onClick={() => app.setPalette(true)}>
           <span>Commands</span><kbd>{formatAccelerator("CmdOrCtrl+K")}</kbd>
         </button>
-        <button className="icon-button" aria-label="Settings" title="Settings" onClick={() => app.openModal("workspace.settings")}><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12M5 2v4M11 6v4M6 10v4" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg></button>
+        <button className="icon-button" aria-label="Settings" title={withShortcut("Settings", "workspace.settings")} onClick={() => app.openModal("workspace.settings")}><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12M5 2v4M11 6v4M6 10v4" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg></button>
         <span className="titlebar-sep" aria-hidden="true" />
-        <button className={`icon-button ${right && !focus ? "on" : ""}`} aria-label="Toggle right sidebar" aria-pressed={!!right && !focus} title="Writing assistants"
+        <button className={`icon-button ${right && !focus ? "on" : ""}`} aria-label="Toggle right sidebar" aria-pressed={!!right && !focus} title={withShortcut("Writing assistants", "workspace.rightSidebar")}
           onClick={() => { app.setFocusMode(false); app.togglePanel(right ?? panels.find((p) => p.side === "right")?.id ?? ""); }}>
           <SidebarIcon side="right" />
         </button>
@@ -113,15 +113,19 @@ function WritingNavigation() {
   const ref = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
+    const frame = requestAnimationFrame(() => (ref.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"][aria-checked="true"]')
+      ?? ref.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"]'))?.focus());
     const outside = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
     document.addEventListener("pointerdown", outside);
-    return () => document.removeEventListener("pointerdown", outside);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("pointerdown", outside); };
   }, [open]);
   const plan = views.filter((v) => v.id !== "script");
   return <nav className="writing-navigation" aria-label="Writing workspace">
     <button className={`write-primary ${current === "script" ? "on" : ""}`} aria-current={current === "script" ? "page" : undefined} onClick={() => { setOpen(false); app.setView("script"); }}>Write</button>
-    <div className="planning-nav" ref={ref} onKeyDown={(e) => {
+    <div className="planning-nav" ref={ref} onBlur={(e) => { if (open && !ref.current?.contains(e.relatedTarget as Node | null)) setOpen(false); }} onKeyDown={(e) => {
       if (e.key === "Escape" && open) { e.preventDefault(); e.stopPropagation(); setOpen(false); trigger.current?.focus(); }
+      // Tab leaves a menu: close it and let the key continue from the trigger to the next control.
+      if (e.key === "Tab" && open && !e.shiftKey) { setOpen(false); trigger.current?.focus(); }
       if (open && ["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
         e.preventDefault(); const buttons = Array.from(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []);
         if (!buttons.length) return;
@@ -197,7 +201,10 @@ function useDialogFocus(ref: RefObject<HTMLDivElement | null>, open: boolean, cl
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
     const frame = requestAnimationFrame(() => {
-      if (!ref.current?.contains(document.activeElement)) ref.current?.querySelector<HTMLElement>('input:not([disabled]),textarea:not([disabled]),button:not([disabled])')?.focus();
+      if (ref.current?.contains(document.activeElement)) return;
+      const focusable = ':is(input,textarea,select,button):not([disabled]):not([type="hidden"])';
+      // The header's Close button comes first in the DOM; landing there means Return or Space dismisses the dialog.
+      (ref.current?.querySelector<HTMLElement>(`.modal-body ${focusable}`) ?? ref.current?.querySelector<HTMLElement>(focusable))?.focus();
     });
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose.current(); return; }
@@ -213,16 +220,26 @@ function useDialogFocus(ref: RefObject<HTMLDivElement | null>, open: boolean, cl
   }, [open, ref]);
 }
 
+/** Close on a click that both starts and ends on the backdrop, so dragging a text selection out of a field keeps the dialog. */
+function useBackdropDismiss(close: () => void) {
+  const pressed = useRef(false);
+  return {
+    onMouseDown: (event: ReactMouseEvent) => { pressed.current = event.target === event.currentTarget; },
+    onClick: (event: ReactMouseEvent) => { if (pressed.current && event.target === event.currentTarget) close(); pressed.current = false; },
+  };
+}
+
 function ModalHost() {
   const modal = useApp((a) => a.ui.modal);
   const defs = useApp((a) => a.modals);
   const def = modal && defs.find((m) => m.id === modal.id);
   const ref = useRef<HTMLDivElement>(null);
   useDialogFocus(ref, !!def, () => app.closeModal());
+  const dismiss = useBackdropDismiss(() => app.closeModal());
   if (!modal || !def) return null;
   const Body = def.component;
   const style = def.width === "wide" ? { width: "min(1200px, calc(100vw - 48px))" } : { width: `min(${def.width ?? 560}px, calc(100vw - 48px))` };
-  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && app.closeModal()}>
+  return <div className="modal-backdrop" {...dismiss}>
     <div ref={ref} className="modal" role="dialog" aria-modal="true" aria-label={def.title} tabIndex={-1} style={style}>
       <div className="modal-header"><h2>{def.title}</h2><button className="icon-button" aria-label="Close" onClick={() => app.closeModal()}>×</button></div>
       <div className="modal-body"><ErrorBoundary key={modal.id} name={def.title}><Body key={modal.id + JSON.stringify(modal.props ?? null)} close={() => app.closeModal()} props={modal.props} /></ErrorBoundary></div>
@@ -251,6 +268,7 @@ function CommandPalette() {
   const matches = useMemo(() => commands.filter(({ command }) => `${command.menu ?? ""} ${command.label}`.toLowerCase().includes(query.trim().toLowerCase())), [commands, query]);
   const selected = Math.min(index, Math.max(0, matches.length - 1));
   useDialogFocus(ref, open, () => app.setPalette(false));
+  const dismiss = useBackdropDismiss(() => app.setPalette(false));
   useEffect(() => { if (open) { setQuery(""); setIndex(0); setHint(""); input.current?.focus(); } }, [open]);
   useEffect(() => { list.current?.children[selected]?.scrollIntoView({ block: "nearest" }); }, [selected]);
   if (!open) return null;
@@ -260,7 +278,7 @@ function CommandPalette() {
     app.setPalette(false);
     requestAnimationFrame(() => { app.editor?.focus(); void app.runCommand(item.command.id); });
   };
-  return <div className="modal-backdrop palette-backdrop" onMouseDown={(event) => event.target === event.currentTarget && app.setPalette(false)}>
+  return <div className="modal-backdrop palette-backdrop" {...dismiss}>
     <div ref={ref} className="palette" role="dialog" aria-modal="true" aria-label="Command palette">
       <input ref={input} value={query} placeholder="Type a command" aria-label="Command" role="combobox" aria-expanded="true" aria-controls="command-options" aria-activedescendant={matches.length ? `command-${selected}` : undefined} autoComplete="off"
         onChange={(event) => { setQuery(event.target.value); setIndex(0); setHint(""); }} onKeyDown={(event) => {
@@ -290,5 +308,22 @@ export function formatAccelerator(accelerator: string): string {
 }
 function Toasts() {
   const toasts = useApp((a) => a.ui.toasts);
-  return <div className="toasts" aria-live="polite">{toasts.map((toast) => <div key={toast.id} className={`toast toast-${toast.kind}`}>{toast.message}</div>)}</div>;
+  const notices = toasts.filter((toast) => toast.kind !== "error"), errors = toasts.filter((toast) => toast.kind === "error");
+  const item = (toast: (typeof toasts)[number]) => <div key={toast.id} className={`toast toast-${toast.kind}`}
+    onMouseEnter={() => app.holdToast(toast.id, true)} onMouseLeave={() => app.holdToast(toast.id, false)}>
+    <span className="toast-message">{toast.message}</span>
+    <button className="toast-close" aria-label="Dismiss message" title="Dismiss" onClick={() => app.dismissToast(toast.id)}>
+      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+    </button>
+  </div>;
+  // Errors interrupt the screen reader; other messages wait for a pause. Both stacks share the same spot on screen.
+  return <div className="toasts">
+    <div className="toast-stack" aria-live="assertive">{errors.map(item)}</div>
+    <div className="toast-stack" aria-live="polite">{notices.map(item)}</div>
+  </div>;
+}
+
+function withShortcut(label: string, commandId: string): string {
+  const accelerator = app.commands.find((command) => command.id === commandId)?.accelerator;
+  return accelerator ? `${label} (${formatAccelerator(accelerator)})` : label;
 }

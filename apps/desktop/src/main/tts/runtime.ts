@@ -204,6 +204,8 @@ export class ReaderRuntime {
     for (const name of await readdir(this.root)) if (/^[a-f0-9]{64}\.wav$/.test(name)) await rm(join(this.root, name), { force: true });
   }
   async status(): Promise<ReaderStatus> {
+    // Read the writer-activity pause before the slower checks below, so the answer describes the moment of asking.
+    const prefetchPaused = this.prefetchPaused;
     if (this.activeEngine && !this.worker?.isRunning()) this.activeEngine = null;
     const modelAvailable = this.platform === "darwin" && process.arch === "arm64" && Number(release().split(".")[0]) >= 24 && !!this.worker;
     const models = await this.models.states();
@@ -222,7 +224,7 @@ export class ReaderRuntime {
           : pack?.unresolved ?? `${Math.round((pack?.sizeBytes ?? 0) / 1e6)} MB download · needs ${pack?.memoryGB ?? 0} GB memory and macOS ${pack?.minimumMacOS ?? 15}+ · ${pack?.license ?? ""} license`,
         voices: voiceCatalogue({ [id]: this.voices[id] ?? [] }) };
     });
-    return { cacheBytes: await this.cacheInfo(), memoryGB: this.memoryBytes / 1024 ** 3, engines, models, activeEngine: this.activeEngine, prefetchPaused: this.prefetchPaused };
+    return { cacheBytes: await this.cacheInfo(), memoryGB: this.memoryBytes / 1024 ** 3, engines, models, activeEngine: this.activeEngine, prefetchPaused };
   }
   checkRequirements(id: string, allowLowMemory = false): void {
     const pack = this.models.pack(id);

@@ -3,7 +3,7 @@ import { Alert, AccessibilityInfo, AppState, KeyboardAvoidingView, Pressable, Sc
 import { NativeModule, requireNativeModule } from "expo";
 import { insertCue, replaceSelection, type Cue, type Selection } from "./writing";
 import type { Composition } from "./store";
-import { Action, c, Caption, Label, NavBar, Symbol } from "./ui";
+import { Action, c, Caption, errorText, Label, NavBar, Symbol } from "./ui";
 
 declare class Speech extends NativeModule<{
   result: (e: { text: string }) => void; ended: (e: { error?: string }) => void;
@@ -73,7 +73,7 @@ export function Compose({ row, kind, text: initialText, keep, ended, close, send
       await speech.start();
       if (!mounted.current || !held.current) { speech.finish(); return; }
       setPhase("listening");
-    } catch (e) { if (mounted.current) setError(String(e)); active.current = false; held.current = false; }
+    } catch (e) { if (mounted.current) setError(errorText(e)); active.current = false; held.current = false; }
     finally { if (mounted.current && !active.current) setPhase("idle"); }
   }
   useEffect(() => {
@@ -83,7 +83,7 @@ export function Compose({ row, kind, text: initialText, keep, ended, close, send
   return <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
     <NavBar title={draft ? "Write" : note ? "Note" : "Dictate"} leading={<Action label="Cancel" press={cancel} />}
       trailing={<Action label={note ? "Send" : "Save as take"} disabled={ended || !text.trim() || phase !== "idle"} press={() => {
-        try { send(text); } catch (e) { setError(String(e)); }
+        try { send(text); } catch (e) { setError(errorText(e)); }
       }} />} />
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 24, gap: 18, flexGrow: 1 }}>
       {ended && <Label accessibilityRole="alert">This pairing ended. Copy your text, then cancel and pair with the Mac again.</Label>}
@@ -104,8 +104,8 @@ export function Compose({ row, kind, text: initialText, keep, ended, close, send
       </View>
       {!note && <Action label="Send to script" disabled={ended || !text.trim() || phase !== "idle"} press={() => {
         Alert.alert("Send to script", "It arrives on your Mac for you to accept.", [
-          { text: "After the Mac’s current scene", onPress: () => { try { send(text, "after"); } catch (e) { setError(String(e)); } } },
-          { text: "At the end", onPress: () => { try { send(text, "end"); } catch (e) { setError(String(e)); } } },
+          { text: "After the Mac’s current scene", onPress: () => { try { send(text, "after"); } catch (e) { setError(errorText(e)); } } },
+          { text: "At the end", onPress: () => { try { send(text, "end"); } catch (e) { setError(errorText(e)); } } },
           { text: "Cancel", style: "cancel" },
         ]);
       }} />}

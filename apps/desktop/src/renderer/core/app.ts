@@ -117,6 +117,7 @@ export class App {
   private readonly sessionListeners = new Set<(session: DocumentSession, previous: DocumentSession) => void>();
   private readonly flushers = new Set<() => void>();
   private toastId = 0;
+  private toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
   activity: ActivityEntry[] = [];
   clearActivity(): void { this.activity = []; this.emit(); }
   private releaseNavigation: (() => void) | undefined;
@@ -256,10 +257,27 @@ export class App {
     }
     this.ui = { ...this.ui, toasts: [...this.ui.toasts, toast] };
     this.emit();
-    setTimeout(() => {
-      this.ui = { ...this.ui, toasts: this.ui.toasts.filter((t) => t.id !== toast.id) };
-      this.emit();
-    }, kind === "error" ? 8000 : 4000);
+    // Long messages stay up longer: roughly reading speed on top of the base time.
+    this.scheduleToast(toast.id, (kind === "error" ? 8000 : 4000) + Math.min(12_000, message.length * 50));
+  }
+
+  /** Keep a message up while the pointer rests on it; let it go a few seconds after the pointer leaves. */
+  holdToast(id: number, held: boolean): void {
+    clearTimeout(this.toastTimers.get(id));
+    if (held) this.toastTimers.delete(id);
+    else if (this.ui.toasts.some((t) => t.id === id)) this.scheduleToast(id, 3000);
+  }
+
+  dismissToast(id: number): void {
+    clearTimeout(this.toastTimers.get(id));
+    this.toastTimers.delete(id);
+    this.ui = { ...this.ui, toasts: this.ui.toasts.filter((t) => t.id !== id) };
+    this.emit();
+  }
+
+  private scheduleToast(id: number, ms: number): void {
+    clearTimeout(this.toastTimers.get(id));
+    this.toastTimers.set(id, setTimeout(() => this.dismissToast(id), ms));
   }
 
   setting<T>(key: string, fallback: T): T {

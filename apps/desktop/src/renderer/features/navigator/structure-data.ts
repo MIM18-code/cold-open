@@ -1,7 +1,7 @@
 // What the navigator, index cards and outline share beyond the pure model: React hooks over the open script,
 // revealing a scene in the editor, and the edits the three views make (moving, synopsis, color, section titles).
-import { moveScenes, moveSection, setSceneColor, setSceneSynopsis, setSectionSynopsis, setSectionTitle, type ScreenplayDoc } from "@screenplay/engine";
-import { useEffect, useMemo, useState } from "react";
+import { moveScenes, moveSection, scenesOf, setSceneColor, setSceneSynopsis, setSectionSynopsis, setSectionTitle, type ScreenplayDoc } from "@screenplay/engine";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 
 import { app } from "../../core/app.ts";
 import { useEditor, useScript } from "../../core/hooks.ts";
@@ -79,6 +79,34 @@ export function moveByDrop(source: ItemRef, target: ItemRef, edge: Edge): void {
     if (source.kind === "scene") moveScenes(doc, [source.id], before);
     else moveSection(doc, source.id, before);
   });
+}
+
+/**
+ * Option+arrow on a focused card or outline row moves that scene one place: the keyboard twin of dragging it.
+ * Typing fields keep Option+arrow for moving by word.
+ */
+export function moveSceneByKey(event: KeyboardEvent<HTMLElement>, locked: boolean): void {
+  if (locked || !event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
+  const direction = event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : 0;
+  const target = event.target as HTMLElement;
+  if (!direction || target.closest("textarea, input, select, [contenteditable='true']")) return;
+  const id = target.closest<HTMLElement>("[data-scene-id]")?.dataset.sceneId;
+  if (!id) return;
+  event.preventDefault();
+  moveSceneBy(id, direction);
+}
+
+/**
+ * Move a scene one place earlier or later. The order comes from the live script, not the debounced structure,
+ * so pressing the key twice in quick succession moves the scene two places.
+ */
+export function moveSceneBy(sceneId: string, direction: -1 | 1): boolean {
+  const scenes = scenesOf(app.session.script().paragraphs);
+  const at = scenes.findIndex((scene) => scene.sceneId === sceneId);
+  const neighbor = at < 0 ? undefined : scenes[at + direction];
+  if (!neighbor) return false;
+  moveByDrop({ kind: "scene", id: sceneId }, { kind: "scene", id: neighbor.sceneId }, direction < 0 ? "before" : "after");
+  return true;
 }
 
 export function editSynopsis(item: ItemRef, text: string): void {

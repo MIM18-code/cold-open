@@ -25,3 +25,12 @@ export async function close(electronApp: ElectronApplication, page?: Page): Prom
   if (page && !page.isClosed()) await page.evaluate(() => ((window as any).__app.session.dirty = false)).catch(() => undefined);
   await electronApp.close();
 }
+
+/** Answer the next in-app confirmation (a renderer messageBox) with its second button, then go back to cancelling. */
+export async function confirmNextPrompt(electronApp: ElectronApplication): Promise<void> {
+  await electronApp.evaluate(() => {
+    const g = globalThis as { e2eMessageBox?: () => number };
+    const previous = g.e2eMessageBox;
+    g.e2eMessageBox = () => { g.e2eMessageBox = previous; return 1; };
+  });
+}

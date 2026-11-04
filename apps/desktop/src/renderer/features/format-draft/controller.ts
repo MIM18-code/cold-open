@@ -21,6 +21,7 @@ export interface DraftFormatDeps {
   notify(message: string, error?: boolean): void;
 }
 let requestId = Date.now();
+export const nextFormatRequestId = (): number => ++requestId;
 export class DraftFormatController {
   private state: DraftFormatState = { phase: "idle" };
   private generation = 0;
@@ -44,7 +45,7 @@ export class DraftFormatController {
     const editor = this.deps.editor();
     try {
       const target = captureDraftTarget(session, editor?.getSelection() ?? null, editor?.currentParagraphId() ?? null);
-      const takeId = ++requestId;
+      const takeId = nextFormatRequestId();
       this.activeId = takeId;
       this.set({ phase: "working", target });
       const request: FormatTextRequest = { takeId, text: target.text, context: this.deps.context(target), extractCommands: false };

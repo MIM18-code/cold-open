@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeFdx } from "@screenplay/engine";
 import { test, expect } from "@playwright/test";
-import { close, launch, runCommand } from "./helpers.ts";
+import { close, confirmNextPrompt, launch, runCommand } from "./helpers.ts";
 
 test("production panel navigates scenes and advances only the successfully captured handoff", async () => {
   const { electronApp, page } = await launch();
@@ -44,15 +44,18 @@ test("production panel navigates scenes and advances only the successfully captu
     await runCommand(page, "backlot.handoff");
     await page.getByRole("button", { name: "Choose open Backlot project…" }).click();
     await page.getByRole("button", { name: "Preview captured draft" }).click();
+    await confirmNextPrompt(electronApp);
     await page.getByRole("button", { name: "Apply reviewed import…" }).click();
     expect(await page.evaluate(() => [...(window as any).__app.session.doc.meta.keys()].some(key => key.startsWith("backlot.handoffBaseline")))).toBe(false);
     await electronApp.evaluate(() => { (globalThis as any).handoffOutcome = "fail"; });
+    await confirmNextPrompt(electronApp);
     await page.getByRole("button", { name: "Apply reviewed import…" }).click();
     await expect(page.getByRole("alert")).toContainText("Backlot changed since preview");
     expect(await page.evaluate(() => [...(window as any).__app.session.doc.meta.keys()].some(key => key.startsWith("backlot.handoffBaseline")))).toBe(false);
     // Continue writing after capture. Success must retain these later changes in the panel.
     await page.evaluate(() => { const s = (window as any).__app.session; s.edit(() => s.doc.replaceText("h1", 0, 15, "INT. KITCHEN - NIGHT")); });
     await electronApp.evaluate(() => { (globalThis as any).handoffOutcome = "success"; });
+    await confirmNextPrompt(electronApp);
     await page.getByRole("button", { name: "Apply reviewed import…" }).click();
     await expect(page.getByRole("status").filter({ hasText: "Applied to Film" })).toBeVisible();
     await page.locator(".modal-actions").getByRole("button", { name: "Close", exact: true }).click();
@@ -91,6 +94,7 @@ test("a Finder-renamed FDX starts fresh in the production panel", async () => {
     await runCommand(instance.page, "backlot.handoff");
     await instance.page.getByRole("button", { name: "Choose open Backlot project…" }).click();
     await instance.page.getByRole("button", { name: "Preview captured draft" }).click();
+    await confirmNextPrompt(instance.electronApp);
     await instance.page.getByRole("button", { name: "Apply reviewed import…" }).click();
     await expect(instance.page.getByRole("status").filter({ hasText: "Applied to Film" })).toBeVisible();
     await close(instance.electronApp, instance.page);
@@ -136,6 +140,7 @@ for (const format of ["fdx", "fountain"] as const) test(`${format} handoff basel
     await runCommand(instance.page, "backlot.handoff");
     await instance.page.getByRole("button", { name: "Choose open Backlot project…" }).click();
     await instance.page.getByRole("button", { name: "Preview captured draft" }).click();
+    await confirmNextPrompt(instance.electronApp);
     await instance.page.getByRole("button", { name: "Apply reviewed import…" }).click();
     await expect(instance.page.getByRole("status").filter({ hasText: "Applied to Film" })).toBeVisible();
     await instance.page.locator(".modal-actions").getByRole("button", { name: "Close", exact: true }).click();

@@ -68,3 +68,4 @@
 .cards-divider-3 .cards-divider-title { font-size: var(--text-m); color: var(--ink-2); font-weight: 600; }
 .cards-divider-2::after, .cards-divider-3::after { background: var(--line); }
 .cards-grid > .cards-divider:first-child { padding-top: 8px; }
+.cards-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

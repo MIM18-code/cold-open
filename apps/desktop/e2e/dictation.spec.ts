@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { encodeWav } from "../src/renderer/features/dictation/wav.ts";
-import { launch } from "./helpers.ts";
+import { confirmNextPrompt, launch } from "./helpers.ts";
 
 type Launched = Awaited<ReturnType<typeof launch>>;
 
@@ -161,6 +161,7 @@ test("a typed transcript is formatted, and Discard drops it without touching the
   await page.getByLabel("Transcript to format").fill(SPOKEN);
   await page.getByRole("button", { name: "Format", exact: true }).click();
   await expect(page.locator(".dictation-el")).toHaveCount(4);
+  await confirmNextPrompt(electronApp);
   await page.getByRole("button", { name: "Discard" }).click();
   await expect(page.locator(".dictation-el")).toHaveCount(0);
   expect(await paragraphs(page)).toEqual([{ type: "sceneHeading", text: "" }]);
@@ -263,6 +264,8 @@ test("a missing helper and a missing model server are explained", async () => {
   await expect(page.locator(".dictation-error")).toContainText("swift build -c release");
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
 
+  await confirmNextPrompt(electronApp);
+  await page.getByRole("button", { name: "Discard recording", exact: true }).click();
   await page.evaluate((text) => (window as any).__dictation.formatText(text), SPOKEN);
   await expect(page.locator(".dictation-error")).toContainText("Start Ollama");
   await expect(page.locator(".dictation-transcript")).toHaveText(SPOKEN);
@@ -310,7 +313,8 @@ test("the microphone records, meters and sends a 16 kHz mono WAV (fake device)",
   expect(seconds).toBeGreaterThan(1.5);
   expect(await page.evaluate(() => (window as any).__maxLevel)).toBeGreaterThan(0.2);
   await mic.click();
-  await expect(page.locator(".dictation-el")).toHaveCount(4, { timeout: 20_000 });
+  await expect.poll(() => paragraphs(page), { timeout: 20_000 }).toHaveLength(5);
+  await expect(page.locator(".editor-pm")).toBeFocused();
   const heard = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line)).at(-1);
   expect(heard).toMatchObject({ riff: "RIFF", wave: "WAVE", channels: 1, rate: 16000, bits: 16 });
   const audioSeconds = (heard.bytes - 44) / 32000;
@@ -326,7 +330,8 @@ test("the toggle command starts and stops recording", async () => {
   await expect.poll(() => page.evaluate(() => (window as any).__dictation.store.state.phase)).toBe("recording");
   await page.waitForTimeout(1200);
   await page.evaluate(() => (window as any).__app.runCommand("dictation.toggle"));
-  await expect.poll(() => page.evaluate(() => (window as any).__dictation.store.state.phase), { timeout: 20_000 }).toBe("review");
+  await expect.poll(() => page.evaluate(() => (window as any).__dictation.store.state.phase), { timeout: 20_000 }).toBe("idle");
+  expect((await paragraphs(page)).map((p: any) => p.type)).toEqual(["sceneHeading", "action", "character", "dialogue"]);
   await finish(electronApp, page);
 });
 

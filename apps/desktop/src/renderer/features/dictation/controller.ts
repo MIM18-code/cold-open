@@ -1,5 +1,4 @@
-// The dictation workflow: record, send the take to the main process, show the proposal, and apply what the
-// writer accepts. Nothing reaches the script until the writer presses Insert or Accept.
+// Record into the main script. Selections, uncertain formatting and edit commands need review.
 import {
   DICTATION, type FormatTextRequest, type MicStatus, type PrepareResult, type ProcessAudioRequest, type TakeContext, type TakeProgress,
   type TakeResult,
@@ -9,7 +8,7 @@ import { desktop } from "../../core/platform.ts";
 import { MAX_SECONDS, Recorder } from "./capture.ts";
 import { buildTakeContext } from "./context.ts";
 import { applyMatches, findMatches } from "./edits.ts";
-import { insertElements } from "./insert.ts";
+import { captureDelivery, deliverElements, scriptEnd, type DeliveryTarget } from "./delivery.ts";
 import { INITIAL_STATE, prepareMessage, store } from "./store.ts";
 
 const STAGES: Record<TakeProgress["stage"], string> = {
@@ -35,6 +34,14 @@ let lastTapKind = "";
 /** The microphone is opening. A second press during that moment means "stop", so it is remembered, not started again. */
 let starting = false;
 let stopWhenReady = false;
+let delivery: DeliveryTarget | null = null;
+let directDelivery = false;
+
+export function continueAtEnd(): void {
+  const end = scriptEnd(app.session);
+  if (end) app.editor?.setSelection(end);
+  app.editor?.focus();
+}
 
 export function tapKind(): string {
   return lastTapKind;
@@ -66,9 +73,9 @@ function microphoneError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function unresolved(): boolean {
+export function unresolved(): boolean {
   const { take, inserted, suggestions } = store.state;
-  return !!take && ((!!take.elements.length && !inserted) || suggestions.some((s) => s.status === "pending") || !!take.error);
+  return store.state.retryable || (!!take && ((!!take.elements.length && !inserted) || suggestions.some((s) => s.status === "pending") || !!take.error));
 }
 
 export async function startRecording(): Promise<void> {
@@ -76,17 +83,24 @@ export async function startRecording(): Promise<void> {
   if (phase === "recording" || starting) return;
   if (phase === "working") return app.toast("Still working on the last take.");
   if (unresolved()) return app.toast("Insert or discard the take in the Dictate panel first.");
+  try {
+    delivery = captureDelivery(app.session, app.editor);
+  } catch (error) {
+    return app.toast(error instanceof Error ? error.message : String(error), "error");
+  }
+  const session = app.session;
   starting = true;
   stopWhenReady = false;
   try {
-    await openMicrophone();
+    await openMicrophone(session.id);
   } finally {
     starting = false;
   }
 }
 
-async function openMicrophone(): Promise<void> {
+async function openMicrophone(sessionId: string): Promise<void> {
   const access = await desktop.invoke<MicStatus>(DICTATION.micAccess).catch((): MicStatus => "unknown");
+  if (stopWhenReady || app.session.id !== sessionId) return;
   if (access === "denied" || access === "restricted") {
     app.togglePanel(PANEL, true);
     return store.set({ error: microphoneError({ name: "NotAllowedError" }), phase: "idle" });
@@ -98,11 +112,15 @@ async function openMicrophone(): Promise<void> {
     app.togglePanel(PANEL, true);
     return store.set({ error: microphoneError(error), phase: "idle" });
   }
-  if (stopWhenReady) return next.cancel();
+  if (stopWhenReady || app.session.id !== sessionId) return next.cancel();
   recorder = next;
   lastTapKind = next.kind + (next.workletError ? ` (worklet failed: ${next.workletError})` : "");
-  app.togglePanel(PANEL, true);
-  store.set({ ...INITIAL_STATE, prepare: store.state.prepare, draft: store.state.draft, phase: "recording" });
+  // A held microphone button must keep focus so Space release reaches pushStop.
+  if (!holding) {
+    if (!delivery?.replacement) continueAtEnd();
+    else app.editor?.focus();
+  }
+  store.set({ ...INITIAL_STATE, prepare: store.state.prepare, draft: store.state.draft, phase: "recording", replacing: !!delivery?.replacement });
   ticker = setInterval(tick, 50);
   void warmUp();
 }
@@ -124,12 +142,13 @@ export async function stopRecording(): Promise<void> {
     return store.set({ phase: "idle", level: 0, seconds: 0 });
   }
   if (peak < SILENT) {
+    app.togglePanel(PANEL, true);
     return store.set({
       phase: "idle", level: 0, seconds: 0,
       error: "The recording is silent. Check that the right microphone is selected in System Settings > Sound > Input.",
     });
   }
-  await processAudio(wav);
+  await processAudio(wav, true, true);
 }
 
 export async function toggleRecording(): Promise<void> {
@@ -150,52 +169,85 @@ export async function pushStop(): Promise<void> {
 }
 
 /** Send a recording through the speech helper and the formatter. */
-export async function processAudio(wav: Uint8Array, extractCommands = true): Promise<void> {
+export async function processAudio(wav: Uint8Array, extractCommands = true, direct = false, retry = false): Promise<void> {
+  if (store.state.phase === "working" || (unresolved() && !retry)) return app.toast("Insert or discard the current take first.");
+  try {
+    if ((!direct && !retry) || !delivery) delivery = captureDelivery(app.session, app.editor);
+  } catch (error) {
+    return app.toast(error instanceof Error ? error.message : String(error), "error");
+  }
+  directDelivery = direct;
   const takeId = ++takeCounter;
   currentTake = takeId;
   lastAudio = wav;
-  app.togglePanel(PANEL, true);
+  if (!direct) app.togglePanel(PANEL, true);
   store.set({ ...INITIAL_STATE, prepare: store.state.prepare, draft: store.state.draft, phase: "working", stage: "Saving the recording" });
   try {
-    const request: ProcessAudioRequest = { takeId, audio: wav, context: currentContext(), extractCommands };
+    const request: ProcessAudioRequest = { takeId, audio: wav, context: deliveryContext(), extractCommands };
     const take = await desktop.invoke<TakeResult>(DICTATION.process, request);
     if (takeId !== currentTake) return;
     lastAudio = null;
     show(take);
   } catch (error) {
     if (takeId !== currentTake) return;
+    app.togglePanel(PANEL, true);
     store.set({ phase: "idle", stage: "", error: error instanceof Error ? error.message : String(error), retryable: true });
   }
 }
 
 export async function retryAudio(): Promise<void> {
-  if (lastAudio) await processAudio(lastAudio);
+  if (lastAudio) await processAudio(lastAudio, true, directDelivery, true);
 }
 
 /** Format typed or pasted text, or a transcript the writer corrected. */
 export async function formatText(text: string, extractCommands = true): Promise<void> {
   if (!text.trim()) return;
+  const reformat = store.state.editing || text === store.state.take?.transcript || !extractCommands;
+  if (store.state.phase === "working" || store.state.phase === "recording" || (unresolved() && !reformat)) {
+    return app.toast("Insert or discard the current take first.");
+  }
+  try {
+    if (!reformat || !delivery) delivery = captureDelivery(app.session, app.editor);
+  } catch (error) {
+    return app.toast(error instanceof Error ? error.message : String(error), "error");
+  }
+  const submittedDraft = text === store.state.draft ? text : undefined;
+  const previous = store.state;
+  directDelivery = false;
   const takeId = ++takeCounter;
   currentTake = takeId;
   app.togglePanel(PANEL, true);
   store.set({ ...INITIAL_STATE, prepare: store.state.prepare, draft: store.state.draft, phase: "working", stage: "Formatting with the local model" });
   try {
-    const request: FormatTextRequest = { takeId, text, context: currentContext(), extractCommands };
+    const request: FormatTextRequest = { takeId, text, context: deliveryContext(), extractCommands };
     const take = await desktop.invoke<TakeResult>(DICTATION.format, request);
     if (takeId !== currentTake) return;
-    show(take);
+    show(take, submittedDraft);
   } catch (error) {
     if (takeId !== currentTake) return;
-    store.set({ phase: "idle", stage: "", error: error instanceof Error ? error.message : String(error) });
+    store.set({ ...previous, draft: store.state.draft, phase: previous.take ? "review" : "idle", stage: "",
+      ...(reformat && previous.take ? { editing: true, editText: text } : {}),
+      error: error instanceof Error ? error.message : String(error) });
   }
 }
 
-function show(take: TakeResult): void {
+function deliveryContext(): TakeContext {
+  const from = delivery?.replacement?.from ?? scriptEnd(app.session);
+  return buildTakeContext(app.session.script(), from?.paragraphId ?? null, from?.offset);
+}
+
+function show(take: TakeResult, submittedDraft?: string): void {
   store.set({
     phase: "review", stage: "", take, inserted: false, editing: false, editText: take.transcript, error: null, retryable: false,
-    draft: take.source === "text" && !take.error ? "" : store.state.draft,
+    draft: submittedDraft !== undefined && store.state.draft === submittedDraft && !take.error ? "" : store.state.draft,
     suggestions: take.commands.map((command) => ({ command, status: "pending", scope: command.scope })),
+    replacing: !!delivery?.replacement,
+    selectedText: delivery?.replacement?.text ?? "",
   });
+  const safe = take.autoApplyErrors?.length === 0 && !take.error && !take.warnings.length && !take.commands.length &&
+    !take.diagnostics.length && !take.elements.some(e => e.uncertainty);
+  if (directDelivery && !delivery?.replacement && safe && take.elements.length) insertTake();
+  else app.togglePanel(PANEL, true);
   if (take.needsFormatterSetup) app.openModal("workspace.settings", { section: "modelManager" });
 }
 
@@ -205,10 +257,17 @@ function settle(): void {
 }
 
 export function insertTake(): void {
-  const { take } = store.state;
-  if (!take?.elements.length) return;
-  const count = insertElements(app.session, app.editor, take.elements);
-  app.toast(`Inserted ${count} element${count === 1 ? "" : "s"}.`, "success");
+  const { take, inserted } = store.state;
+  if (!take?.elements.length || inserted) return;
+  if (!delivery) return;
+  try {
+    const caret = deliverElements(app.session, delivery, take.elements);
+    app.editor?.setSelection(caret);
+    app.editor?.focus();
+  } catch (error) {
+    return app.toast(error instanceof Error ? error.message : String(error), "error");
+  }
+  app.toast(`Inserted ${take.elements.length} screenplay elements. Undo restores the previous draft.`, "success");
   store.set({ inserted: true });
   settle();
 }
@@ -216,16 +275,21 @@ export function insertTake(): void {
 export function discardTake(): void {
   currentTake = 0;
   lastAudio = null;
+  delivery = null;
+  directDelivery = false;
   store.set({ ...INITIAL_STATE, prepare: store.state.prepare, draft: store.state.draft });
 }
 
 /**
  * The writer opened another document. A proposal was made for the old script's scene, cast and caret, so it is
- * dropped, and a take still in flight is ignored when it arrives. A recording in progress carries on.
+ * dropped, and a take still in flight is ignored when it arrives.
  */
 export function resetForNewDocument(): void {
   const { phase, take } = store.state;
-  if (phase === "recording") return;
+  stopWhenReady = true;
+  recorder?.cancel();
+  recorder = null;
+  clearInterval(ticker);
   const pending = phase === "working" || (!!take && unresolved());
   discardTake();
   if (pending) app.toast("The dictation take was dropped because the document changed.");

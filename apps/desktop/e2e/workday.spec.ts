@@ -266,7 +266,7 @@ test("a writer's day: type, check, restructure, compare, rename, dictate, export
     await expect(page.locator(".editor-pm .editor-t-character")).toHaveText(["MAYA", "MAYA", "MAYA"]);
     await expect(page.locator(".editor-pm .editor-t-action").first()).toHaveText("Maya opens the fridge.");
 
-    // Dictation: a take through the fake helper and model is inserted, formatted, at the caret.
+    // Dictation appends a formatted take even with the caret left in an earlier scene.
     const helper = fakeSpeechHelper(folder, DICTATED);
     // The helper is granted through the native Choose dialog in main, as a writer would pick it.
     await electronApp.evaluate(({ dialog }, file) => {
@@ -279,14 +279,12 @@ test("a writer's day: type, check, restructure, compare, rename, dictate, export
     const sits = await idOf(page, "She sits.");
     await page.evaluate((id) => (window as any).__app.editor.setSelection({ paragraphId: id, offset: 9 }), sits);
     const wav = Array.from(encodeWav([new Float32Array(16000).fill(0.2)]));
+    const beforeTake = await rows(page);
     await page.evaluate((bytes) => (window as any).__dictation.processAudio(new Uint8Array(bytes)), wav);
     await expect(page.locator(".dictation-el")).toHaveCount(3);
     await page.getByRole("button", { name: "Insert 3 elements" }).click();
     const afterTake = await rows(page);
-    const at = afterTake.findIndex(([, text]) => text === "She sits.");
-    expect(afterTake.slice(at, at + 5)).toEqual([
-      ["action", "She sits."], ["action", "Thunder rolls."], ["character", "NORA"], ["dialogue", "Let's go."], ["sceneHeading", "EXT. YARD - NIGHT"],
-    ]);
+    expect(afterTake).toEqual([...beforeTake, ["action", "Thunder rolls."], ["character", "NORA"], ["dialogue", "Let's go."]]);
     await expect(page.locator(".editor-pm .editor-t-dialogue", { hasText: "Let's go." })).toHaveCount(1);
 
     // Export Final Draft, then open the export: the same script, element for element.

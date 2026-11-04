@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { close, launch, runCommand } from "./helpers.ts";
+import { close, confirmNextPrompt, launch, runCommand } from "./helpers.ts";
 import { decodePairing } from "../../mobile/src/pairing.ts";
 import { deliver, folderItem, syncReceipts, type Take } from "../../mobile/src/outbox.ts";
 import { connect, type Row } from "../../mobile/src/live.ts";
@@ -83,9 +83,11 @@ test("pair the iPhone reader, follow typing and review an anchored suggestion", 
     expect(rows.filter(r => r.text === "Keep the last boat.")).toHaveLength(1);
     const ignored: Take = { ...draft, id: randomUUID(), text: "This draft is ignored." };
     await deliver(pair, ignored, signal);
+    await confirmNextPrompt(electronApp);
     await page.getByRole("button", { name: "Ignore draft", exact: true }).click();
     await expect.poll(async () => (await syncReceipts(pair, signal, [ignored])).get(ignored.id)).toBe("ignored");
     expect(rows.some(r => r.text === ignored.text)).toBe(false);
+    await confirmNextPrompt(electronApp);
     await page.getByRole("button", { name: "Stop sharing / revoke link" }).click();
     await expect.poll(() => status).toBe("Host stopped sharing");
   } finally { leave?.(); await close(electronApp, page); }
@@ -144,6 +146,7 @@ test("remember an iPhone on a saved script and revoke it from the Phone panel", 
     await expect.poll(async () => (await syncReceipts(pair, signal, [take])).get(take.id)).toBe("accepted");
     await deliver(pair, take, signal);
     await expect(page.getByText(take.text, { exact: true })).toHaveCount(0);
+    await confirmNextPrompt(electronApp);
     await page.getByRole("button", { name: "Revoke Maya’s iPhone" }).click();
     await expect.poll(() => status).toBe("Refused");
     await expect(page.getByRole("button", { name: "Revoke Maya’s iPhone" })).toHaveCount(0);

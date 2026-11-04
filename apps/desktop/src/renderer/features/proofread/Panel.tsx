@@ -40,6 +40,7 @@ function Item({ finding, store, readOnly }: { finding: Finding; store: Proofread
           <button key={option} className="button" {...locked} onClick={() => store.accept(finding, option)}>{option}</button>
         ))}
         {finding.kind === "spelling" ? <button className="button" onClick={() => store.learn(finding)}>Learn</button> : null}
+        <button className="button" aria-label={`Show in script: ${finding.message}`} onClick={() => store.reveal(finding)}>Show</button>
         <button className="button" onClick={() => store.ignore(finding)}>Ignore</button>
       </div>
     </li>

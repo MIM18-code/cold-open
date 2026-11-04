@@ -95,4 +95,6 @@ export interface EditorBridge {
   setPageBreaks(breaks: PageBreakMark[]): void;
   /** The caret or selection moved, the text under it changed, or a mark was toggled at the caret. */
   onSelectionChange(listener: (selection: Selection | null) => void): () => void;
+  /** Handle incoming plain text before normal paste. Return true when the text was inserted. */
+  onPlainTextPaste(listener: (text: string) => boolean): () => void;
 }

@@ -5,7 +5,7 @@ import { currentRevisionSet, productionSnapshot, revisionLabel, revisionState, t
 import { acceptProductionBaseline, sessionBaseline } from "./baseline.ts";
 import { useState } from "react";
 import { app, type Feature, type ModalProps } from "../../core/app.ts";
-import { desktop } from "../../core/platform.ts";
+import { desktop, messageBox } from "../../core/platform.ts";
 import type { BacklotPlan, ImportOptions, PlanRow } from "../../../shared/channels/backlot.ts";
 import type { DocumentSession } from "../../core/session.ts";
 // Backlot requires a label for every import; start from the current revision's name, or the date.
@@ -42,7 +42,10 @@ function Bridge({ close }: ModalProps) {
       {plan.unresolved.map(row => <label className="field" key={row.incomingNumber}><span>{row.incomingNumber} · {row.heading} — {row.reason}</span><select aria-label={`Match draft scene ${row.incomingNumber}`} value={(() => { const d = options.sceneDecisions.find(d => d.incomingNumber === row.incomingNumber); return d ? d.action === "new" ? "new" : `match:${d.sceneId}` : ""; })()} onChange={e => change({ ...options, sceneDecisions: [...options.sceneDecisions.filter(d => d.incomingNumber !== row.incomingNumber), ...(e.target.value ? [{ incomingNumber: row.incomingNumber, action: e.target.value === "new" ? "new" as const : "match" as const, ...(e.target.value.startsWith("match:") ? { sceneId: e.target.value.slice(6) } : {}) }] : [])] })}><option value="">Choose an identity</option>{row.candidates.map(c => <option key={c.sceneId} value={`match:${c.sceneId}`}>{c.number} · {c.heading}</option>)}<option value="new">Create a new scene</option></select></label>)}
       {((plan.plan.removed ?? []) as PlanRow[]).map(row => row.sceneId && <label key={row.sceneId}><input type="checkbox" checked={options.omitSceneIds.includes(row.sceneId)} onChange={e => change({ ...options, omitSceneIds: e.target.checked ? [...options.omitSceneIds, row.sceneId!] : options.omitSceneIds.filter(id => id !== row.sceneId) })}/>Explicitly omit missing scene {row.number} · {row.heading}</label>)}
       {planGroups(plan.plan, options.castMode).map(group => <details key={group.key}><summary>{group.title} · {group.rows.length}</summary><ul>{group.rows.map((row, i) => <li key={i}>{row}</li>)}</ul></details>)}
-      {dirty && <p role="status">Choices changed. Review the updated plan before applying.</p>}<button className="button primary" disabled={busy || dirty || !!plan.unresolved.length} onClick={() => run(async () => { if (app.session !== session || session.readOnly) throw new Error("Reopen the handoff in an editable document."); const result = await desktop.invoke<{
+      {dirty && <p role="status">Choices changed. Review the updated plan before applying.</p>}<button className="button primary" disabled={busy || dirty || !!plan.unresolved.length} onClick={() => run(async () => { if (app.session !== session || session.readOnly) throw new Error("Reopen the handoff in an editable document.");
+            const answer = await messageBox({ type: "warning", message: `Apply revision ${plan.revision} to ${connection?.title ?? "the Backlot project"}?`, detail: "This changes the production project. Backlot's Undo can reverse it.", buttons: ["Cancel", "Apply"], defaultId: 0, cancelId: 0 });
+            if (answer !== 1) return;
+            const result = await desktop.invoke<{
             revision: number;
             project: string;
             baseline: BacklotBaseline;

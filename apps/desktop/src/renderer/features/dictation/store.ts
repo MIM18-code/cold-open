@@ -23,6 +23,9 @@ export interface DictationState {
   take: TakeResult | null;
   /** True once the take's elements are in the script. */
   inserted: boolean;
+  /** The writer explicitly selected script text before starting this take. */
+  replacing: boolean;
+  selectedText: string;
   suggestions: Suggestion[];
   /** The text box for typed or pasted transcripts. */
   draft: string;
@@ -36,7 +39,7 @@ export interface DictationState {
 }
 
 export const INITIAL_STATE: DictationState = {
-  phase: "idle", level: 0, seconds: 0, stage: "", take: null, inserted: false, suggestions: [], draft: "", editing: false,
+  phase: "idle", level: 0, seconds: 0, stage: "", take: null, inserted: false, replacing: false, selectedText: "", suggestions: [], draft: "", editing: false,
   editText: "", error: null, retryable: false, prepare: { state: "idle", message: "" },
 };
 

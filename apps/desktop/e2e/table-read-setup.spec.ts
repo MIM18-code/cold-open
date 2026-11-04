@@ -1,5 +1,5 @@
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { close, launch, runCommand } from "./helpers.ts";
+import { close, confirmNextPrompt, launch, runCommand } from "./helpers.ts";
 
 // Stub the download boundary in main. No model URL is requested by these tests.
 async function stubPacks(app: ElectronApplication, lowMemory = false) {
@@ -73,6 +73,7 @@ test("pack confirmation, progress, cancel, resume, verification retry and remova
     await pack.getByRole("button", { name: "Retry…", exact: true }).click();
     await pack.getByRole("button", { name: "Confirm download" }).click();
     await expect(pack).toContainText("Installed");
+    await confirmNextPrompt(run.electronApp);
     await pack.getByRole("button", { name: "Remove", exact: true }).click();
     await expect(pack.getByRole("button", { name: "Install…", exact: true })).toBeVisible();
     expect(await run.electronApp.evaluate(() => (globalThis as any).voiceSetupFixture.calls)).toBe(3);

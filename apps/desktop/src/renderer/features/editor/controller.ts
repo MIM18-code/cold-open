@@ -138,6 +138,7 @@ export class EditorController implements EditorBridge {
   private relative: { anchor: Y.RelativePosition; head: Y.RelativePosition } | null = null;
   private storedMarks: Marks | null = null;
   private readonly selectionListeners = new Set<(selection: Selection | null) => void>();
+  private readonly plainTextPasteListeners = new Set<(text: string) => boolean>();
   private readonly smartListeners = new Set<() => void>();
   private unbind: (() => void) | null = null;
   private readonly offSession: () => void;
@@ -227,6 +228,7 @@ export class EditorController implements EditorBridge {
     this.offSession();
     this.view.destroy();
     this.selectionListeners.clear();
+    this.plainTextPasteListeners.clear();
     this.smartListeners.clear();
   }
 
@@ -792,6 +794,14 @@ export class EditorController implements EditorBridge {
 
   /** Paste clipboard contents at the selection: runs into the paragraph, or whole paragraphs. */
   pasteData(json: string | undefined, text: string | undefined): void {
+    if (!json && text && !this.session.readOnly) {
+      for (const listener of this.plainTextPasteListeners) {
+        if (listener(text)) {
+          this.closeSmart();
+          return;
+        }
+      }
+    }
     const pasted = readClipboard(json, text, this.session.script());
     const range = this.range();
     if (!pasted || !range) return;
@@ -1193,6 +1203,11 @@ export class EditorController implements EditorBridge {
   onSelectionChange(listener: (selection: Selection | null) => void): () => void {
     this.selectionListeners.add(listener);
     return () => this.selectionListeners.delete(listener);
+  }
+
+  onPlainTextPaste(listener: (text: string) => boolean): () => void {
+    this.plainTextPasteListeners.add(listener);
+    return () => this.plainTextPasteListeners.delete(listener);
   }
 
   private emitSelection(): void {

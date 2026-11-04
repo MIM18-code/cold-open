@@ -70,3 +70,4 @@ export function ToolbarAction({ label, icon, press, primary, disabled, checked }
     <Label numberOfLines={1} maxFontSizeMultiplier={1.25} style={{ fontSize: 11, fontWeight: "600", color }}>{label}</Label>
   </Pressable>;
 }
+export { errorText } from "./errors";

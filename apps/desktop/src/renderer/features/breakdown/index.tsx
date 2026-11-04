@@ -32,7 +32,7 @@ function BreakdownPanel() {
     <div className="breakdown-list">
       {TAG_CATEGORIES.map(([category]) => {
         const rows = store.rows.filter(row => row.category === category);
-        return rows.length ? <section key={category} className={categoryClass(category)}><h3>{category}</h3>{rows.map(row => <div key={row.id} className="breakdown-row" onMouseEnter={() => store.reveal(row)} onFocus={() => store.reveal(row)}>
+        return rows.length ? <section key={category} className={categoryClass(category)}><h3>{category}</h3>{rows.map(row => <div key={row.id} className="breakdown-row" onFocus={() => store.reveal(row)} onClick={() => store.reveal(row)}>
           <input type="checkbox" aria-label={`Tag ${row.label}`} checked={row.checked} onChange={e => store.update(row.id, { checked: e.target.checked })}/>
           <div className="breakdown-element"><input type="text" aria-label={`Element name for ${row.quote}`} maxLength={200} value={row.label} onChange={e => store.update(row.id, { label: e.target.value })}/>
             <select aria-label={`Category for ${row.label}`} value={row.category} onChange={e => store.update(row.id, { category: e.target.value })}>

@@ -7,7 +7,7 @@ import { app, type Feature, type ModalProps } from "../../core/app.ts";
 import { useSessionState } from "../../core/hooks.ts";
 import { reorderClass, useReorderItem, useReorderMonitor } from "./reorder.ts";
 import {
-  flattenOutline, moveByDrop, revealScene, useCaretScene, useStructure, type FlatItem, type Structure,
+  flattenOutline, moveByDrop, moveSceneBy, revealScene, useCaretScene, useStructure, type FlatItem, type Structure,
 } from "./structure-data.ts";
 import "./navigator.css";
 
@@ -63,11 +63,7 @@ function Navigator() {
   const tabStop = (focusedId && visible.includes(focusedId) ? focusedId : caret && visible.includes(caret) ? caret : visible[0]) ?? null;
   const move = (sceneId: string | null, direction: -1 | 1) => {
     if (filtering || readOnly || !sceneId) return;
-    const i = structure.summaries.findIndex((s) => s.sceneId === sceneId);
-    const target = structure.summaries[i + direction];
-    if (!target) return;
-    moveByDrop({ kind: "scene", id: sceneId }, { kind: "scene", id: target.sceneId }, direction < 0 ? "before" : "after");
-    setFocusedId(sceneId);
+    if (moveSceneBy(sceneId, direction)) setFocusedId(sceneId);
   };
   const focusedIndex = structure.summaries.findIndex((s) => s.sceneId === tabStop);
 
@@ -160,22 +156,23 @@ function GoToScene({ close }: ModalProps) {
   };
   return (
     <div className="navigator-goto">
-      <input autoFocus value={query} placeholder="Scene number or words from the heading" aria-label="Scene"
+      <input autoFocus value={query} placeholder="Scene number or words from the heading" aria-label="Scene" role="combobox" aria-expanded="true"
+        aria-controls="goto-scenes" aria-activedescendant={found.length ? `goto-scene-${index}` : undefined} autoComplete="off"
         onChange={(event) => (setQuery(event.target.value), setIndex(0))}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") (event.preventDefault(), setIndex((i) => Math.min(i + 1, found.length - 1)));
           else if (event.key === "ArrowUp") (event.preventDefault(), setIndex((i) => Math.max(i - 1, 0)));
           else if (event.key === "Enter") choose(found[index]);
         }} />
-      <ul ref={list}>
+      <ul ref={list} id="goto-scenes" role="listbox" aria-label="Scenes">
         {found.map((scene, i) => (
-          <li key={scene.sceneId} className={i === index ? "on" : ""} onMouseEnter={() => setIndex(i)} onClick={() => choose(scene)}>
+          <li key={scene.sceneId} id={`goto-scene-${i}`} role="option" aria-selected={i === index} className={i === index ? "on" : ""} onMouseEnter={() => setIndex(i)} onClick={() => choose(scene)}>
             <span className="structure-number">{scene.number ?? scene.index + 1}</span>
-            <span className="navigator-goto-heading">{scene.heading || "Untitled scene"}</span>
+            <span className="navigator-goto-heading" title={scene.heading || undefined}>{scene.heading || "Untitled scene"}</span>
             <span className="structure-length">{scene.eighths ? formatEighths(scene.eighths) : ""}</span>
           </li>
         ))}
-        {!found.length ? <li className="navigator-goto-none">No matching scene</li> : null}
+        {!found.length ? <li className="navigator-goto-none" role="presentation">No matching scene</li> : null}
       </ul>
     </div>
   );

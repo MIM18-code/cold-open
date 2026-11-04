@@ -30,12 +30,18 @@ export function normalizeSmartLists(value:unknown):Lists {
   const raw=value&&typeof value==="object"?value as Partial<Lists>:{};
   return Object.fromEntries(fields.map((key)=>[key,Array.isArray(raw[key])?[...new Set(raw[key]!.filter((s):s is string=>typeof s==="string").map((s)=>s.trim().toUpperCase()).filter(Boolean))].slice(0,250):[]])) as Lists;
 }
+type ListText=Record<(typeof fields)[number],string>;
+// Unsaved list edits outlive the Settings dialog, so closing it or switching sections does not throw them away.
+let smartTypeDraft:{session:unknown;base:unknown;text:ListText}|null=null;
 function SmartTypeSettings(){
   useDocVersion();const session=useSession();const [base,setBase]=useState(()=>session.doc.meta.get("editor.smartType.v1"));
-  const [text,setText]=useState(()=>Object.fromEntries(fields.map((f)=>[f,normalizeSmartLists(base)[f].join("\n")])) as Record<(typeof fields)[number],string>),[error,setError]=useState("");
+  const saved=(value:unknown)=>Object.fromEntries(fields.map((f)=>[f,normalizeSmartLists(value)[f].join("\n")])) as ListText;
+  const [text,setTextState]=useState<ListText>(()=>smartTypeDraft&&smartTypeDraft.session===session&&smartTypeDraft.base===base?smartTypeDraft.text:saved(base)),[error,setError]=useState("");
+  const setText=(next:ListText)=>{smartTypeDraft={session,base,text:next};setTextState(next);};
+  const unsaved=fields.some((f)=>text[f]!==saved(base)[f]);
   return <div className="smarttype-settings"><p>One entry per line. These supplement script-derived suggestions. Excluded entries suppress unwanted suggestions without changing screenplay text; use Rename Character to correct the script itself.</p>
     {fields.map((field)=><label className="field" key={field}><span>{({names:"Character names",locations:"Locations",transitions:"Transitions",times:"Times of day",extensions:"Cue extensions",excluded:"Excluded suggestions"})[field]}</span><textarea aria-label={`SmartType ${field}`} rows={3} maxLength={20000} value={text[field]} onChange={(e)=>setText({...text,[field]:e.target.value})}/></label>)}
-    <button className="button primary" disabled={session.readOnly} onClick={()=>{try{if(app.session!==session||session.doc.meta.get("editor.smartType.v1")!==base)throw new Error("These lists changed elsewhere. Reopen Settings before applying.");const next=normalizeSmartLists(Object.fromEntries(fields.map((f)=>[f,text[f].split(/\r?\n/)])));session.undo.stopCapturing();session.edit(()=>session.doc.meta.set("editor.smartType.v1",next));session.undo.stopCapturing();setBase(next);setError("");app.toast("SmartType lists saved to the native draft.","success");}catch(e){setError(String(e));}}}>Save project lists</button>{error&&<p role="alert">{error}</p>}
+    <button className="button primary" disabled={session.readOnly} onClick={()=>{try{if(app.session!==session||session.doc.meta.get("editor.smartType.v1")!==base)throw new Error("These lists changed elsewhere. Reopen Settings before applying.");const next=normalizeSmartLists(Object.fromEntries(fields.map((f)=>[f,text[f].split(/\r?\n/)])));session.undo.stopCapturing();session.edit(()=>session.doc.meta.set("editor.smartType.v1",next));session.undo.stopCapturing();setBase(next);smartTypeDraft=null;setTextState(saved(next));setError("");app.toast("SmartType lists saved to the native draft.","success");}catch(e){setError(String(e));}}}>Save project lists</button>{unsaved&&<span className="smarttype-unsaved" role="status"> Unsaved changes</span>}{error&&<p role="alert">{error}</p>}
     {session.format!=="screenplay"&&<p role="status">Use a .screenplay master to keep these lists across restarts.</p>}
   </div>;
 }

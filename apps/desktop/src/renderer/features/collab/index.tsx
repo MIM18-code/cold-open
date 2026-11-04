@@ -4,7 +4,7 @@ import { useState, useSyncExternalStore } from "react";
 import { parseInvite } from "@screenplay/relay/protocol";
 import { app, type Feature, type ModalProps } from "../../core/app.ts";
 import { useSessionState, useSetting } from "../../core/hooks.ts";
-import { isDesktop } from "../../core/platform.ts";
+import { isDesktop, messageBox } from "../../core/platform.ts";
 import { CollabController, NAME_SETTING, RELAY_SETTING, type CollabState } from "./controller.ts";
 import "./collab.css";
 
@@ -130,6 +130,17 @@ function FolderSection() {
 
 function CollabPanel() {
   const state = useCollab();
+  const [stopping, setStopping] = useState(false);
+  const stop = async () => {
+    const others = state.participants.filter((person) => !person.self).length;
+    if (others > 0) {
+      const hosting = state.mode === "host" && state.inviteRoute !== "relay";
+      const response = await messageBox({ type: "warning", message: hosting ? "Stop sharing with your co-writers?" : "Leave this session?", detail: hosting ? `${others} ${others === 1 ? "person is" : "people are"} connected and will be disconnected.` : "You will stop receiving the other writers' changes until you rejoin.", buttons: ["Keep", hosting ? "Stop Sharing" : "Leave"], defaultId: 0, cancelId: 0 });
+      if (response !== 1) return;
+    }
+    setStopping(true);
+    try { await collab.stop(); } finally { setStopping(false); }
+  };
   return (
     <div className="collab-panel">
       {state.mode === "idle" ? (
@@ -164,7 +175,7 @@ function CollabPanel() {
           ) : null}
           <section className="collab-section">
             {state.inviteRoute === "relay" && <p className="collab-note">Leaving disconnects this Mac. Other writers can keep working, and existing invites can still be used.</p>}
-            <button className="button collab-stop" onClick={() => run(() => collab.stop())}>{state.mode === "host" && state.inviteRoute !== "relay" ? "Stop Sharing" : "Leave Session"}</button>
+            <button className="button collab-stop" disabled={stopping} onClick={() => run(stop)}>{state.mode === "host" && state.inviteRoute !== "relay" ? "Stop Sharing" : "Leave Session"}</button>
           </section>
         </>
       )}

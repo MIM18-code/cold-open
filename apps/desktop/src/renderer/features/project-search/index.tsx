@@ -10,11 +10,13 @@ interface Result {
     hits: ScriptHit[];
     truncated: boolean;
 }
+// The main process keeps the chosen files granted for this window, so the dialog can offer them again on reopen.
+let rememberedFiles: { path: string; name: string }[] = [];
+let rememberedQuery = "";
 function SearchDialog() {
-    const [files, setFiles] = useState<{
-        path: string;
-        name: string;
-    }[]>([]), [query, setQuery] = useState(""), [matchCase, setMatchCase] = useState(false), [busy, setBusy] = useState(false), [results, setResults] = useState<Result[]>([]), [error, setError] = useState("");
+    const [files, setFilesState] = useState(rememberedFiles), [query, setQueryState] = useState(rememberedQuery), [matchCase, setMatchCase] = useState(false), [busy, setBusy] = useState(false), [results, setResults] = useState<Result[]>([]), [error, setError] = useState("");
+    const setFiles = (next: typeof files) => { rememberedFiles = next; setFilesState(next); };
+    const setQuery = (next: string) => { rememberedQuery = next; setQueryState(next); };
     const epoch = useRef(0);
     useEffect(() => () => { epoch.current++; void desktop.invoke("project-search:cancel"); }, []);
     const choose = async () => { try {

@@ -73,7 +73,7 @@ async function main() {
   let app;
   const open = async (profile, path) => { app = await launch(profile, path); assert.equal(await app.evaluate(({ app }) => app.getVersion()), expectedVersion, 'Packaged app version differs from package.json'); const p = await app.firstWindow(); await p.locator('.editor-pm').waitFor(); return p; };
   const close = async () => { if (app) { await app.close(); app = undefined; } };
-  const command = async (p, name) => { await p.getByText('Commands', { exact: true }).click(); await p.getByText(name, { exact: false }).first().click(); };
+  const command = async (p, name) => { await p.getByRole('button', { name: /^Commands/ }).click(); await p.getByText(name, { exact: false }).first().click(); };
   const saveDialog = async path => app.evaluate(({ dialog }, target) => { globalThis.__testSaveDialogCalls = 0; dialog.showSaveDialog = async () => { globalThis.__testSaveDialogCalls++; return target ? { canceled: false, filePath: target } : { canceled: true }; }; }, path);
   const openDialog = async path => app.evaluate(({ dialog }, target) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] }); }, path);
   const waitFile = async path => {

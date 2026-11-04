@@ -7,7 +7,7 @@ import { DICTATION, type TakeResult, type ProposedElement } from "../../../share
 import { publishToPhone } from "./publisher.ts";
 import { useEffect, useRef, useState } from "react";
 import { app, type Feature } from "../../core/app.ts";
-import { desktop } from "../../core/platform.ts";
+import { desktop, messageBox } from "../../core/platform.ts";
 import { useSession, useSessionState, useDocVersion } from "../../core/hooks.ts";
 import { createRecord } from "../rewrite/records.ts";
 import { historyId } from "../history/index.tsx";
@@ -246,7 +246,22 @@ function PhonePanel() {
             setError(String(e));
         }
     };
-    const stop = async () => { await run("phone:stop"); };
+    const stop = async () => {
+        const response = await messageBox({ type: "warning", message: "Stop sharing with the phone?", detail: "The pairing link stops working and connected iPhones are disconnected.", buttons: ["Keep", "Stop sharing"], defaultId: 0, cancelId: 0 });
+        if (response !== 1) return;
+        await run("phone:stop");
+    };
+    const revoke = async (device: { id: string; name: string }) => {
+        const response = await messageBox({ type: "warning", message: `Revoke “${device.name}”?`, detail: "This iPhone is disconnected and must be paired again.", buttons: ["Keep", "Revoke"], defaultId: 0, cancelId: 0 });
+        if (response !== 1) return;
+        await run("phone:revoke", device.id);
+    };
+    const discardItem = async (item: { id: string; kind: string; deviceId?: string }) => {
+        const draft = item.kind === "draft";
+        const response = await messageBox({ type: "warning", message: draft ? "Ignore this draft?" : "Discard this inbox item?", detail: "It leaves this inbox and cannot be reviewed here again.", buttons: ["Keep", draft ? "Ignore" : "Discard"], defaultId: 0, cancelId: 0 });
+        if (response !== 1) return;
+        await run("phone:acknowledge", documentId, item.id, "ignored", item.deviceId);
+    };
     const tail = status?.addresses.find(a => a.address === address)?.tailscale;
     const protection = tail ? "https" : transport;
     return <section className="roadmap-dialog phone-panel" aria-label="Phone companion">
@@ -343,7 +358,7 @@ function PhonePanel() {
       <strong>{device.name}</strong>
       <p>Paired {new Date(device.created).toLocaleDateString()}. {device.lastSeen
         ? `Last seen ${new Date(device.lastSeen).toLocaleString()}.` : "Waiting for the iPhone."}</p>
-      <button className="button" disabled={busy} onClick={() => void run("phone:revoke", device.id)}>Revoke {device.name}</button>
+      <button className="button" disabled={busy} onClick={() => void revoke(device)}>Revoke {device.name}</button>
     </article>)}
     <p>A remembered iPhone follows the script it was paired to. If that script is closed, it keeps queueing.
       Revoking closes its connections immediately.</p>
@@ -387,7 +402,7 @@ function PhonePanel() {
       {!item.kind.startsWith("scene-") && !phoneAttachment(session.doc, { paragraphId: item.paragraphId, sourceText: item.sourceText ?? "" }) &&
         <button className="button" disabled={session.readOnly || busy} onClick={() => void accept(item, true)}>Insert at cursor</button>}
       <button className="button"
-        onClick={() => void run("phone:acknowledge", documentId, item.id, "ignored", item.deviceId)}>
+        onClick={() => void discardItem(item)}>
         {item.kind === "draft" ? "Ignore draft" : "Discard inbox item"}
       </button>
     </article>)}

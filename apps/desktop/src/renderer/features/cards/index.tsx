@@ -8,7 +8,7 @@ import { useSessionState, useSetting } from "../../core/hooks.ts";
 import { reorderClass, useReorderItem, useReorderMonitor } from "../navigator/reorder.ts";
 import { ColorButton, EditableText, FdxNotice, ReadOnlyNotice, SynopsisField } from "../navigator/shared.tsx";
 import {
-  editSceneColor, editSectionTitle, editSynopsis, flattenOutline, moveByDrop, revealScene, useCaretScene, useStructure,
+  editSceneColor, editSectionTitle, editSynopsis, flattenOutline, moveByDrop, moveSceneByKey, revealScene, useCaretScene, useStructure,
 } from "../navigator/structure-data.ts";
 import "./cards.css";
 
@@ -23,7 +23,8 @@ function Card({ scene, active, locked }: { scene: SceneSummary; active: boolean;
   const { ref, edge, dragging } = useReorderItem<HTMLElement>("cards", { kind: "scene", id: scene.sceneId }, { axis: "x", drag: !locked });
   return (
     <article ref={ref} className={`cards-card ${active ? "on" : ""} ${reorderClass({ edge, dragging }, "x")}`} data-scene-id={scene.sceneId}
-      aria-label={scene.heading}
+      aria-label={scene.heading || "Untitled scene"} tabIndex={0} aria-keyshortcuts={locked ? undefined : "Alt+ArrowLeft Alt+ArrowRight"}
+      onKeyDown={(event) => { if (event.key === "Enter" && event.target === event.currentTarget) { event.preventDefault(); revealScene(scene.headingId); } }}
       onDoubleClick={(event) => {
         if (!(event.target as HTMLElement).closest("textarea, input, button")) revealScene(scene.headingId);
       }}>
@@ -74,7 +75,7 @@ function Cards() {
       </div>
       <ReadOnlyNotice />
       <FdxNotice />
-      <div className="cards-scroll">
+      <div className="cards-scroll" onKeyDown={(event) => moveSceneByKey(event, readOnly)}>
         {count || items.length ? (
           <div className="cards-grid">
             {items.map((item) => {

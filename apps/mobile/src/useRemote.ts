@@ -8,6 +8,7 @@ import { folderProduction } from "./production.ts";
 import { readScript, connect, type Presence, type Row } from "./live";
 import { sendPending, deviceStatus, permanentFailure, validateTakeSize, DeliveryError, syncReceipts, type Take } from "./outbox";
 import { phoneFolder, saveToFolder } from "./folder";
+import { errorText } from "./errors";
 import { cacheProduction, cachedProduction, cacheRows, cachedRows, endedPairing, listTakes, mark, rememberEnd, saveTake, type Passage } from "./store";
 import { isTailnet, reachStatus, pairingEnded, type ReachReason } from "./reach.ts";
 import { shareTakes } from "./share.ts";
@@ -86,11 +87,11 @@ export function useRemote() {
                 setRows(next); cacheRows(pair.invite.room, next); cacheProduction(pair.invite.room, snapshot.production);
                 setPeople({ title: snapshot.title, production: snapshot.production, writers: [], cursor: null, offset: 0 });
               }
-            } catch (e) { setError(String(e)); }
+            } catch (e) { setError(errorText(e)); }
             for (const item of listTakes().filter(t => t.room === pair.invite.room
                 && t.outcome === "pending" && !conflicts.has(t.id))) {
               try { await saveToFolder(pair, item); mark(item.id, "saved"); }
-              catch (error) { mark(item.id, permanentFailure(error) ? "rejected" : "pending", String(error)); }
+              catch (error) { mark(item.id, permanentFailure(error) ? "rejected" : "pending", errorText(error)); }
             }
           }
           wait = Math.min(30000, wait * 2);

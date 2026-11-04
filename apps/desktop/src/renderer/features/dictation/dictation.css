@@ -14,6 +14,8 @@
 }
 .dictation-mic:disabled { opacity: 0.45; }
 .dictation-toolbar.on { background: var(--accent); color: var(--accent-ink); }
+.dictation-toolbar-group { display: flex; align-items: center; gap: 6px; }
+.dictation-toolbar-status { color: var(--ink-2); font-size: var(--text-xs); max-width: 200px; }
 
 .dictation-meter { height: 6px; border-radius: 3px; background: var(--bg-sunken); overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
 .dictation-meter-fill { height: 100%; background: var(--ok); transition: width 60ms linear; }

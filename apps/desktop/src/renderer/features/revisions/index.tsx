@@ -122,7 +122,7 @@ function NewSetForm({ state, onCreate }: { state: RevisionState; onCreate: (set:
     onCreate({ ...suggested, name: name.trim() || `${choice.name} Rev.`, color: choice.value, date: date.trim(), mark: mark.trim() || "*" });
   };
   return (
-    <div className="revisions-new">
+    <form className="revisions-new" onSubmit={(event) => { event.preventDefault(); create(); }}>
       <label className="field">
         <span>Color</span>
         <select name="color" value={color} onChange={(event) => pick(Number(event.target.value))}>
@@ -131,7 +131,7 @@ function NewSetForm({ state, onCreate }: { state: RevisionState; onCreate: (set:
       </label>
       <label className="field">
         <span>Name</span>
-        <input name="name" value={name} onChange={(event) => setName(event.target.value)} />
+        <input name="name" autoFocus value={name} onChange={(event) => setName(event.target.value)} />
       </label>
       <label className="field">
         <span>Date</span>
@@ -142,9 +142,9 @@ function NewSetForm({ state, onCreate }: { state: RevisionState; onCreate: (set:
         <input name="mark" value={mark} maxLength={2} onChange={(event) => setMark(event.target.value)} />
       </label>
       <div className="modal-actions" style={{ gridColumn: "1 / -1", marginTop: 0 }}>
-        <button type="button" className="button primary" onClick={create}>Create revision set</button>
+        <button type="submit" className="button primary">Create revision set</button>
       </div>
-    </div>
+    </form>
   );
 }
 
@@ -153,7 +153,7 @@ function RevisionsModal({ close, props }: ModalProps<{ mode?: "new" | "clear" } 
   const [adding, setAdding] = useState(props?.mode === "new" || !state.sets.length);
   const clear = (setId: string | null) => {
     const count = app.session.edit(() => clearRevisionMarks(app.session.doc, setId));
-    app.toast(count ? "Cleared the revision marks." : "There were no revision marks to clear.", count ? "success" : "info");
+    app.toast(count ? "Cleared the revision marks. Undo brings them back." : "There were no revision marks to clear.", count ? "success" : "info");
   };
   return (
     <div className="revisions-form">
@@ -186,7 +186,7 @@ function RevisionsModal({ close, props }: ModalProps<{ mode?: "new" | "clear" } 
         : <button type="button" className="button" onClick={() => setAdding(true)}>New revision set…</button>}
       <div className="modal-actions">
         {state.sets.length ? <button type="button" className="button" onClick={() => clear(null)}>Clear all marks</button> : null}
-        <button type="button" className="button primary" onClick={close}>Done</button>
+        <button type="button" className="button primary" autoFocus={!adding} onClick={close}>Done</button>
       </div>
     </div>
   );

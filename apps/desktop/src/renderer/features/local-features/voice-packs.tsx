@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CHANNELS } from "../../../shared/api.ts";
 import { TABLE_READ, type ModelProgress, type ReaderStatus, type VoicePackState } from "../../../shared/channels/table-read.ts";
-import { desktop } from "../../core/platform.ts";
+import { desktop, messageBox } from "../../core/platform.ts";
 import { downloadSize, memoryWarning, packPurpose, VOICES_CHANGED } from "../table-read/voice-setup.ts";
 
 export function VoicePacks() {
@@ -43,7 +43,9 @@ export function VoicePacks() {
         {pack.unresolved && <p role="alert">{pack.unresolved}</p>}
         {errors[pack.id] && <p role="alert">{errors[pack.id]}</p>}
         {!pack.installed && confirm !== pack.id && <button className="button" disabled={!!busy || !!pack.unresolved} onClick={() => { setConfirm(pack.id); setAllow(false); }}>{errors[pack.id] ? "Retry…" : pack.diskBytes ? "Resume install…" : "Install…"}</button>}
-        {pack.diskBytes > 0 && <button className="button" disabled={!!busy} onClick={() => {
+        {pack.diskBytes > 0 && <button className="button" disabled={!!busy} onClick={async () => {
+          const response = await messageBox({ type: "warning", message: `Remove ${pack.label}?`, detail: `This deletes ${downloadSize(pack.diskBytes)} of downloaded voice model from this Mac; you can download it again later.`, buttons: ["Keep", "Remove"], defaultId: 0, cancelId: 0 });
+          if (response !== 1) return;
           active.current = pack.id; setBusy(pack.id);
           void desktop.invoke(TABLE_READ.remove, pack.id).then(changed).catch((e) => setErrors((old) => ({ ...old, [pack.id]: String(e) }))).finally(() => { active.current = undefined; setBusy(undefined); });
         }}>Remove</button>}

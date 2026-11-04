@@ -24,7 +24,10 @@ function RenameModal({ close, props }: ModalProps<{ name?: string } | undefined>
   const [filter, setFilter] = useState("");
   const [name, setName] = useState("");
   const input = useRef<HTMLInputElement>(null);
-  useEffect(() => void (selected && input.current?.focus()), [selected]);
+  // Start in the new-name field when the dialog already knows the character; otherwise in the filter.
+  useEffect(() => void (selected && input.current?.focus()), []);
+  useEffect(() => { document.querySelector('#rename-characters [aria-selected="true"]')?.scrollIntoView({ block: "nearest" }); }, [selected, filter]);
+  const pick = (character: string) => { setSelected(character); requestAnimationFrame(() => input.current?.focus()); };
 
   const plan = useMemo(() => (selected ? planRename(script, selected, name) : null), [script, selected, name]);
   const exists = !!name.trim() && name.trim().toUpperCase() !== selected && characters.some((c) => c.name === characterName(name));
@@ -46,12 +49,24 @@ function RenameModal({ close, props }: ModalProps<{ name?: string } | undefined>
     <div className="rename">
       <label className="field">
         <span>Character</span>
-        <input value={filter} placeholder="Filter" aria-label="Filter characters" onChange={(event) => setFilter(event.target.value)} />
+        <input value={filter} placeholder="Filter" aria-label="Filter characters" role="combobox" aria-expanded="true" aria-controls="rename-characters" autoComplete="off"
+          aria-activedescendant={shown.some((c) => c.name === selected) ? `rename-character-${shown.findIndex((c) => c.name === selected)}` : undefined}
+          onChange={(event) => setFilter(event.target.value)}
+          onKeyDown={(event) => {
+            // Arrow keys move through the list; Return takes the highlighted (or only) character to the new-name field.
+            if (event.nativeEvent.isComposing || !shown.length) return;
+            const at = shown.findIndex((c) => c.name === selected);
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              const next = at < 0 ? 0 : Math.max(0, Math.min(shown.length - 1, at + (event.key === "ArrowDown" ? 1 : -1)));
+              setSelected(shown[next]!.name);
+            } else if (event.key === "Enter") { event.preventDefault(); pick(shown[at < 0 ? 0 : at]!.name); }
+          }} />
       </label>
-      <div className="rename-list" role="listbox" aria-label="Characters">
-        {shown.map((c) => (
-          <div key={c.name} role="option" aria-selected={c.name === selected} className={`list-row rename-row ${c.name === selected ? "on" : ""}`}
-            onClick={() => setSelected(c.name)}>
+      <div className="rename-list" id="rename-characters" role="listbox" aria-label="Characters">
+        {shown.map((c, i) => (
+          <div key={c.name} id={`rename-character-${i}`} role="option" aria-selected={c.name === selected} className={`list-row rename-row ${c.name === selected ? "on" : ""}`}
+            onClick={() => pick(c.name)}>
             <span>{c.name}</span>
             <span className="rename-count">{c.speaking ? `${c.speeches} ${c.speeches === 1 ? "speech" : "speeches"}` : "action only"}</span>
           </div>

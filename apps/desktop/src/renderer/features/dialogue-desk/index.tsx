@@ -1,6 +1,7 @@
 import { characterName, plainText, type Paragraph } from "@screenplay/engine";
 import { useState } from "react";
 import { app, type Feature } from "../../core/app.ts";
+import { messageBox } from "../../core/platform.ts";
 import { useDocVersion, useScript, useSession } from "../../core/hooks.ts";
 import { replaceInDocument } from "../editor/replace.ts";
 import { revealScene } from "../navigator/structure-data.ts";
@@ -41,7 +42,11 @@ function SpeechEditor({ speech, recordId, draftNumber }: {
       setError(String(e));
     }
   };
-  const discard = () => {
+  const discard = async () => {
+    if (text !== base) {
+      const response = await messageBox({ type: "warning", message: "Discard your edits to this speech?", detail: "Your unsaved wording for this speech is lost.", buttons: ["Keep", "Discard"], defaultId: 0, cancelId: 0 });
+      if (response !== 1) return;
+    }
     discardDialogueDraft(session, speech.paragraph.id, recordId);
     setError("");
   };
@@ -56,7 +61,7 @@ function SpeechEditor({ speech, recordId, draftNumber }: {
       <button className="button primary" disabled={session.readOnly || conflict || text === base} onClick={apply}>
         Apply to script
       </button>
-      <button className="button" disabled={session.readOnly} onClick={discard}>Reload / discard local edits</button>
+      <button className="button" disabled={session.readOnly} onClick={() => void discard()}>Reload / discard local edits</button>
       <button className="button" onClick={() => {
         app.closeModal();
         revealScene(speech.paragraph.id);

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { close, launch, runCommand } from "./helpers.ts";
+import { close, confirmNextPrompt, launch, runCommand } from "./helpers.ts";
 import { decodePairing } from "../../mobile/src/pairing.ts";
 import { connect, type Presence, type Row } from "../../mobile/src/live.ts";
 import { deliver, syncReceipts, type Take } from "../../mobile/src/outbox.ts";
@@ -58,6 +58,7 @@ test("phone production changes follow the Mac and scene suggestions require a de
     const rejected: Take = { ...take, id: randomUUID(), kind: "scene-end", text: "Rejected ending." };
     await deliver(pair, rejected, signal);
     await expect(page.getByText(rejected.text, { exact: true })).toBeVisible();
+    await confirmNextPrompt(electronApp);
     await page.getByRole("button", { name: "Discard inbox item" }).click();
     await expect.poll(async () => (await syncReceipts(pair, signal, [rejected])).get(rejected.id)).toBe("ignored");
     expect(rows.some(r => r.text === rejected.text)).toBe(false);

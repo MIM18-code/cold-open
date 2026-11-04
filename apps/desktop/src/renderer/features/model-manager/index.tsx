@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { app, type Feature } from "../../core/app.ts";
-import { desktop } from "../../core/platform.ts";
+import { desktop, messageBox } from "../../core/platform.ts";
 import type { InstalledModel, ModelPin, ModelProgress } from "../../../main/models/ollama.ts";
 interface Status {
     installed: InstalledModel[];
@@ -39,7 +39,11 @@ function ModelManager() {
     {(busy || status?.downloading) && <button className="button" onClick={() => void desktop.invoke("models:cancel")}>Pause this window’s download</button>}
     {progress && <div role="status"><p>{progress.status}{percent !== null ? ` · ${percent}% of current layer` : ""}</p>{percent !== null && <progress aria-label="Model download progress" max={100} value={percent}/>}</div>}
     {source && <section><strong>{source.name}</strong><p>{(source.size / 1024 ** 3).toFixed(2)} GB · SHA-256 {source.digest}</p><button className="button" disabled={busy} onClick={() => void run("models:use", source.digest)}>Pin and use this version for Format Draft</button></section>}
-    <h3>Pinned versions</h3>{status?.pins.map((pin) => <article key={pin.name}><strong>{pin.name}</strong><small>{pin.installedAt} · {(pin.size / 1024 ** 3).toFixed(2)} GB logical model size</small><p>{pin.digest}</p><button className="button" disabled={busy} onClick={() => void run("models:select-pin", pin.name)}>Use this pinned version</button><button className="button" disabled={busy} onClick={() => void run("models:remove", pin.name)}>Remove pinned alias…</button></article>)}
+    <h3>Pinned versions</h3>{status?.pins.map((pin) => <article key={pin.name}><strong>{pin.name}</strong><small>{pin.installedAt} · {(pin.size / 1024 ** 3).toFixed(2)} GB logical model size</small><p>{pin.digest}</p><button className="button" disabled={busy} onClick={() => void run("models:select-pin", pin.name)}>Use this pinned version</button><button className="button" disabled={busy} onClick={async () => {
+        const response = await messageBox({ type: "warning", message: `Remove pinned alias “${pin.name}”?`, detail: "Formatting stops using this pinned version; shared source weights are not deleted.", buttons: ["Keep", "Remove"], defaultId: 0, cancelId: 0 });
+        if (response !== 1) return;
+        await run("models:remove", pin.name);
+    }}>Remove pinned alias…</button></article>)}
     <p>Shared source weights are not deleted here. Ollama verifies downloads and owns its shared storage; removing an alias may free no disk space. Pause cancels this app’s request, not another app’s concurrent pull.</p>
     {error && <p role="alert">{error}</p>}
   </section>;

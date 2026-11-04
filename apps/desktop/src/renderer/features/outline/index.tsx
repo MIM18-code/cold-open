@@ -8,7 +8,7 @@ import { useSessionState } from "../../core/hooks.ts";
 import { reorderClass, useReorderItem, useReorderMonitor } from "../navigator/reorder.ts";
 import { ColorButton, EditableText, FdxNotice, ReadOnlyNotice, SynopsisField } from "../navigator/shared.tsx";
 import {
-  editSceneColor, editSectionTitle, editSynopsis, flattenOutline, moveByDrop, revealScene, useCaretScene, useStructure,
+  editSceneColor, editSectionTitle, editSynopsis, flattenOutline, moveByDrop, moveSceneByKey, revealScene, useCaretScene, useStructure,
   type FlatItem,
 } from "../navigator/structure-data.ts";
 import "./outline.css";
@@ -21,7 +21,8 @@ function SceneRow({ scene, level, active, locked }: { scene: SceneSummary; level
       <div className="outline-scene-line">
         <span className="structure-number">{scene.number ?? scene.index + 1}</span>
         <ColorButton color={scene.color} label={`Color of scene ${scene.number ?? scene.index + 1}`} onChange={(color) => editSceneColor(scene.sceneId, color)} />
-        <button className="outline-heading" onClick={() => revealScene(scene.headingId)} title="Show in the script">{scene.heading || "Untitled scene"}</button>
+        <button className="outline-heading" onClick={() => revealScene(scene.headingId)} title={locked ? "Show in the script" : "Show in the script. Option+↑ or ↓ moves the scene."}
+          aria-keyshortcuts={locked ? undefined : "Alt+ArrowUp Alt+ArrowDown"}>{scene.heading || "Untitled scene"}</button>
         <span className="structure-length">{scene.eighths ? formatEighths(scene.eighths) : ""}</span>
       </div>
       <SynopsisField className="outline-synopsis" value={scene.synopsis} label={`Synopsis of scene ${scene.number ?? scene.index + 1}`}
@@ -124,7 +125,7 @@ function Outline() {
       </div>
       <ReadOnlyNotice />
       <FdxNotice />
-      <div className="outline-scroll" role="group" aria-label="Outline">
+      <div className="outline-scroll" role="group" aria-label="Outline" onKeyDown={(event) => moveSceneByKey(event, readOnly)}>
         {visible.map((item) => {
           if (item.kind === "section") {
             const section = item.section;
