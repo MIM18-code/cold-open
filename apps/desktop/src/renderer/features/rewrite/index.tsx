@@ -53,7 +53,7 @@ function EditRecord({ props, close }: ModalProps<EditProps>) {
     <div className="modal-actions"><button className="button" type="button" onClick={close}>Cancel</button><button className="button primary" disabled={app.session.readOnly}>Keep {props.record.kind}</button></div>
   </form>;
 }
-function ProjectItem({ record }: { record:ProjectRecord }) {
+export function ProjectItem({ record }: { record:ProjectRecord }) {
   const session = useSession(), [error,setError] = useState("");
   const target = resolveAnchor(session.doc,record.anchor);
   const run = (fn:()=>void) => { try { if (app.session!==session) throw new Error("The open document changed."); fn(); } catch(e){setError(String(e));} };

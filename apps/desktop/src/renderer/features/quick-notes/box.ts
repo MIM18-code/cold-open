@@ -52,6 +52,11 @@ export function quickNoteState(): BoxState {
   return state;
 }
 
+/** The record the box is writing, once its first words have created one. */
+export function quickNoteId(): string | null {
+  return note?.id ?? null;
+}
+
 function describe(session: DocumentSession): string {
   const id = app.editor?.getSelection()?.head.paragraphId ?? app.editor?.currentParagraphId();
   if (!id || !session.doc.has(id)) return "Not attached to a line in the script";

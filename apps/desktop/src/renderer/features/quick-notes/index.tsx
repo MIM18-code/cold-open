@@ -16,12 +16,14 @@ const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.fl
 
 function QuickNoteBox() {
   const box = useQuickNote();
+  // Brainstorm shows the same note in the page itself, so the floating copy stays hidden there.
+  const inline = useApp((a) => a.ui.view === "brainstorm");
   const { readOnly } = useSessionState();
   const area = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    if (box.open) area.current?.focus();
-  }, [box.open, box.focusTick]);
-  if (!box.open) return null;
+    if (box.open && !inline) area.current?.focus();
+  }, [box.open, box.focusTick, inline]);
+  if (!box.open || inline) return null;
   const recording = box.mic === "recording", busy = box.mic === "working" || box.mic === "starting";
   const caret = (el: HTMLTextAreaElement): [number, number] => [el.selectionStart, el.selectionEnd];
   return <div className="quick-note" role="dialog" aria-modal="false" aria-label="Quick note">

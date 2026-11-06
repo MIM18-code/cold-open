@@ -119,8 +119,12 @@ function WritingNavigation() {
     document.addEventListener("pointerdown", outside);
     return () => { cancelAnimationFrame(frame); document.removeEventListener("pointerdown", outside); };
   }, [open]);
-  const plan = views.filter((v) => v.id !== "script");
+  const plan = views.filter((v) => v.id !== "script" && v.id !== "brainstorm");
+  const planning = plan.find((v) => v.id === current);
+  const brainstorm = views.some((v) => v.id === "brainstorm");
   return <nav className="writing-navigation" aria-label="Writing workspace">
+    {brainstorm && <button className={`brainstorm-primary ${current === "brainstorm" ? "on" : ""}`} aria-current={current === "brainstorm" ? "page" : undefined}
+      title="Type or dictate loose ideas as notes" onClick={() => { setOpen(false); app.setView("brainstorm"); }}>Brainstorm</button>}
     <button className={`write-primary ${current === "script" ? "on" : ""}`} aria-current={current === "script" ? "page" : undefined} onClick={() => { setOpen(false); app.setView("script"); }}>Write</button>
     <div className="planning-nav" ref={ref} onBlur={(e) => { if (open && !ref.current?.contains(e.relatedTarget as Node | null)) setOpen(false); }} onKeyDown={(e) => {
       if (e.key === "Escape" && open) { e.preventDefault(); e.stopPropagation(); setOpen(false); trigger.current?.focus(); }
@@ -133,7 +137,7 @@ function WritingNavigation() {
         buttons[e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 : (at + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length]?.focus();
       }
     }}>
-      <button ref={trigger} className={`plan-trigger ${current !== "script" ? "on" : ""}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>{current === "script" ? "Plan" : views.find((v) => v.id === current)?.title ?? "Plan"}<svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true">
+      <button ref={trigger} className={`plan-trigger ${planning ? "on" : ""}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>{planning?.title ?? "Plan"}<svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true">
         <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" />
       </svg></button>
       {open && <div className="planning-menu" role="menu" aria-label="Planning views">{plan.map((v) => <button key={v.id} role="menuitemradio" aria-checked={current === v.id} onClick={() => { setOpen(false); app.setView(v.id); trigger.current?.focus(); }}><strong>{v.title}</strong><small>{v.id === "cards" ? "Arrange scenes as index cards" : v.id === "storyMap" ? "Place structure points on the page timeline" : "See the shape of the story"}</small></button>)}</div>}

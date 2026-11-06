@@ -413,18 +413,20 @@ table.data th { color: var(--ink-3); font-weight: 500; position: sticky; top: 0;
   background: var(--bg-sunken); border-radius: var(--radius);
   box-shadow: inset 0 0 0 1px var(--line); -webkit-app-region: no-drag;
 }
-.write-primary, .plan-trigger {
+.write-primary, .plan-trigger, .brainstorm-primary {
   min-height: var(--control-height); border: 0; background: transparent;
   color: var(--ink-2); border-radius: var(--radius); padding: 6px var(--control-pad-x);
 }
 .write-primary { font-weight: 600; }
+.brainstorm-primary { font-size: var(--text-s); }
+.brainstorm-primary.on { background: var(--paper); color: var(--ink); box-shadow: var(--shadow-1); }
 .write-primary.on, .plan-trigger.on {
   background: var(--paper); color: var(--ink); box-shadow: var(--shadow-1);
 }
 .plan-trigger {
   display: flex; align-items: center; gap: 8px; font-size: var(--text-s);
 }
-.plan-trigger:hover:not(.on), .write-primary:hover:not(.on) { background: var(--bg-hover); color: var(--ink); }
+.plan-trigger:hover:not(.on), .write-primary:hover:not(.on), .brainstorm-primary:hover:not(.on) { background: var(--bg-hover); color: var(--ink); }
 .planning-nav { position:relative; }.planning-menu { position:absolute; z-index:50; top:calc(100% + 8px); left:0; min-width:230px; background:var(--bg-raised); border:1px solid var(--line); border-radius:9px; padding:5px; box-shadow:0 10px 32px rgb(0 0 0 / .16); }
 .planning-menu button { display:flex; flex-direction:column; align-items:flex-start; gap:3px; padding:10px 12px; width:100%; border:0; background:none; border-radius:5px; text-align:left; }.planning-menu button:hover,.planning-menu button[aria-checked=true] { background:var(--bg-sunken); }.planning-menu small { color:var(--ink-2); font-size:11px; }
 .save-state { font-size:10px; color:var(--ink-3); border:0; background:transparent; padding:3px; white-space:nowrap; }.save-state:hover { color:var(--ink); }
@@ -439,7 +441,7 @@ table.data th { color: var(--ink-3); font-weight: 500; position: sticky; top: 0;
 .editor-welcome kbd { font-size: var(--text-xs); border: 1px solid var(--line-strong); border-radius: var(--radius-s); padding: 1px 3px; }
 .editor-welcome-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .editor-welcome-actions .button { font-size: var(--text-s); }
-@media(max-width:1050px) { .command-trigger span { display:none; }.titlebar { gap:6px; }.write-primary,.plan-trigger { padding:5px 9px; }.editor-welcome { display:block; }.editor-welcome-actions { margin-top:10px; }.header-tool { padding:4px; } }
+@media(max-width:1050px) { .command-trigger span { display:none; }.titlebar { gap:6px; }.write-primary,.plan-trigger,.brainstorm-primary { padding:5px 9px; }.editor-welcome { display:block; }.editor-welcome-actions { margin-top:10px; }.header-tool { padding:4px; } }
 @media(max-width:850px) { .save-state { display:none; }.titlebar { grid-template-columns:minmax(80px,1fr) auto auto; }.titlebar .command-trigger { display:none; } }
 
 /* Dark-mode messages need readable foregrounds without making toast backgrounds too pale. */
