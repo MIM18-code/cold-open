@@ -28,7 +28,7 @@ interface Status {
         tailscale?: boolean;
         hostname?: string;
     }[];
-    remembered: { id: string; name: string; scriptId: string; created: number; lastSeen: number; pairAgain?: boolean }[];
+    remembered: { id: string; name: string; scriptId: string; created: number; lastSeen: number; pairAgain?: boolean; tailscale?: boolean }[];
     port: number;
     folderChosen: boolean;
     folderError: string;
@@ -36,6 +36,8 @@ interface Status {
     tailscale: PhoneTailscale;
     active: boolean;
     liveRemembered: boolean;
+    keepAwake: boolean;
+    awake: boolean;
     url: string;
     pairing?: string;
     revision: string;
@@ -284,9 +286,11 @@ function PhonePanel() {
     {status && <section className="phone-setup" aria-label="Use from anywhere">
       <div className="phone-setup-head"><h3>Use from anywhere</h3>
         <button className="button" disabled={busy} onClick={() => void refresh(true)}>Check again</button></div>
-      <p className="phone-note">Only needed away from your home Wi-Fi.</p>
+      <p className="phone-note">Skip this if you only use the iPhone at home. Away from home, the iPhone reaches this Mac through Tailscale,
+        a separate app that privately links your own devices over the internet.</p>
       <ol className="setup-steps">
-        {setupChecklist({ tailscale: status.tailscale, remembered: status.remembered.length,
+        {setupChecklist({ tailscale: status.tailscale, remembered: status.remembered,
+          showing: !status.active ? undefined : status.expiresAt ? "one-off" : "remembered",
           folderChosen: status.folderChosen }).map(step => <li key={step.id}
             className={step.done ? "done" : step.optional ? "optional" : "todo"}>
           <span className="setup-mark" role="img" aria-label={step.done ? "Done" : step.optional ? "Optional" : "To do"} />
@@ -298,7 +302,16 @@ function PhonePanel() {
           </div>
         </li>)}
       </ol>
+      <p className="phone-note">While you are away, this Mac has to stay awake, with Tailscale connected and Cold Open and
+        this script open. Keep this Mac awake, below, stops it going to sleep on its own. If the iPhone can’t reach the Mac, what you write
+        waits on it and sends once it can.</p>
     </section>}
+    {status && <>
+      <label className="field"><span><input type="checkbox" aria-label="Keep this Mac awake while it shares with an iPhone"
+        checked={status.keepAwake} disabled={busy} onChange={e => void run("phone:set-keep-awake", e.target.checked)} /> Keep this Mac awake while it shares with an iPhone</span></label>
+      <p className="phone-note">The screen can still turn off and lock. Closing a MacBook’s lid still puts it to sleep unless it is connected to a display, so leave it open and plugged in.</p>
+      {status.keepAwake && status.awake && <p className="phone-note">Keeping this Mac awake now.</p>}
+    </>}
     {!status?.active ? <>
       <label className="field"><span>Connect through</span>
         <select aria-label="Phone network address" value={address} onChange={e => setAddress(e.target.value)}>
@@ -306,8 +319,8 @@ function PhonePanel() {
             {a.tailscale ? a.name : `${a.name} · ${a.address}`}</option>)}
         </select>
       </label>
-      <p className="phone-note">{tail ? "Encrypted automatically. Sign in to Tailscale on your iPhone with the same account."
-        : "Encrypted automatically. No certificate or setup needed."}</p>
+      <p className="phone-note">{tail ? "Encrypted automatically. Works at home and away, as long as Tailscale is connected on this Mac and the iPhone, on the same account."
+        : "Encrypted automatically. No setup needed. Works only while the iPhone is on the same network as this Mac."}</p>
       <label className="field"><span><input type="checkbox" aria-label="Remember this iPhone"
         checked={remember} onChange={e => setRemember(e.target.checked)} /> Remember this iPhone</span></label>
       <p>{remember ? "Follows this saved script until revoked. Save the script before pairing."

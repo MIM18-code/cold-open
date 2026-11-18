@@ -69,8 +69,12 @@ export function Pair({ scan, initialError, back }: { scan(raw: string): Promise<
       <Caption>For your own phone, select Remember this iPhone on the Mac before you start pairing.</Caption>
       <View style={{ gap: 6 }}>
         <Label accessibilityRole="header" style={{ fontWeight: "700" }}>Away from home?</Label>
-        <Caption>1. Install Tailscale from the App Store, then sign in with the same account as your Mac.</Caption>
-        <Caption>2. Choose Tailscale in Phone Companion on the Mac. Scan its QR code, or paste its app pairing code here.</Caption>
+        <Caption>A pairing made at home works only on your home network. Tailscale, a separate app that
+          privately links your own devices, keeps this iPhone connected anywhere. Set it up while you are still at the Mac.</Caption>
+        <Caption>1. Install Tailscale on this iPhone and sign in with the same account as your Mac.</Caption>
+        <Caption>2. On the Mac, open Tools → Phone Companion and follow Use from anywhere.</Caption>
+        <Caption>3. To pair, choose Tailscale under Connect through on the Mac, tick Remember this iPhone and start pairing. Scan the new code here.</Caption>
+        <Caption>4. On the road, keep Tailscale on, here and on the Mac. The Mac must stay awake with Cold Open and your script open: tick Keep this Mac awake in Phone Companion.</Caption>
         <Action label="Get Tailscale" icon="arrow.up.forward.app"
           press={() => void Linking.openURL("https://apps.apple.com/app/tailscale/id1470499037")} />
       </View>

@@ -38,7 +38,7 @@ try {
       async invoke(channel, ...args) {
         if (channel === "phone:claim-key" || channel === "phone:path-key") return `fixture:${args[0]}`;
         if (channel === "phone:status") return { addresses: [{ name: "Fixture", address: "192.168.50.2" }], active: false, url: "", revision: "", inbox: [], certificate: null, encrypted: false, expiresAt: null,
-          remembered: [], port: 4779, folderChosen: false, folderError: "", connectionError: "", liveRemembered: false,
+          remembered: [], port: 4779, folderChosen: false, folderError: "", connectionError: "", liveRemembered: false, keepAwake: false, awake: false,
           tailscale: { installed: false, running: false, magicDns: false, https: false } };
         if (channel === "table-read:status") return voiceStatus();
         if (channel === "table-read:models") return voiceModels();

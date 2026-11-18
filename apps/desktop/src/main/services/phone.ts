@@ -24,7 +24,7 @@ export function openTakesFile(path: string): Promise<TakesImportResult> {
 }
 
 export function register(ctx: ServiceContext,
-    native = require("electron") as Pick<typeof import("electron"), "clipboard" | "dialog">,
+    native = require("electron") as Pick<typeof import("electron"), "clipboard" | "dialog" | "powerSaveBlocker">,
     detectTailscale = tailscaleNetwork,
     checkTailscale: () => Promise<PhoneTailscale> = tailscaleCheck): void {
     const { clipboard, dialog } = native;
@@ -145,20 +145,39 @@ export function register(ctx: ServiceContext,
         expiresAt: number | null;
         deviceId?: string;
     }>(), starting = new Set<number>(), generations = new Map<number, number>();
-    const emit = (_id: number) => ctx.broadcast("phone:sharing-changed");
-    const stop = async (id: number) => {
-        generations.set(id, (generations.get(id) ?? 0) + 1);
-        const session = sessions.get(id);
-        sessions.delete(id);
-        inboxTargets.delete(id);
-        openScripts.delete(id);
-        for (const [deviceId, connection] of remembered) {
-            if (connection.windowId !== id) continue;
-            remembered.delete(deviceId);
-            await connection.server.stop();
+    // Holds a power save blocker while the writer asked for it and an iPhone can reach this Mac. Called after
+    // every change to sessions, remembered, the setting or quitting; it only touches powerSaveBlocker on a change.
+    let blocker: number | undefined;
+    const syncAwake = () => {
+        const wanted = ctx.settings.get("phone.keepAwake") === true && !quitting && (sessions.size > 0 || remembered.size > 0);
+        if (wanted && blocker === undefined) blocker = native.powerSaveBlocker.start("prevent-app-suspension");
+        else if (!wanted && blocker !== undefined) {
+            native.powerSaveBlocker.stop(blocker);
+            blocker = undefined;
         }
-        await session?.server.stop();
-        for (const host of hosts.values()) idleRoutes(host);
+    };
+    const emit = (_id: number) => {
+        syncAwake();
+        ctx.broadcast("phone:sharing-changed");
+    };
+    const stop = async (id: number) => {
+        try {
+            generations.set(id, (generations.get(id) ?? 0) + 1);
+            const session = sessions.get(id);
+            sessions.delete(id);
+            inboxTargets.delete(id);
+            openScripts.delete(id);
+            for (const [deviceId, connection] of remembered) {
+                if (connection.windowId !== id) continue;
+                remembered.delete(deviceId);
+                // Let the Mac sleep as soon as nothing is shared, not after the servers have finished closing.
+                syncAwake();
+                await connection.server.stop();
+            }
+            syncAwake();
+            await session?.server.stop();
+            for (const host of hosts.values()) idleRoutes(host);
+        } finally { syncAwake(); }
         emit(id);
     };
     // A window may use only the inbox keys it was given: the key of a script it has open, or a fresh key for an
@@ -240,10 +259,13 @@ export function register(ctx: ServiceContext,
             liveRemembered: [...remembered.values()].some(c => c.windowId === event.sender.id), url: session?.url ?? "", pairing: session?.pairing,
             revision: session?.revision ?? "", urlEncrypted: session?.encrypted ?? false,
             expiresAt: session?.expiresAt ?? null,
+            keepAwake: ctx.settings.get("phone.keepAwake") === true, awake: blocker !== undefined,
             tailscale: await setupCheck(recheck === true),
             remembered: devices.all().filter(d => !d.revoked && owns(event.sender, d.scriptId)).map(d => ({
                 id: d.id, name: d.name, scriptId: d.scriptId, created: d.created, lastSeen: d.lastSeen,
                 ...(outdatedPhone(d) ? { pairAgain: true } : {}),
+                // Only a pairing made through Tailscale reaches this Mac away from its Wi-Fi.
+                ...(d.hostname ? { tailscale: true } : {}),
             })), port: stablePort(), folderChosen: !!devices.folder(), folderError, connectionError,
             inbox: owns(event.sender, key) ? await store.list(key) : [],
         };
@@ -330,6 +352,7 @@ export function register(ctx: ServiceContext,
         finally {
             starting.delete(id);
             if (inboxTargets.get(id) === target && !sessions.has(id)) inboxTargets.delete(id);
+            syncAwake();
         }
     });
     ctx.handle("phone:new-pairing", event => {
@@ -348,15 +371,24 @@ export function register(ctx: ServiceContext,
         hosts.clear();
         ctx.settings.set("phone.port", value);
     });
+    ctx.handle("phone:set-keep-awake", (_event, value: unknown) => {
+        if (typeof value !== "boolean") throw new Error("Choose whether to keep this Mac awake.");
+        // Settings.set changes its value before it writes the file, so re-check even when the write throws.
+        try { ctx.settings.set("phone.keepAwake", value); }
+        finally { syncAwake(); }
+        ctx.broadcast("phone:sharing-changed");
+    });
     ctx.handle("phone:detach", event => stop(event.sender.id));
     ctx.handle("phone:stop", async event => {
         await ready;
-        for (const [deviceId, connection] of remembered) {
-            if (connection.windowId !== event.sender.id) continue;
-            await devices.revoke(deviceId);
-            await connection.server.stop(true);
-            remembered.delete(deviceId);
-        }
+        try {
+            for (const [deviceId, connection] of remembered) {
+                if (connection.windowId !== event.sender.id) continue;
+                await devices.revoke(deviceId);
+                await connection.server.stop(true);
+                remembered.delete(deviceId);
+            }
+        } finally { syncAwake(); }
         await stop(event.sender.id);
     });
     const publish = async (id: number, opened: { documentId: string; snapshot: PhoneSnapshot }) => {
@@ -426,12 +458,15 @@ export function register(ctx: ServiceContext,
         await devices.revoke(device.id);
         const connection = remembered.get(device.id);
         remembered.delete(device.id);
-        for (const host of hosts.values()) host.routes.delete(device.tokenHash);
-        await connection?.server.stop(true);
-        for (const host of hosts.values()) idleRoutes(host);
-        for (const [windowId, session] of sessions) {
-            if (session.deviceId === device.id) { sessions.delete(windowId); inboxTargets.delete(windowId); }
-        }
+        syncAwake();
+        try {
+            for (const host of hosts.values()) host.routes.delete(device.tokenHash);
+            await connection?.server.stop(true);
+            for (const host of hosts.values()) idleRoutes(host);
+            for (const [windowId, session] of sessions) {
+                if (session.deviceId === device.id) { sessions.delete(windowId); inboxTargets.delete(windowId); }
+            }
+        } finally { syncAwake(); }
         ctx.broadcast("phone:sharing-changed");
     });
     ctx.handle("phone:resume", async (event, key: unknown, input: unknown) => {
@@ -441,22 +476,26 @@ export function register(ctx: ServiceContext,
         if (!window) return { publishers: [] };
         if (openScripts.get(event.sender.id)?.documentId !== key && openScripts.has(event.sender.id))
             await stop(event.sender.id);
+        if (event.sender.isDestroyed()) return { publishers: [] };
         const opened = { documentId: key, snapshot };
         openScripts.set(event.sender.id, opened);
         scriptsChanged();
-        for (const device of devices.all().filter(d => !d.revoked && d.scriptId === key && !outdatedPhone(d))) {
-            if (remembered.has(device.id)) continue;
-            const host = hosts.get(`${device.address}:${device.hostname ? "https" : "http"}`);
-            if (!host) continue;
-            const server = new PhoneServer(snapshot, command => ctx.send(window, "phone:command", command), async item => {
-                await devices.receive(device.id, key, item, store);
-                ctx.send(window, "phone:inbox-changed");
-            });
-            const { publisher } = server.attach(host, device, undefined,
-                name => reportDevice(device.id, name), () => devices.decisions(device.id), guardFor(device.id));
-            remembered.set(device.id, { server, windowId: event.sender.id, publisher });
-        }
+        // Before attaching, so a window that closes after an attach failed part-way still releases what did attach.
         trackWindow(event.sender);
+        try {
+            for (const device of devices.all().filter(d => !d.revoked && d.scriptId === key && !outdatedPhone(d))) {
+                if (remembered.has(device.id)) continue;
+                const host = hosts.get(`${device.address}:${device.hostname ? "https" : "http"}`);
+                if (!host) continue;
+                const server = new PhoneServer(snapshot, command => ctx.send(window, "phone:command", command), async item => {
+                    await devices.receive(device.id, key, item, store);
+                    ctx.send(window, "phone:inbox-changed");
+                });
+                const { publisher } = server.attach(host, device, undefined,
+                    name => reportDevice(device.id, name), () => devices.decisions(device.id), guardFor(device.id));
+                remembered.set(device.id, { server, windowId: event.sender.id, publisher });
+            }
+        } finally { syncAwake(); }
         await publish(event.sender.id, opened);
         return { publishers: openScripts.get(event.sender.id)?.documentId === key
             ? [...remembered].filter(([id, connection]) => connection.windowId === event.sender.id
@@ -500,6 +539,7 @@ export function register(ctx: ServiceContext,
     renewal.unref();
     ctx.onQuit(async () => {
         quitting = true;
+        syncAwake();
         scriptsChanged();
         clearInterval(retry); clearInterval(renewal);
         await restore;

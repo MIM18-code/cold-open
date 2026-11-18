@@ -21,7 +21,7 @@ import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 const snapshot = { title: "Ferry", revision: "v1", cues: [] };
 interface Status {
   url: string; urlEncrypted: boolean; pairing?: string; active: boolean;
-  remembered: { id: string; pairAgain?: boolean }[];
+  remembered: { id: string; pairAgain?: boolean; tailscale?: boolean }[];
 }
 
 async function fixture(t: TestContext, prepare?: (devices: PhoneDevices, key: string) => Promise<void>) {
@@ -74,6 +74,7 @@ test("remembering an iPhone on home Wi-Fi makes a sealed pairing with no Safari 
   const status = await f.status();
   assert.equal(status.url, "");
   assert.equal(status.remembered[0]?.pairAgain, undefined);
+  assert.equal(status.remembered[0]?.tailscale, undefined, "a home Wi-Fi pairing does not count as usable away from home");
   await assert.rejects(f.call("phone:copy-link", "browser"), /no Safari link/);
   await f.call("phone:copy-link", "remote");
 

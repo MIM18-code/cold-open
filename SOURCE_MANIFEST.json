@@ -205,7 +205,7 @@
   },
   {
     "path": "apps/desktop/package.json",
-    "sha256": "168bb2a5fe139102c7eae661f512369d32e68f3d389cc8fe006f494e49b8895f"
+    "sha256": "61b2258e685083138cd72f765db5db92daaac96284ff07fb35b94f6c66a2fe7a"
   },
   {
     "path": "apps/desktop/playwright.config.ts",
@@ -269,7 +269,7 @@
   },
   {
     "path": "apps/desktop/scripts/qol-browser.mjs",
-    "sha256": "d40825b3aa1974bd9f0ecda424be98f06c0c17531c2b766145de0a03c08de603"
+    "sha256": "0e1244ddb7acc7179f1e45badfd058ce45ce22b6a8b6c8152b9e2b8f923db91f"
   },
   {
     "path": "apps/desktop/scripts/release-policy.mjs",
@@ -481,7 +481,7 @@
   },
   {
     "path": "apps/desktop/src/main/services/phone.ts",
-    "sha256": "82a7bd20213daa70800e71f1283e9be280441452db7e2be798263004874821ef"
+    "sha256": "ed25f94bb042bcbdcaa330a7a061409ba637ae51c4f895f1b8fa780b627c0efe"
   },
   {
     "path": "apps/desktop/src/main/services/print.ts",
@@ -1069,7 +1069,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/phone/checklist.ts",
-    "sha256": "f2c3e90d3c4a05650a427b862704578dc0093891ecb69b9a1749a7c95a72a532"
+    "sha256": "d0ac82ba70039dbed07030f411df00c6ff373aa8677b2cd984beae00025df5e1"
   },
   {
     "path": "apps/desktop/src/renderer/features/phone/draft.ts",
@@ -1081,7 +1081,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/phone/index.tsx",
-    "sha256": "9f1e8673a6b7c97bff60d88488decbda9609fd171fa4fe33dfb0fbfcefe6a22c"
+    "sha256": "8531f407750d14f3bd8f8910149190db040ad47a85444695c01e926ef6bbd50b"
   },
   {
     "path": "apps/desktop/src/renderer/features/phone/phone.css",
@@ -1685,7 +1685,7 @@
   },
   {
     "path": "apps/desktop/test/phone-checklist.test.ts",
-    "sha256": "2ffc3b8492113f45b4c5e4e20ef982733909b12f64a3cdf4037c3843372f7e1a"
+    "sha256": "c544326b54f147ad4ffc928e0575c789973ba360c7bbac37e636f74b33d9f7f7"
   },
   {
     "path": "apps/desktop/test/phone-draft.test.ts",
@@ -1698,6 +1698,10 @@
   {
     "path": "apps/desktop/test/phone-inbox.test.ts",
     "sha256": "8c4c1efe2d49e98dcc8e9e79eeff9d66d9d757b4033dd551f62582e0711e0718"
+  },
+  {
+    "path": "apps/desktop/test/phone-keep-awake.test.ts",
+    "sha256": "7e9852e211571d1566f7277792136624e67572d8e2a8de8f9697485fee20af74"
   },
   {
     "path": "apps/desktop/test/phone-link.ts",
@@ -1729,7 +1733,7 @@
   },
   {
     "path": "apps/desktop/test/phone-sealed-service.test.ts",
-    "sha256": "69b2794aa697173bc62eff4348fb62528a3ab27eb3aba0b5918c9064380bea7b"
+    "sha256": "bf39211c8a05dad26ee148aac8c3305ec61c0408ef6dc3bc833fc4e9367c4075"
   },
   {
     "path": "apps/desktop/test/phone-security.test.ts",
@@ -1737,7 +1741,7 @@
   },
   {
     "path": "apps/desktop/test/phone-service.test.ts",
-    "sha256": "ce31710a4d62b9b395e9e33a8a3fb148977737553c7e68da6cbfe018edcabf71"
+    "sha256": "4d2e36714bd97ee42ee445f38f03df7f32ab9712aac24be211dec8a6777b44f9"
   },
   {
     "path": "apps/desktop/test/phone-signing.ts",
@@ -1945,11 +1949,11 @@
   },
   {
     "path": "apps/mobile/README.md",
-    "sha256": "6b1896ee3e362a80a8065ef78d0767e757ff02d15fad629df9e0c3d15e486f49"
+    "sha256": "bc0c9adaed0cc8877b64f9dda4f715d3c1567096e444127c38b575583d67d045"
   },
   {
     "path": "apps/mobile/app.json",
-    "sha256": "1f95dfb9f9c14baa64d06a4d1a1066f5bc9932b484b737c61b7766d270babea0"
+    "sha256": "aab32ed1fa03590799f84d23f20a3375c1d45d5680488bce88d461481b3b6660"
   },
   {
     "path": "apps/mobile/assets/icon.png",
@@ -2029,7 +2033,7 @@
   },
   {
     "path": "apps/mobile/src/Pair.tsx",
-    "sha256": "1ddfb5d0d7c82bcf89ff31db38eeda64653f078b003c98876404881a6c504903"
+    "sha256": "886b547c471cf68d4e1c67e2e61aae9271d9521d98823da0010e7c7733e89de3"
   },
   {
     "path": "apps/mobile/src/Reader.tsx",
@@ -2073,7 +2077,7 @@
   },
   {
     "path": "apps/mobile/src/reach.ts",
-    "sha256": "07a7e12f3d81b43b0f31f37852fd39be381e55c8bece6508597ad8c5d50afac5"
+    "sha256": "405b78afd8901ce3f4362ca172248032815443a22c0bb03fc7a30b4b5ed7e1bc"
   },
   {
     "path": "apps/mobile/src/reader-anchor.ts",
@@ -2169,7 +2173,7 @@
   },
   {
     "path": "apps/mobile/test/takes-file.test.ts",
-    "sha256": "0e94ed26a9cb943c8b55ad09659542cf9d14b6c911bead90c41f7210f5edf0f9"
+    "sha256": "c252b59379b26cecd91f63b8f7caa41a7b34641b421d4888c440bec0f88fe75d"
   },
   {
     "path": "apps/mobile/test/ui.test.ts",
@@ -2729,7 +2733,7 @@
   },
   {
     "path": "package-lock.json",
-    "sha256": "af0a15a4186a510950426d637a6eb860e8e31ca78538f5c6142e730b5bdea8fb"
+    "sha256": "13e506121e56163c7a48e606a51bea691fc6c0ce77ddd2d946e69563e38c9d3e"
   },
   {
     "path": "package.json",

@@ -13,11 +13,17 @@ open the Tailscale admin console's **DNS** page, enable **MagicDNS**, then enabl
 certificate transparency logs. No HTTP fallback is used over Tailscale.
 
 **Use from anywhere** in the Phone panel runs six checks: Tailscale installed, signed in
-and running, MagicDNS on, HTTPS certificates on, an iPhone remembered, and the optional
-iCloud Drive folder. Each unfinished step shows one plain action, with a download or
-admin-console link where one helps. **Check again** runs the checks again. The checklist
-shows no addresses, ports or file paths. The iPhone's pairing screen repeats what the
-writer does on the phone under **Away from home?**.
+and running, MagicDNS on, HTTPS certificates on, an iPhone paired through Tailscale, and
+the optional iCloud Drive folder. The iPhone check needs a Tailscale pairing that has
+connected at least once. A home pairing does not satisfy it, because it never reaches the
+Mac off its own network, and neither does a code that was never scanned. Each unfinished step says what to do and
+names the button to press, with a download or admin-console link where one helps.
+**Check again** runs the checks again. The checklist shows no addresses, ports or file
+paths. The iPhone's pairing screen lists the same setup under **Away from home?**, and a
+remembered home pairing that cannot reach the Mac says to pair through Tailscale once
+the writer is back at the Mac. Below the checklist, **Keep this Mac awake while it shares
+with an iPhone** (off by default) holds Electron's `powerSaveBlocker` in
+`prevent-app-suspension` mode only while a pairing is live, so the display can still sleep and lock.
 
 On home Wi-Fi the link is encrypted without a certificate. The pairing code carries a
 256-bit secret that never crosses the network. Both devices derive keys from it and seal

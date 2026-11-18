@@ -44,6 +44,7 @@ test("window-owned inbox keys gate remembered devices, revocation and review, an
     const own = await call(first, "phone:status", firstKey) as any;
     const guessed = await call(second, "phone:status", firstKey) as any;
     assert.equal(own.inbox.length, 1); assert.equal(own.remembered[0].id, device.id);
+    assert.equal(own.remembered[0].tailscale, true, "a Tailscale pairing completes the Use from anywhere list");
     assert.deepEqual(own.tailscale, { installed: true, running: true, magicDns: false, https: false });
     assert.deepEqual(guessed.inbox, []); assert.deepEqual(guessed.remembered, []);
     for (const secret of [token, device.tokenHash, device.writerKey, root]) assert.ok(!JSON.stringify(own).includes(secret));
