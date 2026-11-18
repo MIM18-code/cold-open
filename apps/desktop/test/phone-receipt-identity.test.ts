@@ -4,7 +4,6 @@ import test from "node:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Readable } from "node:stream";
 import { PhoneDevices } from "../src/main/phone/devices.ts";
 import { PhoneInboxStore } from "../src/main/phone/inbox.ts";
 import { PhoneServer } from "../src/main/phone/server.ts";
@@ -29,7 +28,7 @@ for (const route of ["live", "folder", "AirDrop"] as const) {
     const second = await devices.create(scriptId, "127.0.0.1");
     const session = DocumentSession.untitled();
     const servers: PhoneServer[] = [];
-    const host = { origin: "http://localhost:4456", routes: new Map(), relay: {
+    const host = { origin: "http://localhost:4456", routes: new Map(), links: new Map(), relay: {
       port: 4456, createRoom: () => ({ room: "room", key: "key", readKey: "read" }), closeRoom() {},
     } } as unknown as PhoneHost;
     const deliver = async (pair: typeof first, text: string) => {
@@ -46,14 +45,8 @@ for (const route of ["live", "folder", "AirDrop"] as const) {
           value => devices.receive(pair.device.id, scriptId, value, store).then(() => {}));
         servers.push(server);
         server.attach(host, pair.device, pair.token, async () => {}, () => devices.decisions(pair.device.id));
-        const req = Object.assign(Readable.from([JSON.stringify(envelope)]), {
-          headers: { host: "localhost:4456", authorization: `Bearer ${pair.token}`, "content-type": "application/json" },
-          method: "POST", url: "/api/inbox", socket: { remoteAddress: "127.0.0.1" },
-        });
-        let code = 0, reply = "";
-        await server["route"](req as never, { writeHead(n: number) { code = n; },
-          end(body: string) { reply = body; } } as never, "", "");
-        if (code !== 200) throw new Error(reply);
+        const reply = await server["handle"]("POST", "/api/inbox", envelope);
+        if (reply.status !== 200) throw new Error(JSON.stringify(reply.body));
         assert.equal(server["deviceId"], pair.device.id);
       }
     };

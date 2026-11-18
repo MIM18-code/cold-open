@@ -61,7 +61,9 @@ import {
 } from "./model.ts";
 import { fdxExtras } from "./revisions.ts";
 import { captureScriptNotes, projectScriptNotes, SCRIPT_NOTE_ANCHORS } from "./script-notes.ts";
+import { asTitlePage, paragraphField, paragraphFields } from "./shapes.ts";
 import { isTemplateId } from "./template-rules.ts";
+import { isXmlName } from "./xml.ts";
 
 import { projectTags, PROJECT_TAG_PREFIX } from "./tags.ts";
 
@@ -116,10 +118,15 @@ function toRun(text: string, attributes: Attributes = {}): Run {
   const run: Run = { text };
   for (const [key, value] of Object.entries(attributes)) {
     if (value === null || value === undefined || value === false) continue;
-    if ((MARKS as readonly string[]).includes(key)) run[key as (typeof MARKS)[number]] = true;
-    else if (key === "styleExtra" && typeof value === "string") run.styleExtra = value;
-    else if (key === "note") run.note = true;
-    else if (key.startsWith(FDX_PREFIX) && typeof value === "string") (run.fdx ??= {})[key.slice(FDX_PREFIX.length)] = value;
+    // Marks and notes count only as the app writes them, true: a co-writer's note: {} would hide ordinary text.
+    if ((MARKS as readonly string[]).includes(key)) {
+      if (value === true) run[key as (typeof MARKS)[number]] = true;
+    } else if (key === "styleExtra" && typeof value === "string") run.styleExtra = value;
+    else if (key === "note") {
+      if (value === true) run.note = true;
+    }
+    // The name becomes an attribute name in FDX (see shapes.ts).
+    else if (key.startsWith(FDX_PREFIX) && typeof value === "string" && isXmlName(key.slice(FDX_PREFIX.length))) (run.fdx ??= {})[key.slice(FDX_PREFIX.length)] = value;
   }
   return run;
 }
@@ -192,11 +199,11 @@ interface Cache {
 
 function newEntry(attributes: Attributes, start: number): Entry & { runs: Run[] } {
   const type = attributes.type;
-  const paragraph: Paragraph = { id: typeof attributes.id === "string" ? attributes.id : "", type: isElementType(type) ? type : "general", runs: [] };
-  for (const field of OPTIONAL_FIELDS) {
-    const value = attributes[field];
-    if (value !== undefined && value !== null) (paragraph as unknown as Record<OptionalField, unknown>)[field] = structuredClone(value);
-  }
+  // Co-writers can set any attribute to any value: fields of the wrong shape read as absent (see shapes.ts).
+  const paragraph: Paragraph = {
+    id: typeof attributes.id === "string" ? attributes.id : "", type: isElementType(type) ? type : "general", runs: [],
+    ...structuredClone(paragraphFields(attributes)),
+  };
   return { paragraph, start, end: start, runs: [], ...(isElementType(type) ? {} : { untyped: true }) };
 }
 
@@ -204,9 +211,14 @@ function newEntry(attributes: Attributes, start: number): Entry & { runs: Run[] 
 function withAttributes(paragraph: Paragraph, change: Attributes): Paragraph {
   const next: Paragraph = { ...paragraph };
   for (const [key, value] of Object.entries(change)) {
-    if (key === "type") next.type = value as ElementType;
-    else if (value === null || value === undefined) delete (next as unknown as Record<string, unknown>)[key];
-    else (next as unknown as Record<string, unknown>)[key] = structuredClone(value);
+    if (key === "type") {
+      next.type = value as ElementType;
+      continue;
+    }
+    // Through the same guard as newEntry, so a depth of 40 reads as 32 here too.
+    const field = (OPTIONAL_FIELDS as readonly string[]).includes(key) ? paragraphField(key as OptionalField, value) : value;
+    if (field === null || field === undefined) delete (next as unknown as Record<string, unknown>)[key];
+    else (next as unknown as Record<string, unknown>)[key] = structuredClone(field);
   }
   return next;
 }
@@ -399,7 +411,9 @@ export class ScreenplayDoc {
     };
     for (const op of this.body.toDelta() as { insert?: unknown; attributes?: Attributes }[]) {
       if (typeof op.insert !== "string") continue;
-      if (op.attributes?.soft) {
+      // Only true, as textInserts writes it: anything else would let a co-writer merge two paragraphs. reports.ts and
+      // structural-move-conflicts.ts read it the same way, so all three agree where paragraphs start.
+      if (op.attributes?.soft === true) {
         add(toRun(op.insert, op.attributes));
         offset += op.insert.length;
         continue;
@@ -465,7 +479,7 @@ export class ScreenplayDoc {
     const fdx = fdxExtras(this);
     const template = this.meta.get("template");
     return projectScriptNotes(this, projectTags(this, {
-      titlePage: structuredClone((this.meta.get("titlePage") as Script["titlePage"] | undefined) ?? []),
+      titlePage: asTitlePage(this.meta.get("titlePage")),
       paragraphs: this.entries().map((entry) => cloneParagraph(entry.paragraph)),
       ...(fdx ? { fdx: structuredClone(fdx) as Script["fdx"] } : {}),
       ...(isTemplateId(template) ? { template } : {}),

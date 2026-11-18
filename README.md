@@ -73,10 +73,12 @@ npm run package -w @screenplay/desktop    # an unsigned Cold Open.app and .dmg i
 
 A signed release needs `SCREENPLAY_RELEASE=1`, `SCREENPLAY_SIGN=developer-id`, both compiled helpers and
 notarization credentials (`APPLE_KEYCHAIN_PROFILE`). `npm run release:prepare` builds it, prepares this source
-snapshot and the native source archives, and checks the result. Before preparing release files it runs
-`npm run test:packaged` against the built app in disposable profiles. That gate exercises core file/PDF
-workflows and bundled speech inference with network access and the user's FluidAudio cache denied to
-the speech helper. The screenplay fixtures and attributed speech sample are included with this source.
+snapshot and the native source archives, and checks the result. While packaging it runs the packaged-app
+test (`apps/desktop/scripts/test-packaged-basic.mjs`) against the assembled app in disposable profiles,
+before the Electron fuses that shut out debuggers are set and the app is signed. That gate exercises core
+file/PDF workflows and bundled speech inference with network access and the user's FluidAudio cache denied
+to the speech helper. `npm run test:packaged` then checks the signed app without a debugger. The screenplay
+fixtures and attributed speech sample are included with this source.
 
 ## Layout
 

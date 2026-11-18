@@ -1,5 +1,6 @@
 // What each writer publishes through awareness, and how the panel and the editor read it. The shape is part of
 // the sync protocol (docs/sync-protocol.md), so Backlot and the phone show the same names and cursors.
+import { plainFileName } from "../../../shared/file-name.ts";
 import type { Position, RemoteCursor, Selection } from "../../core/editor-bridge.ts";
 
 export interface PresenceState {
@@ -69,11 +70,15 @@ export function cursorOf(selection: Selection | null): PresenceState["cursor"] {
   return selection ? { anchor: { ...selection.anchor }, head: { ...selection.head } } : null;
 }
 
-/** The host's document name, from whichever participant publishes one. */
+/**
+ * The host's document name, from whichever participant publishes one. It becomes this window's script name and
+ * so the default file name in Save and Export, so it is taken as a plain name with no path in it.
+ */
 export function hostDocName(states: Map<number, unknown>, self: number): string | null {
   for (const [clientId, state] of states) {
     const name = presenceOf(state)?.doc?.name;
-    if (clientId !== self && typeof name === "string" && name.trim()) return name.trim().slice(0, 120);
+    const plain = clientId !== self && typeof name === "string" ? plainFileName(name).slice(0, 120) : "";
+    if (plain) return plain;
   }
   return null;
 }

@@ -264,7 +264,7 @@ test("saved phone inbox survives a stopped connection; accepting a note leaves s
     try {
         await draft(r.page);
         await runCommand(r.page, "phone.open");
-        await expect(r.page.getByRole("combobox", { name: "Phone connection protection" })).toHaveValue("https");
+        await expect(r.page.getByRole("button", { name: "Start phone pairing…" })).toBeVisible();
         // Opening the panel writes nothing into the script; an untitled one is keyed by its session.
         expect(await r.page.evaluate(() => (window as any).__app.session.doc.meta.get("history.documentId"))).toBeUndefined();
         const key = await r.page.evaluate(() => (window as any).__app.session.id);
@@ -360,7 +360,7 @@ finally {
 } });
 test("a window cannot read, claim or move another script's phone inbox by its key", async () => { const r = await launch(); try {
     await runCommand(r.page, "phone.open");
-    await expect(r.page.getByRole("combobox", { name: "Phone connection protection" })).toHaveValue("https");
+    await expect(r.page.getByRole("button", { name: "Start phone pairing…" })).toBeVisible();
     const folder = join(r.userData, "phone-inbox");
     mkdirSync(folder, { recursive: true });
     const other = "a".repeat(64);

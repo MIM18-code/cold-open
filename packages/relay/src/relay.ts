@@ -17,9 +17,11 @@ import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import * as Y from "yjs";
 
 import {
-  CLOSE_BAD_MESSAGE, CLOSE_DENIED, CLOSE_NOT_OPEN, CLOSE_NO_ROOM, ID_PATTERN, MESSAGE_AUTH, MESSAGE_AWARENESS,
+  CLOSE_BAD_MESSAGE, CLOSE_DENIED, CLOSE_FULL, CLOSE_NOT_OPEN, CLOSE_NO_ROOM, CLOSE_TOO_LARGE, ID_PATTERN, MESSAGE_AUTH, MESSAGE_AWARENESS,
   MESSAGE_QUERY_AWARENESS, MESSAGE_SYNC, READ_KEY_PREFIX, ROOM_PREFIX, base64url, randomId,
 } from "./protocol.ts";
+import type { LinkKeys } from "./sealed.ts";
+import { acceptSealed } from "./sealed-peer.ts";
 
 export interface RelayOptions {
   /** 0 picks a free port. */
@@ -36,10 +38,25 @@ export interface RelayOptions {
   emptyRoomTtl?: number;
   /** Largest message accepted, in bytes. */
   maxPayload?: number;
+  /** Rooms open at once, claimed and created together. Undefined means no limit. */
+  maxRooms?: number;
+  /** Joined connections across every room. Undefined means no limit. */
+  maxConnections?: number;
+  /** Largest document a room may hold, as encoded Yjs state in bytes. Undefined means no limit. */
+  maxDocBytes?: number;
+  /** Largest awareness (presence) update accepted, in bytes. Undefined means no limit. */
+  maxAwarenessBytes?: number;
+  /** Awareness client IDs one connection may speak for. A real client has one. Undefined means no limit. */
+  maxAwarenessClients?: number;
   /** Also serve readers on an existing HTTP(S) listener, e.g. the paired phone server. */
   readerServer?: ReturnType<typeof createServer>;
   /** A remembered phone waits for its script to reopen. */
   readerWaitForRoom?: boolean;
+  /**
+   * Make the reader listener accept only sealed connections (sealed.ts): a phone on plain ws:// whose pairing
+   * secret came from a QR code. Returns the keys for a pairing ID, or nothing for an unknown one.
+   */
+  readerSealed?: (id: string) => LinkKeys | undefined;
   /** Interval for WebSocket pings that drop dead connections, in milliseconds. */
   pingInterval?: number;
   /** Receives counts and errors. Never room keys. */
@@ -104,6 +121,13 @@ class Room {
   readonly readKey: string;
   /** Made by createRoom(): never expires on its own. */
   readonly pinned: boolean;
+  /** The encoded document size at the last measurement. */
+  measured = 0;
+  /**
+   * Bytes of updates accepted since then. measured + since estimates the size; it can run low, because an update that
+   * deletes scattered characters splits text into many items and grows the document several times its own length.
+   */
+  since = 0;
 
   constructor(name: string, readKey: string, pinned: boolean) {
     this.name = name;
@@ -167,6 +191,30 @@ function send(socket: WebSocket, message: Uint8Array): void {
   });
 }
 
+/**
+ * Drop a socket on any error but one. For a message past maxPayload, ws has already sent close code 1009 and stops
+ * reading (incoming data is discarded), so terminating would only risk losing that close frame, and the client would
+ * reconnect and resend the same script forever. ws destroys the socket itself if the peer has not closed in 30 seconds.
+ */
+function dropOnError(socket: WebSocket): (error: Error & { code?: string }) => void {
+  return (error) => {
+    if (error.code !== "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH") socket.terminate();
+  };
+}
+
+/** How much unread data a peer may have waiting and still be answered. */
+const MAX_UNREAD = 16 * 1024 * 1024;
+
+/**
+ * Answer a peer's own request (the document, everyone's presence). A peer that keeps asking without reading the
+ * answers would grow the host's memory without limit, so it is dropped and may reconnect. One answer of any size
+ * still goes out, and messages relayed from other peers are not counted against it.
+ */
+function reply(socket: WebSocket, message: Uint8Array): void {
+  if (socket.bufferedAmount > MAX_UNREAD) return socket.terminate();
+  send(socket, message);
+}
+
 /** The client IDs an awareness update speaks for. */
 function awarenessClients(update: Uint8Array): number[] {
   const decoder = decoding.createDecoder(update);
@@ -212,6 +260,14 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
     log(`room closed (${rooms.size} open)`);
   };
 
+  const connectionCount = () => {
+    let count = 0;
+    for (const room of rooms.values()) count += room.connections.size;
+    return count;
+  };
+  const roomsFull = () => options.maxRooms !== undefined && rooms.size >= options.maxRooms;
+  const connectionsFull = () => options.maxConnections !== undefined && connectionCount() >= options.maxConnections;
+
   const deny = (socket: WebSocket, code: number, reason: string) => {
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, MESSAGE_AUTH);
@@ -226,7 +282,6 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
     socket.on("pong", () => (connection.alive = true));
     socket.on("message", (data) => handleMessage(room, connection, toBytes(data)));
     socket.on("close", () => leave(room, connection));
-    socket.on("error", () => socket.terminate());
 
     // Server side of the handshake: our state vector, then everyone's presence.
     const encoder = encoding.createEncoder();
@@ -252,6 +307,62 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
     }
   };
 
+  /**
+   * Whether an update keeps the room's document within maxDocBytes, counting it as accepted if so. Yjs cannot roll an
+   * update back, so decide first. Measuring is O(document), so it runs once per sixteenth of the limit in input; the
+   * updates accepted in between can take the document past the limit by what they add, about a third of it at most.
+   */
+  const accepts = (room: Room, update: Uint8Array): boolean => {
+    const limit = options.maxDocBytes;
+    if (limit === undefined) return true;
+    const n = update.length;
+    if (n >= limit / 16) {
+      // One update this large could add several times the limit, so try it on a copy. Its own size pays for that.
+      const copy = new Y.Doc();
+      let size: number;
+      try {
+        Y.applyUpdate(copy, Y.encodeStateAsUpdate(room.doc));
+        Y.applyUpdate(copy, update);
+        size = Y.encodeStateAsUpdate(copy).length;
+      } finally {
+        copy.destroy();
+      }
+      if (size > limit) return false;
+      room.measured = size;
+      room.since = 0;
+      return true;
+    }
+    if (room.since + n >= limit / 16) {
+      room.measured = Y.encodeStateAsUpdate(room.doc).length;
+      room.since = 0;
+    }
+    if (room.measured + room.since + n > limit) return false;
+    room.since += n;
+    return true;
+  };
+
+  // syncProtocol.readUpdate, with the payload length checked before it is applied and the same error handling.
+  const applyUpdate = (room: Room, connection: Connection, decoder: decoding.Decoder) => {
+    try {
+      const update = decoding.readVarUint8Array(decoder);
+      if (!accepts(room, update)) {
+        log("refused an update past the document limit");
+        connection.socket.close(CLOSE_TOO_LARGE, "the script is too large for this relay");
+        return;
+      }
+      Y.applyUpdate(room.doc, update, connection);
+    } catch (error) {
+      console.error("Caught error while handling a Yjs update", error);
+    }
+  };
+
+  const awarenessFits = (connection: Connection, update: Uint8Array): boolean => {
+    if (options.maxAwarenessBytes !== undefined && update.length > options.maxAwarenessBytes) return false;
+    if (options.maxAwarenessClients === undefined) return true;
+    const added = new Set(awarenessClients(update).filter((id) => !connection.clients.has(id)));
+    return connection.clients.size + added.size <= options.maxAwarenessClients;
+  };
+
   const handleMessage = (room: Room, connection: Connection, data: Uint8Array) => {
     try {
       const decoder = decoding.createDecoder(data);
@@ -262,13 +373,19 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
         if (step === syncProtocol.messageYjsSyncStep1) {
           encoding.writeVarUint(encoder, MESSAGE_SYNC);
           syncProtocol.readSyncStep1(decoder, encoder, room.doc);
-          send(connection.socket, encoding.toUint8Array(encoder));
+          reply(connection.socket, encoding.toUint8Array(encoder));
         } else if (step === syncProtocol.messageYjsSyncStep2 || step === syncProtocol.messageYjsUpdate) {
-          // Read-only clients never change the document.
-          if (connection.access === "write") syncProtocol.readUpdate(decoder, room.doc, connection);
+          // Read-only clients never change the document. Nor does a writer the relay is closing: its later edits may
+          // depend on the one it refused, and Yjs would hold them as pending.
+          if (connection.access === "write" && connection.socket.readyState === connection.socket.OPEN) applyUpdate(room, connection, decoder);
         } else throw new Error("unknown sync message");
       } else if (type === MESSAGE_AWARENESS) {
         const update = decoding.readVarUint8Array(decoder);
+        // The relay keeps every state it is sent until the connection closes, so presence gets limits of its own.
+        if (!awarenessFits(connection, update)) {
+          connection.socket.close(CLOSE_BAD_MESSAGE, "presence over the relay's limit");
+          return;
+        }
         // A reader speaks only for its own clients, so it cannot rewrite or remove a writer's presence. A writer may
         // take over its own ID from a connection that has not yet timed out (a laptop waking up and reconnecting).
         if (connection.access === "read" && awarenessClients(update).some((id) => ownedElsewhere(room, id, connection))) return;
@@ -276,7 +393,7 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
       } else if (type === MESSAGE_QUERY_AWARENESS) {
         encoding.writeVarUint(encoder, MESSAGE_AWARENESS);
         encoding.writeVarUint8Array(encoder, awarenessProtocol.encodeAwarenessUpdate(room.awareness, [...room.awareness.getStates().keys()]));
-        send(connection.socket, encoding.toUint8Array(encoder));
+        reply(connection.socket, encoding.toUint8Array(encoder));
       }
       // Other message types (auth from a client, future extensions) are ignored.
     } catch (error) {
@@ -297,22 +414,37 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
       // Left empty, the room and key fail validation below and the client is refused.
     }
     wss.handleUpgrade(request, stream, head, (socket) => {
-      if (!ID_PATTERN.test(name) || !ID_PATTERN.test(key)) return deny(socket, CLOSE_DENIED, "invalid room or key");
-      let room = rooms.get(name);
-      if (!room) {
-        if (readersOnly || !options.allowClaim) return deny(socket,
-          readersOnly && options.readerWaitForRoom ? CLOSE_NOT_OPEN : CLOSE_NO_ROOM, "no such room");
-        // Only the read-write key the name was derived from opens a room. Anything else (a read-only key after a
-        // restart or expiry) must not become the room's key, or a reader would gain write access and lock writers out.
-        if (!sameKey(roomFor(key), name)) return deny(socket, CLOSE_NOT_OPEN, "the room is not open yet");
-        room = new Room(name, readKeyFor(key), false);
-        rooms.set(name, room);
-        log(`room opened (${rooms.size} open)`);
+      // Before any refusal: a refused peer can still send a broken frame, and a WebSocket "error" with no listener
+      // is an uncaught exception in the app that hosts this relay.
+      socket.on("error", dropOnError(socket));
+      if (readersOnly && options.readerSealed) {
+        // The room and key arrive inside the tunnel, so neither is ever in a URL on the network.
+        const keys = /^sealed\/[A-Za-z0-9_-]{22}$/.test(name) ? options.readerSealed(name.slice(7)) : undefined;
+        if (!keys) return deny(socket, CLOSE_DENIED, "unknown pairing");
+        return acceptSealed(socket, keys, (sealed, room, roomKey) => admit(sealed, room, roomKey, true));
       }
-      const access = room.accessFor(key);
-      if (!access || (readersOnly && access !== "read")) return deny(socket, CLOSE_DENIED, "wrong key");
-      join(room, socket, access);
+      admit(socket, name, key, readersOnly);
     });
+  };
+
+  const admit = (socket: WebSocket, name: string, key: string, readersOnly: boolean) => {
+    if (!ID_PATTERN.test(name) || !ID_PATTERN.test(key)) return deny(socket, CLOSE_DENIED, "invalid room or key");
+    let room = rooms.get(name);
+    if (!room) {
+      if (readersOnly || !options.allowClaim) return deny(socket,
+        readersOnly && options.readerWaitForRoom ? CLOSE_NOT_OPEN : CLOSE_NO_ROOM, "no such room");
+      // Only the read-write key the name was derived from opens a room. Anything else (a read-only key after a
+      // restart or expiry) must not become the room's key, or a reader would gain write access and lock writers out.
+      if (!sameKey(roomFor(key), name)) return deny(socket, CLOSE_NOT_OPEN, "the room is not open yet");
+      if (roomsFull() || connectionsFull()) return deny(socket, CLOSE_FULL, "the relay is full");
+      room = new Room(name, readKeyFor(key), false);
+      rooms.set(name, room);
+      log(`room opened (${rooms.size} open)`);
+    }
+    const access = room.accessFor(key);
+    if (!access || (readersOnly && access !== "read")) return deny(socket, CLOSE_DENIED, "wrong key");
+    if (connectionsFull()) return deny(socket, CLOSE_FULL, "the relay is full");
+    join(room, socket, access);
   };
   server.on("upgrade", onUpgrade);
   const readerUpgrade = (request: IncomingMessage, stream: Duplex, head: Buffer) =>
@@ -349,6 +481,7 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
     createRoom(key = randomId()) {
       if (!ID_PATTERN.test(key)) throw new Error("Invalid room key.");
       if (rooms.has(roomFor(key))) throw new Error("Room already exists.");
+      if (roomsFull()) throw new Error(`The relay is full: it already has ${options.maxRooms} rooms open.`);
       const keys = { room: roomFor(key), key, readKey: readKeyFor(key) };
       rooms.set(keys.room, new Room(keys.room, keys.readKey, true));
       return keys;
@@ -358,9 +491,7 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
       if (room) removeRoom(room, code);
     },
     stats() {
-      let connections = 0;
-      for (const room of rooms.values()) connections += room.connections.size;
-      return { rooms: rooms.size, connections };
+      return { rooms: rooms.size, connections: connectionCount() };
     },
     async close() {
       options.readerServer?.off("upgrade", readerUpgrade);

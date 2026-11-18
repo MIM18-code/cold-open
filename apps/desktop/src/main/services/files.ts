@@ -5,6 +5,7 @@ import { mkdir, readdir, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { CHANNELS, type FileFilter, type OpenedFile } from "../../shared/api.ts";
+import { saveDialogName } from "../../shared/file-name.ts";
 import type { ServiceContext } from "../context.ts";
 import { registerRecentFiles } from "../recent-files.ts";
 import { randomSuffix, readChosenFile, replaceFile } from "../safe-fs.ts";
@@ -34,9 +35,12 @@ export function register(ctx: ServiceContext): void {
 
   ctx.handle(CHANNELS.saveDialog, async (event, options: { title?: string; defaultPath?: string; filters?: FileFilter[] } = {}) => {
     const window = ctx.windowOf(event.sender);
+    // Only a file name: the page builds it from the script's name, which a co-writing host can set, and a path
+    // here would open the dialog in a folder of their choosing. The dialog starts in the last folder used.
+    const defaultPath = saveDialogName(options.defaultPath);
     const dialogOptions: Electron.SaveDialogOptions = {
       title: options.title ?? "Save",
-      ...(options.defaultPath ? { defaultPath: options.defaultPath } : {}),
+      ...(defaultPath ? { defaultPath } : {}),
       ...(options.filters ? { filters: options.filters } : {}),
     };
     const result = window ? await dialog.showSaveDialog(window, dialogOptions) : await dialog.showSaveDialog(dialogOptions);

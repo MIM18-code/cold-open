@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { phoneLink } from "./phone-link.ts";
 import test from "node:test";
 import { mkdir, mkdtemp, rm, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -117,14 +118,14 @@ test("phone inbox permits system-resolved parent folders but rejects a redirecte
     finally { await rm(root, { recursive: true, force: true }); }
 });
 test("phone receipt waits for persistence and a failed disk write does not falsely acknowledge or retain an item", async () => { const snapshot = { title: "Test", revision: "r1", cues: [{ id: "c", paragraphId: "p", speaker: "M", heading: "H", text: "Door" }] }; let persist = true; const server = new PhoneServer(snapshot, () => { }, async () => { if (!persist)
-    throw new Error("Disk full"); }); const { url } = await server.start("127.0.0.1"), u = new URL(url), headers = { authorization: `Bearer ${u.hash.slice(1)}`, "content-type": "application/json" }; try {
+    throw new Error("Disk full"); }); const u = phoneLink((await server.start("127.0.0.1")).pairing); try {
     const body = { id: "message-00000001", kind: "dictation", text: "A draft.", cueId: "c", revision: "r1" };
     persist = false;
-    const failed = await fetch(u.origin + "/api/inbox", { method: "POST", headers, body: JSON.stringify(body) });
+    const failed = await u.post("/api/inbox", body);
     assert.equal(failed.status, 503);
     assert.equal(server.items().length, 0);
     persist = true;
-    assert.equal((await fetch(u.origin + "/api/inbox", { method: "POST", headers, body: JSON.stringify(body) })).status, 200);
+    assert.equal((await u.post("/api/inbox", body)).status, 200);
     assert.equal(server.items()[0]?.sourceText, "Door");
 }
 finally {

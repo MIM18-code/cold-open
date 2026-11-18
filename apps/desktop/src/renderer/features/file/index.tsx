@@ -7,7 +7,7 @@ import { CHANNELS, NATIVE_EXTENSION, type OpenedFile } from "../../../shared/api
 import { app, type App, type Feature, type ModalProps } from "../../core/app.ts";
 import { useSessionState } from "../../core/hooks.ts";
 import { nativeOnlyFeatures } from "./preflight.ts";
-import { decodeNative, encodeNative, isNative, mergeNativeFromDisk, metaAfterMerge, sharesHistory } from "../../core/fileformat.ts";
+import { decodeNative, encodeNative, isNative, mergeNativeFromDisk, sharesHistory } from "../../core/fileformat.ts";
 import { desktop, isDesktop, messageBox } from "../../core/platform.ts";
 import { currentPagination } from "../print/live.ts";
 import { titleFields } from "../title-page/titlepage.ts";
@@ -42,8 +42,8 @@ export function sessionFromFile(file: OpenedFile): DocumentSession {
   const format = formatOf(file.name, file.data);
   const name = baseName(file.name);
   if (format === "screenplay") {
-    const { doc } = decodeNative(file.data);
-    const session = new DocumentSession(doc, { path: file.path, format, name });
+    const { doc, historyId } = decodeNative(file.data);
+    const session = new DocumentSession(doc, { path: file.path, format, name, historyId });
     session.undo.clear();
     session.dirty = false;
     session.fileHash = file.fileHash ?? null;
@@ -69,7 +69,7 @@ async function restoredSessionFromFile(file: OpenedFile): Promise<DocumentSessio
 
 /** Serialize the session in a format. */
 export function serialize(session: DocumentSession, format: SourceFormat): Uint8Array | string {
-  if (format === "screenplay") return encodeNative(session.doc, session.name);
+  if (format === "screenplay") return encodeNative(session.doc, session.name, session.historyId);
   const warnings: string[] = [];
   const script = session.script();
   if (format === "fdx") {
@@ -184,14 +184,14 @@ async function saveTo(session: DocumentSession, path: string, format: SourceForm
     // The merge brings in the other copy's deletions too, and the save then replaces the only file on disk, so
     // keep this window's version in Draft History first. Without that copy, leave the decision to the writer.
     const label = "Before merging another copy";
-    const before = encodeNative(session.doc, session.name);
+    const before = encodeNative(session.doc, session.name, session.historyId);
+    // Under this window's ID only. The merge may leave another copy's ID in the document's metadata, but the
+    // window keeps its own and saves it into the file, so this is where the snapshot is found, now and after
+    // reopening. Filing it under the merged ID too would write into whatever history that ID names.
     const idBefore = historyId(session, true);
     if (!idBefore) throw error;
-    // Each copy may have written its own history ID and the merge keeps one, so file the snapshot under that too.
-    const idAfter = metaAfterMerge(session.doc, disk.data, "history.documentId");
     try {
       await recordVersion(idBefore, label, before);
-      if (typeof idAfter === "string" && idAfter !== idBefore) await recordVersion(idAfter, label, before);
     } catch {
       throw error;
     }
@@ -370,7 +370,7 @@ async function writeBackup(session: DocumentSession): Promise<void> {
   if (!session.dirty || !isDesktop) return;
   const path = await backupPath(session);
   if (!path) return;
-  await desktop.invoke(CHANNELS.writeFile, path, encodeNative(session.doc, session.name));
+  await desktop.invoke(CHANNELS.writeFile, path, encodeNative(session.doc, session.name, session.historyId));
 }
 async function runBackup(session: DocumentSession): Promise<void> {
   if (!session.dirty || !isDesktop || recoveryBusy.has(session.id)) return;

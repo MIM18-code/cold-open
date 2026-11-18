@@ -383,3 +383,82 @@ test("a remembered reader room can be restored with the same key and waits when 
     await new Promise<void>(resolve => readerServer.close(() => resolve()));
   }
 });
+
+test("a refused peer that sends a broken frame cannot throw in the host process", async () => {
+  const { relay } = await startRelay();
+  const uncaught: unknown[] = [];
+  const listener = (error: unknown) => { uncaught.push(error); };
+  process.on("uncaughtException", listener);
+  const socket = tcpConnect(relay.port, "127.0.0.1", () => {
+    socket.write(`GET /${randomId()}?key=${randomId()} HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n` +
+      "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n");
+  });
+  try {
+    // The relay's refusal arrives first; answer it with a frame whose reserved bits are set.
+    await new Promise<void>(resolve => socket.once("data", () => resolve()));
+    socket.write(Buffer.from([0xf2, 0x80, 0, 0, 0, 0]));
+    await new Promise<void>(resolve => socket.once("close", () => resolve()));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(uncaught, []);
+    assert.deepEqual(relay.stats(), { rooms: 0, connections: 0 });
+  } finally {
+    process.off("uncaughtException", listener);
+    socket.destroy();
+  }
+});
+
+test("a reader that asks for the document repeatedly without reading is dropped", async () => {
+  const { relay, url } = await startRelay();
+  const { room, key, readKey } = relay.createRoom();
+  const writer = connect(url, room, key);
+  await writer.whenSynced();
+  writer.doc.getText("t").insert(0, "x".repeat(2_000_000));
+  await new Promise(resolve => setTimeout(resolve, 200));
+  const socket = tcpConnect(relay.port, "127.0.0.1", () => {
+    socket.write(`GET /${room}?key=${readKey} HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n` +
+      "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n");
+  });
+  // The relay drops this peer mid-write.
+  socket.on("error", () => undefined);
+  try {
+    await new Promise<void>(resolve => socket.once("data", () => resolve()));
+    socket.pause();
+    assert.equal(relay.stats().connections, 2);
+    // Sync step 1 with an empty state vector, in a masked client frame: the relay answers with the whole document.
+    const step1 = Buffer.from([0x82, 0x84, 0, 0, 0, 0, 0, 0, 1, 0]);
+    for (let i = 0; i < 100 && relay.stats().connections === 2; i++) {
+      socket.write(step1);
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    // Dropped while still unread, so the replies are not held for it.
+    await waitFor(() => relay.stats().connections === 1, "the unread peer is dropped");
+  } finally {
+    socket.destroy();
+  }
+});
+
+test("a reader still receiving a script larger than the unread limit is kept while a writer types", async () => {
+  const { relay, url } = await startRelay();
+  const { room, key, readKey } = relay.createRoom();
+  const writer = connect(url, room, key);
+  await writer.whenSynced();
+  writer.doc.getText("t").insert(0, "x".repeat(18 * 1024 * 1024));
+  await new Promise(resolve => setTimeout(resolve, 500));
+  const socket = tcpConnect(relay.port, "127.0.0.1", () => {
+    socket.write(`GET /${room}?key=${readKey} HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n` +
+      "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n");
+  });
+  socket.on("error", () => undefined);
+  try {
+    await new Promise<void>(resolve => socket.once("data", () => resolve()));
+    socket.pause();
+    // One request for the document. Its answer is larger than the limit and has not been read yet.
+    socket.write(Buffer.from([0x82, 0x84, 0, 0, 0, 0, 0, 0, 1, 0]));
+    await new Promise(resolve => setTimeout(resolve, 300));
+    writer.doc.getText("t").insert(0, "y");
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(relay.stats().connections, 2);
+  } finally {
+    socket.destroy();
+  }
+});

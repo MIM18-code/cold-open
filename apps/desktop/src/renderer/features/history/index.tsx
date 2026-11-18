@@ -6,24 +6,17 @@ import { useSession, useSetting } from "../../core/hooks.ts";
 import { decodeNative, encodeNative } from "../../core/fileformat.ts";
 import { desktop, isDesktop, messageBox } from "../../core/platform.ts";
 import type { DocumentSession } from "../../core/session.ts";
+import { HISTORY_ID_KEY as ID } from "../../core/session.ts";
+import { historyId } from "./identity.ts";
 import { automaticSnapshotDue } from "./policy.ts";
 import "./history.css";
 
-const ID = "history.documentId";
-export function historyId(session: DocumentSession, create = false): string | null {
-  const value = session.doc.meta.get(ID);
-  if (typeof value === "string" && /^[a-zA-Z0-9_-]{12,80}$/.test(value)) return value;
-  if (!create || session.readOnly) return null;
-  const id = crypto.randomUUID();
-  // Document identity is not a creative edit: Undo must not detach a script from its saved history.
-  session.doc.ydoc.transact(() => session.doc.meta.set(ID, id), "history-identity");
-  return id;
-}
+export { historyId };
 export async function snapshot(session: DocumentSession, label: string, named = false): Promise<HistoryEntry> {
   if (!isDesktop) throw new Error("Local history requires the desktop app.");
   if (session.readOnly) throw new Error("Read-only scripts cannot create or restore history.");
   const documentId = historyId(session, true)!;
-  return recordVersion(documentId, label, encodeNative(session.doc, session.name), named);
+  return recordVersion(documentId, label, encodeNative(session.doc, session.name, session.historyId), named);
 }
 /** Store an already-encoded version under a history ID. */
 export function recordVersion(documentId: string, label: string, data: Uint8Array, named = false): Promise<HistoryEntry> {

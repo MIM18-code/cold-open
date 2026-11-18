@@ -2,6 +2,11 @@
 export const WINDOW_MEMORY_KEY = "files.openWindows.v1";
 export interface WindowMemory {
     path: string;
+    /**
+     * Where the script really sat when the window was remembered (its folder's real path plus its name). A window
+     * is restored only while the script is still there: see reopenable() in recent-files.ts.
+     */
+    location?: string;
     bounds: {
         x: number;
         y: number;
@@ -21,7 +26,7 @@ export function windowMemories(value: unknown): WindowMemory[] {
             continue;
         if (result.some((r) => r.path === item.path))
             continue;
-        result.push({ path: item.path, bounds: { x: Math.round(b.x), y: Math.round(b.y), width: Math.min(3840, Math.max(760, Math.round(b.width))), height: Math.min(2160, Math.max(480, Math.round(b.height))) } });
+        result.push({ path: item.path, ...(typeof item.location === "string" && item.location.length <= 4096 ? { location: item.location } : {}), bounds: { x: Math.round(b.x), y: Math.round(b.y), width: Math.min(3840, Math.max(760, Math.round(b.width))), height: Math.min(2160, Math.max(480, Math.round(b.height))) } });
     }
     return result;
 }

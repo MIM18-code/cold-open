@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Image, Keyboard, KeyboardAvoidingView, Linking, ScrollView, TextInput, View, type ScrollViewInstance } from "react-native";
+import { Image, Keyboard, KeyboardAvoidingView, Linking, ScrollView, TextInput, View, type ScrollViewInstance } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Action, c, Caption, Heading, Label, NavBar, Symbol } from "./ui";
@@ -22,16 +22,8 @@ export function Pair({ scan, initialError, back }: { scan(raw: string): Promise<
     if (locked.current) return;
     locked.current = true;
     try {
-      const pair = decodePairing(value);
+      decodePairing(value);
       showCamera(false);
-      if (!pair.secure) {
-        const ok = await new Promise<boolean>(resolve => Alert.alert("Unencrypted link",
-          "People on this network could read the script, notes, and pairing key. Use only Wi-Fi you trust.", [
-            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-            { text: "Pair on this network", onPress: () => resolve(true) },
-          ]));
-        if (!ok) return;
-      }
       await scan(value);
     } catch (e) { setError(e instanceof SyntaxError || e instanceof TypeError ? "Use the QR code or Copy app pairing code in the Mac’s Phone Companion." : e instanceof Error ? e.message : "Couldn’t pair. Start pairing again on the Mac."); }
     finally { locked.current = false; }

@@ -8,12 +8,12 @@ import type { Presence, Row } from "./live";
 import { Action, c, Caption, Heading, Label, NavBar, StatusDot, Symbol, ToolbarAction } from "./ui";
 
 type Props = {
-  rows: Row[]; people: Presence; status: string; secure: boolean; showStatus(): void;
+  rows: Row[]; people: Presence; status: string; showStatus(): void;
   compose(kind: "draft" | "dictation", row: Row): void;
   /** Opens the note screen, attached to a passage when one is given. */
   note(row?: Row): void;
 };
-export function Reader({ rows, people, status, secure, showStatus, compose, note }: Props) {
+export function Reader({ rows, people, status, showStatus, compose, note }: Props) {
   const ended = pairingEnded(status);
   const dark = useColorScheme() === "dark";
   const [layouts, setLayouts] = useState<Record<string, { text: string; lines: ReaderLine[] }>>({});
@@ -148,9 +148,9 @@ export function Reader({ rows, people, status, secure, showStatus, compose, note
       }}
       ListHeaderComponent={<View style={{ paddingHorizontal: 22, paddingTop: 14, paddingBottom: 12,
         borderBottomWidth: 0.5, borderColor: c.line, gap: 8 }}>
-        <View accessible accessibilityLabel={`${status}${secure ? "" : ", unencrypted Wi-Fi"}`}
+        <View accessible accessibilityLabel={status}
           style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
-          <StatusDot status={status} /><Caption>{status}{secure ? "" : " · Unencrypted Wi-Fi"}</Caption>
+          <StatusDot status={status} /><Caption>{status}</Caption>
         </View>
         {ended && <Action label="Pair again" icon="link" press={showStatus} />}
         {people.writers.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false}

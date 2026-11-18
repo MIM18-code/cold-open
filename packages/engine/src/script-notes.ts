@@ -6,7 +6,8 @@ import * as Y from "yjs";
 import type { ScreenplayDoc, TextPosition } from "./doc.ts";
 import { fdxOffset, fdxPositionAt, fdxPositions } from "./fdx.ts";
 import { plainText, type Script, type XmlNode } from "./model.ts";
-import { attr, textOf } from "./xml.ts";
+import { readOnce, storedFdx } from "./shapes.ts";
+import { asXmlNode, attr, textOf } from "./xml.ts";
 export const SCRIPT_NOTE_ANCHORS = "fdx.scriptNoteAnchors.v1";
 // The Inklot... FDX attribute names (also InklotDetachedKey, InklotTagId) keep the old app name: Backlot reads them from saved files.
 export const ORPHAN_NOTE_ATTR = "InklotUnresolvedNote";
@@ -25,6 +26,42 @@ interface RangeAnchor {
     scope?: string;
 }
 type Anchors = Record<string, RangeAnchor>;
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * Bytes that decode to a position in the body, by character or (at its end) by the body's name. Resolving a position
+ * that names another root type creates that type in the Y.Doc, and Yjs throws on one that names neither.
+ */
+function inBody(relative: unknown): boolean {
+    if (!Array.isArray(relative) || !Array.from(relative).every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255))
+        return false;
+    try {
+        const position = Y.decodeRelativePosition(Uint8Array.from(relative));
+        return position.type === null && (position.item !== null ? position.tname === null : position.tname === "body");
+    }
+    catch {
+        return false;
+    }
+}
+const isEndPoint = (value: unknown): value is EndPoint => isRecord(value) && typeof value.paragraphId === "string" && Number.isSafeInteger(value.offset)
+    && inBody(value.relative);
+/** The anchors as captureScriptNotes writes them. The meta value syncs, so anchors of another shape are left out. */
+function asAnchors(value: unknown): Anchors | undefined {
+    if (!isRecord(value))
+        return undefined;
+    const anchors: Anchors = {};
+    for (const [key, anchor] of Object.entries(value)) {
+        if (!isRecord(anchor) || !isEndPoint(anchor.start) || !isEndPoint(anchor.end) || typeof anchor.quote !== "string" || typeof anchor.signature !== "string")
+            continue;
+        const originalNode = asXmlNode(anchor.originalNode);
+        const point = ({ paragraphId, offset, relative }: EndPoint): EndPoint => ({ paragraphId, offset, relative: Array.from(relative) });
+        anchors[key] = { start: point(anchor.start), end: point(anchor.end), quote: anchor.quote, signature: anchor.signature,
+            ...(typeof anchor.rawRange === "string" ? { rawRange: anchor.rawRange } : {}), ...(originalNode ? { originalNode } : {}),
+            ...(typeof anchor.scope === "string" ? { scope: anchor.scope } : {}) };
+    }
+    return anchors;
+}
+const anchorCache = new WeakMap<object, Anchors | undefined>();
+const storedAnchors = (doc: ScreenplayDoc) => readOnce(anchorCache, doc.meta.get(SCRIPT_NOTE_ANCHORS), asAnchors);
 export interface ScriptNoteInfo {
     key: string;
     node: XmlNode;
@@ -79,7 +116,7 @@ function findNotes(script: Script): Found[] {
     return result;
 }
 function rawScript(doc: ScreenplayDoc): Script {
-    return { titlePage: [], paragraphs: structuredClone([...doc.paragraphs()]), fdx: structuredClone(doc.meta.get("fdx") as Script["fdx"]) };
+    return { titlePage: [], paragraphs: structuredClone([...doc.paragraphs()]), fdx: structuredClone(storedFdx(doc)) };
 }
 function rangeOf(script: Script, found: Found): {
     from: TextPosition;
@@ -109,7 +146,7 @@ function quote(doc: ScreenplayDoc, from: TextPosition, to: TextPosition): string
 /** Called in the same transaction as loading FDX or explicitly editing note XML. Never changes script text. */
 export function captureScriptNotes(doc: ScreenplayDoc, preserveExisting = false): void {
     const script = rawScript(doc), notes = findNotes(script);
-    const anchors: Anchors = preserveExisting ? { ...(doc.meta.get(SCRIPT_NOTE_ANCHORS) as Anchors | undefined) } : {};
+    const anchors: Anchors = preserveExisting ? { ...storedAnchors(doc) } : {};
     for (const found of notes) {
         // Newly duplicated legacy notes need anchors; existing global ranges may be stale XML
         // after typing or insertion and must keep their relative positions.
@@ -165,7 +202,7 @@ function printedRange(script: Script, from: TextPosition, to: TextPosition): str
     return start <= end ? `${start},${end}` : null;
 }
 export function scriptNotes(doc: ScreenplayDoc): ScriptNoteInfo[] {
-    const script = rawScript(doc), anchors = doc.meta.get(SCRIPT_NOTE_ANCHORS) as Anchors | undefined;
+    const script = rawScript(doc), anchors = storedAnchors(doc);
     const foundNotes = findNotes(script);
     const result: ScriptNoteInfo[] = foundNotes.map((found) => {
         const anchor = anchors?.[found.key], target = anchor?.signature === found.signature ? resolved(doc, anchor) : null;

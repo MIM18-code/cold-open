@@ -7,13 +7,13 @@ The release includes a `licenses/` directory with the full upstream license and 
 `licenses/components.json` records each bundled package's name, version, license and upstream repository:
 
 - JavaScript packages bundled into the app (React, ProseMirror, Yjs, y-protocols, lib0, ws, pdf-lib, saxes,
-  qrcode.react, Atlassian's pragmatic drag-and-drop and their dependencies).
+  qrcode.react, noble-ciphers, noble-hashes, Atlassian's pragmatic drag-and-drop and their dependencies).
 - Swift packages compiled into the voice and speech helpers (FluidAudio, MLX Swift, mlx-audio-swift,
   swift-transformers, swift-huggingface, swift-jinja, swift-crypto, swift-asn1, swift-collections,
   swift-numerics, EventSource, yyjson, zstd), including the components they compile in themselves, such as MLX,
   metal-cpp, fmt and nlohmann/json inside MLX Swift, and FluidAudio's third-party model notices.
 
-Electron 44.2.0's MIT license is in `licenses/electron-LICENSE`. Its complete Chromium component notices are in
+Electron 44.11.3's MIT license is in `licenses/electron-LICENSE`. Its complete Chromium component notices are in
 `licenses/electron-LICENSES.chromium.html`. Native runtime source and modification information is in
 [docs/NATIVE_SOURCE.md](docs/NATIVE_SOURCE.md). The corresponding source archives accompany every binary release;
 keep them, and these notices, when redistributing a release.

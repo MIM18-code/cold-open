@@ -11,6 +11,14 @@ export const LOCAL_ORIGIN = Symbol("local");
 /** Transaction origin for the renumbering after a merge: synced to every co-writer, and not an edit Undo takes back. */
 export const SCENE_NUMBERS_ORIGIN = Symbol("scene-numbers");
 
+/** Metadata key for the ID that names a script's stores on this Mac: Draft History, the phone inbox, quick notes. */
+export const HISTORY_ID_KEY = "history.documentId";
+
+/** A history ID as the main process accepts it, or null. */
+export function validHistoryId(value: unknown): string | null {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]{12,80}$/.test(value) ? value : null;
+}
+
 /** Thrown by DocumentSession.edit while the document is read-only (a read-only co-writing invite). */
 export class ReadOnlyError extends Error {
   constructor() {
@@ -42,16 +50,24 @@ export class DocumentSession {
   /** The crash-recovery copy this document was restored from; removed once the document is saved or discarded. */
   recoveredFrom: string | null = null;
   moveConflicts: StructuralMoveConflict[] = [];
+  /**
+   * The ID that names this script's stores on this Mac, fixed for the life of the session: the one its file
+   * carried when the session was made (decodeNative), or one this window made later (historyId() in the history
+   * feature). The copy in the document's metadata is synced, so a co-writer, or anyone who can write the sync
+   * folder, can change it. Following that copy would file this script's snapshots under another script's history.
+   */
+  historyId: string | null;
   private cachedScript?: { version: number; script: Script };
   private sceneNumbersTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly listeners = new Set<Listener>();
   private readonly stateListeners = new Set<Listener>();
 
-  constructor(doc: ScreenplayDoc, options: { path?: string | null; format?: SourceFormat; name?: string } = {}) {
+  constructor(doc: ScreenplayDoc, options: { path?: string | null; format?: SourceFormat; name?: string; historyId?: string | null } = {}) {
     this.doc = doc;
     this.path = options.path ?? null;
     this.format = options.format ?? "screenplay";
     this.name = options.name ?? "Untitled";
+    this.historyId = options.historyId !== undefined ? options.historyId : validHistoryId(doc.meta.get(HISTORY_ID_KEY));
     // Only edits made through edit() are undoable; updates from sync or files arrive with other origins.
     this.undo = new Y.UndoManager([doc.body, doc.meta], { trackedOrigins: new Set([LOCAL_ORIGIN]), captureTimeout: 600 });
     doc.body.observe(this.observeMoves);

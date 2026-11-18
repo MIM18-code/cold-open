@@ -8,12 +8,16 @@ export const MESSAGE_AWARENESS = 1;
 export const MESSAGE_AUTH = 2;
 export const MESSAGE_QUERY_AWARENESS = 3;
 
-/** Close codes the relay sends. Clients stop reconnecting on the first three. */
+/** Close codes the relay sends. Clients stop reconnecting on the first three and on CLOSE_TOO_LARGE. */
 export const CLOSE_DENIED = 4401;
 export const CLOSE_NO_ROOM = 4404;
 export const CLOSE_BAD_MESSAGE = 4400;
 /** A self-hosted relay has no such room yet and the key cannot open it (a read-only key). Retry with backoff. */
 export const CLOSE_NOT_OPEN = 4425;
+/** The relay has no room for another room or connection. Retry with backoff. */
+export const CLOSE_FULL = 4429;
+/** The change would take the room's document past the relay's size limit. Stop: resending it would fail again. */
+export const CLOSE_TOO_LARGE = 4413;
 
 /** Room names and keys: 128 random bits, base64url without padding (22 characters). */
 export const ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;

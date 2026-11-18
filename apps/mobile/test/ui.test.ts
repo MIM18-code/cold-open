@@ -76,8 +76,8 @@ test("pairing Return submits the code like Pair, never opening a URL, and keyboa
   button(tree, "Paste a pairing code").props.onPress();
   tree = render(ui.Pair, props);
   let field = tree.find(n => n.type === "TextInput")!;
-  const code = JSON.stringify({ v: 1, url: "https://127.0.0.1:4455/#" + "t".repeat(43), expiresAt: Date.now() + 3600000,
-    invite: "screenplay://join?relay=wss%3A%2F%2F127.0.0.1%3A4455&room=" + "r".repeat(22) + "&key=" + "k".repeat(22) + "&access=read" });
+  const code = JSON.stringify({ v: 1, url: "https://mac.tail123.ts.net:4455/#" + "t".repeat(43), expiresAt: Date.now() + 3600000,
+    invite: "screenplay://join?relay=wss%3A%2F%2Fmac.tail123.ts.net%3A4455&room=" + "r".repeat(22) + "&key=" + "k".repeat(22) + "&access=read" });
   field.props.onChangeText(code);
   tree = render(ui.Pair, props);
   field = tree.find(n => n.type === "TextInput")!;
@@ -107,7 +107,7 @@ test("reader toolbar has five equal slots, Write is primary, revisions are acces
   const set = { id: "1", name: "Blue", mark: "+", color: "#0000ff", date: "", style: "" };
   const props = { rows: [row], people: { title: "Script", writers: [], cursor: null, offset: 0,
     production: { v: 2, active: set, sets: [set], scenes: [], lockedPages: [], marks: { p: { label: "Blue", color: set.color } } } },
-    status: "Live", secure: true, showStatus() {}, compose() {} };
+    status: "Live", showStatus() {}, compose() {} };
   let tree = render(ui.Reader, props);
   const toolbar = ["Follow", "Write", "Changes", "Dictate", "Note"].map(label => button(tree, label));
   assert.ok(toolbar.every(n => n.props.style({ pressed: false }).flex === 1));
@@ -132,7 +132,7 @@ test("reader reuses unrevised line measurements when revision metadata arrives w
   ui.reset();
   const row = { id: "p", type: "action", runs: [{ text: "Original. Revised." }], text: "Original. Revised.", scene: "Scene 1" };
   const props = { rows: [row], people: { title: "Script", writers: [], cursor: null, offset: 0 },
-    status: "Live", secure: true, showStatus() {}, compose() {} };
+    status: "Live", showStatus() {}, compose() {} };
   const paragraph = (value: typeof props) => {
     const tree = render(ui.Reader, value);
     return nodes(tree.find(n => n.type === "FlatList")!.props.renderItem({ item: value.rows[0] }));
@@ -160,7 +160,7 @@ test("an ended pairing lets a writer read cached pages, keep taking notes, and p
     let statusOpened = false;
     const notes: unknown[] = [];
     const tree = render(ui.Reader, { rows: [row], people: { title: "Script", writers: [], cursor: null, offset: 0 },
-      status, secure: true, showStatus() { statusOpened = true; }, compose() { assert.fail("Pairing ended"); },
+      status, showStatus() { statusOpened = true; }, compose() { assert.fail("Pairing ended"); },
       note(passage?: unknown) { notes.push(passage); } });
     for (const action of ["Write", "Dictate"]) assert.equal(button(tree, action).props.disabled, true);
     // Notes still work: they wait on the iPhone for the next pairing.

@@ -32,7 +32,6 @@ test("phone production changes follow the Mac and scene suggestions require a de
     const lan = addresses.find((a: { tailscale?: boolean }) => !a.tailscale);
     test.skip(!lan, "Requires a private LAN interface.");
     await page.getByLabel("Phone network address").selectOption(lan.address);
-    await page.getByLabel("Phone connection protection").selectOption("http");
     await page.getByRole("button", { name: "Start phone pairing…" }).click();
     const pair = decodePairing(await page.evaluate(async () => (await (window as any).desktop.invoke("phone:status")).pairing));
     let rows: Row[] = [], presence: Presence | null = null;

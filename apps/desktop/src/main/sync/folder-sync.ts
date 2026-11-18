@@ -8,6 +8,11 @@
 // stay at the real path it had at start; each log is opened with O_NOFOLLOW and used only if it is a regular file
 // (safe-fs.ts); new files are created with O_EXCL under random names. A log that fails these checks is skipped and
 // reported once; a folder that fails them stops sync with an error. This Mac's text stays in the document either way.
+//
+// The same people can write anything into a log. A checksum only shows that a record arrived whole, so each record
+// is also decoded as a Yjs update before it is passed on, and one that is not an update is skipped and reported.
+// Each log is read on its own: a log that is too large, or that cannot be read, is skipped and reported while the
+// others are still delivered.
 import { watch, type FSWatcher } from "node:fs";
 import { lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
@@ -15,7 +20,7 @@ import { basename, dirname, extname, join } from "node:path";
 import * as Y from "yjs";
 
 import { UnsafeFileError, appendRegular, isRealDirectory, openForRead, randomSuffix, writeNewFile } from "../safe-fs.ts";
-import { LOG_EXTENSION, encodeHeader, encodeRecords, generationOf, parseLog } from "./folder-log.ts";
+import { LOG_EXTENSION, MAX_LOG_BYTES, encodeHeader, encodeRecords, generationOf, parseLog } from "./folder-log.ts";
 
 export function syncFolderFor(docPath: string): string {
   return join(dirname(docPath), `${basename(docPath, extname(docPath))}.screenplay-sync`);
@@ -38,6 +43,8 @@ export interface FolderSyncOptions {
   compactBytes?: number;
   /** Use fs.watch as well as the rescan (tests turn it off to simulate slow delivery). */
   watch?: boolean;
+  /** Skip a log larger than this many bytes instead of reading it. */
+  maxLogBytes?: number;
 }
 
 interface ReaderState {
@@ -82,8 +89,11 @@ export class FolderSync {
   private folderId: { dev: number; ino: number } | null = null;
   /** Set once the folder fails its check: nothing in it is read or written after that. */
   private broken: UnsafeFileError | null = null;
-  /** Logs skipped as links or special files, by name. A scan reports each one once. */
-  private readonly refused = new Map<string, UnsafeFileError>();
+  /**
+   * Problems with single logs, for the writer: a log skipped as a link or special file (keyed by its name), and
+   * records or whole logs skipped as unreadable (keyed by name and kind). A scan reports each one once.
+   */
+  private readonly refused = new Map<string, Error>();
   private readonly reported = new Set<string>();
 
   constructor(options: FolderSyncOptions) {
@@ -150,8 +160,12 @@ export class FolderSync {
     const updates: Uint8Array[] = [];
     if (!(await this.checkFolder())) return updates;
     for (const name of await this.logNames(true)) {
-      const bytes = await this.readLog(name);
-      if (bytes) updates.push(...parseLog(bytes).records);
+      try {
+        const bytes = await this.readLog(name);
+        if (bytes) updates.push(...this.updatesIn(name, parseLog(bytes).records));
+      } catch (error) {
+        this.skipUnreadable(name, error);
+      }
     }
     return updates;
   }
@@ -168,9 +182,9 @@ export class FolderSync {
         try {
           const updates = await this.readOthers();
           if (updates.length && !this.stopped) this.options.onUpdates(updates);
-          for (const [name, error] of this.refused) {
-            if (this.reported.has(name) || this.stopped) continue;
-            this.reported.add(name);
+          for (const [key, error] of this.refused) {
+            if (this.reported.has(key) || this.stopped) continue;
+            this.reported.add(key);
             this.options.onError?.(error);
           }
         } catch (error) {
@@ -235,7 +249,7 @@ export class FolderSync {
     return names.filter((name) => name.endsWith(LOG_EXTENSION) && !name.startsWith(".") && (includeOwn || name !== basename(this.ownLog)));
   }
 
-  /** A log's bytes, or null when it is gone, or is a link or a special file (noted for a warning). */
+  /** A log's bytes, or null when it is gone, is a link or a special file, or is too large (noted for a warning). */
   private async readLog(name: string): Promise<Uint8Array | null> {
     let opened;
     try {
@@ -247,7 +261,9 @@ export class FolderSync {
     }
     if (!opened) return null;
     try {
-      const bytes = await opened.read();
+      if (this.tooLarge(name, opened.info.size)) return null;
+      // Only what the size check covered: the file can grow between the check and the read.
+      const bytes = await opened.readFirst(opened.info.size);
       if (await this.stillHere(name, opened.info)) return bytes;
       this.refuse(name);
       return null;
@@ -275,59 +291,119 @@ export class FolderSync {
       + `is a link or not a regular file, so folder sync ${own ? "replaced it with a new log" : "skips it"}. Folder sync uses only real files inside the sync folder.`));
   }
 
+  /** Note a problem with one log, to report once. `kind` keeps apart the different problems one log can have. */
+  private warn(name: string, kind: string, message: string): void {
+    const key = `${name}\0${kind}`;
+    if (!this.refused.has(key)) this.refused.set(key, new Error(message));
+  }
+
+  /** Whether a log is too large to read. Its size comes from the open file, so nothing is read to find out. */
+  private tooLarge(name: string, size: number): boolean {
+    const limit = this.options.maxLogBytes ?? MAX_LOG_BYTES;
+    if (size <= limit) return false;
+    const own = name === basename(this.ownLog);
+    this.warn(name, "size", `${own ? "This Mac's own log" : `The log ${name}`} in ${basename(this.folder)} is larger than `
+      + `${Math.round(limit / (1024 * 1024))} MB, so folder sync ${own ? "does not read it and writes a new one" : "skips it"}. The other logs still sync.`);
+    return true;
+  }
+
+  /**
+   * One log failed to read (a disk or cloud error, a file that grew past what can be read at once). That is this
+   * log's problem alone: the others are still read. The folder failing its check is not: that stops everything.
+   */
+  private skipUnreadable(name: string, error: unknown): void {
+    if (error === this.broken) throw error;
+    this.warn(name, "read", `Folder sync could not read the log ${name} in ${basename(this.folder)} `
+      + `(${error instanceof Error ? error.message : String(error)}), so it skips it for now. The other logs still sync.`);
+  }
+
+  /**
+   * The records that are Yjs updates. A record that is not one would throw where the updates are merged or applied
+   * and take the good records beside it down too, so it is dropped here and the writer is told.
+   */
+  private updatesIn(name: string, records: Uint8Array[]): Uint8Array[] {
+    const updates = records.filter(isUpdate);
+    const skipped = records.length - updates.length;
+    if (skipped) {
+      const own = name === basename(this.ownLog);
+      this.warn(name, "records", `${own ? "This Mac's own log" : `The log ${name}`} in ${basename(this.folder)} holds `
+        + `${skipped === 1 ? "a record that is not a script change" : `${skipped} records that are not script changes`}, `
+        + `so folder sync skipped ${skipped === 1 ? "it" : "them"}. The other changes still sync.`);
+    }
+    return updates;
+  }
+
   private async readOthers(): Promise<Uint8Array[]> {
     const updates: Uint8Array[] = [];
     if (!(await this.checkFolder())) return updates;
     for (const name of await this.logNames(false)) {
-      let opened;
+      // Each log on its own: a log read before a failing one has already had its offset advanced, so losing the
+      // batch to the failure would lose those records for good.
       try {
-        opened = await openForRead(join(this.folder, name));
+        updates.push(...(await this.readOther(name)));
       } catch (error) {
-        if (!isUnsafe(error)) throw error;
-        this.refuse(name);
-        continue;
-      }
-      if (!opened) continue;
-      try {
-        const { info } = opened;
-        const known = this.readers.get(name);
-        if (known && known.size === info.size && known.mtimeMs === info.mtimeMs) continue;
-        const bytes = await opened.read();
-        if (!(await this.stillHere(name, info))) {
-          this.refuse(name);
-          continue;
-        }
-        // A new generation (the owner compacted) or a shorter file means start over; repeats are harmless.
-        const from = known && known.generation === generationOf(bytes) && bytes.length >= known.end ? known.end : 0;
-        const parsed = parseLog(bytes, from);
-        updates.push(...parsed.records);
-        this.readers.set(name, { generation: parsed.generation, end: parsed.end, size: bytes.length, mtimeMs: info.mtimeMs });
-      } finally {
-        await opened.close();
+        this.skipUnreadable(name, error);
       }
     }
     return updates;
   }
 
+  /** The new records in one other device's log. */
+  private async readOther(name: string): Promise<Uint8Array[]> {
+    let opened;
+    try {
+      opened = await openForRead(join(this.folder, name));
+    } catch (error) {
+      if (!isUnsafe(error)) throw error;
+      this.refuse(name);
+      return [];
+    }
+    if (!opened) return [];
+    try {
+      const { info } = opened;
+      const known = this.readers.get(name);
+      if (known && known.size === info.size && known.mtimeMs === info.mtimeMs) return [];
+      if (this.tooLarge(name, info.size)) return [];
+      // Only what the size check covered; anything appended since is read on the next scan.
+      const bytes = await opened.readFirst(info.size);
+      if (!(await this.stillHere(name, info))) {
+        this.refuse(name);
+        return [];
+      }
+      // A new generation (the owner compacted) or a shorter file means start over; repeats are harmless.
+      const from = known && known.generation === generationOf(bytes) && bytes.length >= known.end ? known.end : 0;
+      const parsed = parseLog(bytes, from);
+      // The offset moves past a record that is not an update too: it will never become one.
+      this.readers.set(name, { generation: parsed.generation, end: parsed.end, size: bytes.length, mtimeMs: info.mtimeMs });
+      return this.updatesIn(name, parsed.records);
+    } finally {
+      await opened.close();
+    }
+  }
+
   private async prepareOwnLog(state?: Uint8Array): Promise<void> {
     await this.checkFolder();
     // A link or special file in our log's place is never read; the rewrite below, or the first append, replaces it.
-    const bytes = await this.readLog(basename(this.ownLog));
+    // A log that cannot be read, or holds records that are not updates, is treated like a damaged one: rewritten below.
+    const name = basename(this.ownLog);
+    const bytes = await this.readLog(name).catch((error) => (this.skipUnreadable(name, error), null));
     const parsed = bytes ? parseLog(bytes) : null;
-    const own = parsed && !parsed.invalid ? parsed.records : [];
-    const merged = own.length ? Y.mergeUpdates(own) : null;
+    const records = parsed && !parsed.invalid ? parsed.records : [];
+    const own = this.updatesIn(name, records);
+    const merged = own.length ? mergeAll(own) : null;
     // Only what the log is missing: changes made while folder sync was off, or a log lost to a damaged file.
     const missing = state ? (merged ? Y.diffUpdate(state, Y.encodeStateVectorFromUpdate(merged)) : state) : null;
     const extra = missing && !(merged && addsNothing(missing, merged)) ? missing : null;
     const back = merged && state ? Y.diffUpdate(merged, Y.encodeStateVectorFromUpdate(state)) : null;
     this.ownMissing = back && !addsNothing(back, state!) ? back : null;
-    const intact = bytes && parsed && !parsed.invalid && parsed.end === bytes.length;
+    const intact = bytes && parsed && !parsed.invalid && parsed.end === bytes.length && own.length === records.length;
     if (intact) {
       this.ownBytes = bytes.length;
       this.ownRecords = own;
       if (extra) await this.appendNow([extra]);
     } else if (merged || extra) {
-      // A torn last record (a crash mid-append) would block every reader behind it, so rewrite the log clean.
+      // A torn last record (a crash mid-append) would block every reader behind it, and a record that is not an
+      // update would be skipped by every reader on every read, so rewrite the log clean.
       await this.rewrite([...(merged ? [merged] : []), ...(extra ? [extra] : [])]);
     }
   }
@@ -351,7 +427,7 @@ export class FolderSync {
     if (!appended) {
       // Our log was removed, or replaced by a link, a special file or a second name for another file: start a new
       // log rather than write through it, holding what the old one held too.
-      await this.rewrite(this.ownRecords.length ? [Y.mergeUpdates([...this.ownRecords, ...updates])] : updates);
+      await this.rewrite(this.ownRecords.length ? [mergeAll([...this.ownRecords, ...updates])] : updates);
       if (this.refused.has(basename(this.ownLog))) this.requestScan();
       return;
     }
@@ -364,8 +440,8 @@ export class FolderSync {
   private async compact(): Promise<void> {
     const bytes = await this.readLog(basename(this.ownLog));
     if (!bytes) return;
-    const { records } = parseLog(bytes);
-    if (records.length > 1) await this.rewrite([Y.mergeUpdates(records)]);
+    const records = this.updatesIn(basename(this.ownLog), parseLog(bytes).records);
+    if (records.length > 1) await this.rewrite([mergeAll(records)]);
   }
 
   /**
@@ -391,6 +467,38 @@ export class FolderSync {
     this.ownBytes = out.length;
     this.compactedBytes = out.length;
     this.ownRecords = [...updates];
+  }
+}
+
+/** Whether a record is a Yjs update. A valid checksum does not show that: anyone who can write the folder can make one. */
+function isUpdate(record: Uint8Array): boolean {
+  try {
+    Y.decodeUpdate(record);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One update holding all of these. Updates that each decode can still fail to merge if one was crafted to, so on a
+ * failure they are applied to a scratch document one at a time and whatever applies is kept.
+ */
+function mergeAll(updates: Uint8Array[]): Uint8Array {
+  try {
+    return Y.mergeUpdates(updates);
+  } catch {
+    const doc = new Y.Doc({ gc: false });
+    for (const update of updates) {
+      try {
+        Y.applyUpdate(doc, update);
+      } catch {
+        // Skipped: the rest still count.
+      }
+    }
+    const merged = Y.encodeStateAsUpdate(doc);
+    doc.destroy();
+    return merged;
   }
 }
 

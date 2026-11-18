@@ -1,6 +1,6 @@
 // File > Title Page…: edit the title page fields. They are stored in the document meta (Fountain keys) and, for
 // a script opened from FDX, written into Final Draft's TitlePage XML as well, so FDX export carries the edit.
-import type { FdxDocumentExtras, TitleField } from "@screenplay/engine";
+import { storedFdx, type TitleField } from "@screenplay/engine";
 import { useState } from "react";
 
 import { app, type Feature, type ModalProps } from "../../core/app.ts";
@@ -13,7 +13,8 @@ import "./title-page.css";
 export function saveTitlePage(session: DocumentSession, fields: TitleField[]): void {
   session.edit(() => {
     session.doc.meta.set("titlePage", fields);
-    const fdx = session.doc.meta.get("fdx") as FdxDocumentExtras | undefined;
+    // Through the engine's guard: the value is shared, and a co-writer can have set it to any shape.
+    const fdx = storedFdx(session.doc);
     if (fdx) session.doc.meta.set("fdx", withTitlePage(fdx, fields));
   });
 }

@@ -13,6 +13,7 @@ import { PhoneHost } from "../src/main/phone/host.ts";
 import { lanAddresses, PhoneServer } from "../src/main/phone/server.ts";
 import { phonePathKey } from "../src/main/phone/identity.ts";
 import { Settings } from "../src/main/settings-store.ts";
+import { fromBase64url, linkKeys } from "@screenplay/relay/sealed";
 
 const snapshot = (title: string) => ({ title, revision: title, cues: [] });
 async function fixture(t: TestContext, paired = true) {
@@ -22,10 +23,12 @@ async function fixture(t: TestContext, paired = true) {
   const devices = new PhoneDevices(join(root, "phone-devices.json"));
   await devices.load();
   await devices.setFolder(new FolderGuard(root).grant());
-  const entries = paired ? await Promise.all(keys.map(key => devices.create(key, "127.0.0.1", undefined, false))) : [];
+  const entries = paired ? await Promise.all(keys.map(key => devices.create(key, "127.0.0.1"))) : [];
   const hosts: PhoneHost[] = [];
-  t.mock.method(PhoneHost.prototype, "start", async function(this: PhoneHost, _address: string, hostname: string, port: number) {
+  t.mock.method(PhoneHost.prototype, "start", async function(this: PhoneHost, address: string, hostname: string, port: number) {
     this.origin = `http://${hostname}:${port}`;
+    this.address = address;
+    this.sealed = true;
     this.relay = { port, createRoom: () => ({ room: randomBytes(16).toString("base64url"), key: "k".repeat(22), readKey: "q".repeat(22) }),
       closeRoom() {}, async close() {} } as unknown as PhoneHost["relay"];
     hosts.push(this);
@@ -43,12 +46,10 @@ async function fixture(t: TestContext, paired = true) {
   t.after(async () => { await quit(); await rm(root, { recursive: true, force: true }); });
   for (const path of paths) await call("phone:path-key", path);
   const read = async (entry: typeof entries[number]) => {
-    let status = 0, result = "";
-    await hosts[0]!.routes.get(entry.device.tokenHash)!({ method: "GET", url: "/api/snapshot", socket: { remoteAddress: "127.0.0.1" },
-      headers: { authorization: "Bearer " + entry.token, host: new URL(hosts[0]!.origin).host } } as never,
-    { writeHead(code: number) { status = code; }, end(body: string) { result = body; } } as never);
-    assert.equal(status, 200);
-    return JSON.parse(result);
+    const link = hosts[0]!.links.get(linkKeys(fromBase64url(entry.device.link!)).id)!;
+    const reply = await link.handle({ t: Date.now(), m: "GET", p: "/api/snapshot" }, "127.0.0.1");
+    assert.equal(reply.status, 200);
+    return reply.body as { title: string };
   };
   const readFolder = (deviceId: string) => readFile(join(root, "Inklot Phone Inbox", deviceId, "production.json"), "utf8").then(JSON.parse);
   return { root, call, keys, entries, read, readFolder, quit };
@@ -79,7 +80,7 @@ for (const replacement of ["resume", "pairing"] as const) test(`a same-script ${
   let next: Promise<unknown>;
   try {
     next = replacement === "pairing"
-      ? f.call("phone:start", address, snapshot("A-new"), f.keys[0], "http", true)
+      ? f.call("phone:start", address, snapshot("A-new"), f.keys[0], true)
       : f.call("phone:resume", f.keys[0], snapshot("A-new"));
     if (replacement === "pairing") await replacementAttached;
     else await next;
@@ -156,6 +157,6 @@ test("a new remembered pairing initializes its folder from the current snapshot"
   if (!address) { t.skip("Requires a private LAN interface"); return; }
   const f = await fixture(t, false);
   await f.call("phone:resume", f.keys[0], snapshot("A"));
-  const info = await f.call("phone:start", address, snapshot("A"), f.keys[0], "http", true) as { pairing: string };
+  const info = await f.call("phone:start", address, snapshot("A"), f.keys[0], true) as { pairing: string };
   assert.equal((await f.readFolder(JSON.parse(info.pairing).deviceId)).title, "A");
 });

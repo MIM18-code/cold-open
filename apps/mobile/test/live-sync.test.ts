@@ -10,7 +10,7 @@ import { connect, type Row } from "../src/live.ts";
 import type { Pairing } from "../src/pairing.ts";
 import { FakeSocket } from "../../../packages/relay/test/fake-socket.ts";
 
-const pair = { invite: { relay: "ws://localhost:4456", room: "room", key: "key", readOnly: true } } as Pairing;
+const pair = { invite: { relay: "wss://mac.tail123.ts.net:4456", room: "room", key: "key", readOnly: true } } as Pairing;
 const deliver = (socket: FakeSocket, write: (e: encoding.Encoder) => void) => {
   const e = encoding.createEncoder(); write(e);
   const bytes = encoding.toUint8Array(e);

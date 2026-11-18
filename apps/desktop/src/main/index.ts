@@ -1,5 +1,6 @@
 // The main process: one window per document, an application menu built from the commands the focused
 // window registers, and the services in src/main/services.
+import "./page-debugger.ts"; // First on purpose: it quits a packaged app started with a page debugger switch.
 import {
   app, BrowserWindow, dialog, Menu, nativeTheme, shell, screen,
   type MenuItemConstructorOptions, type WebContents, type WebFrameMain,
@@ -15,13 +16,13 @@ import { isTemplateId } from "@screenplay/engine";
 import { matchesKey } from "../shared/accelerator.ts";
 import { CHANNELS, MENUS, type MenuCommand } from "../shared/api.ts";
 import { createContext } from "./context.ts";
-import { isScreenplayFile, SCREENPLAY_EXTENSIONS } from "./recent-files.ts";
+import { isScreenplayFile, reopenable, SCREENPLAY_EXTENSIONS } from "./recent-files.ts";
 import { attachDocumentTab, performTabAction } from "./native-tabs.ts";
 import { registerSystemAccent } from "./system-accent.ts";
 import { registerServices } from "./services/index.ts";
 import { openTakesFile } from "./services/phone.ts";
 import { isTakesFileName } from "./phone/takes.ts";
-import { isLink } from "./safe-fs.ts";
+import { realLocation } from "./safe-fs.ts";
 import { legacyUserDataPath } from "./user-data.ts";
 import { windowBackground } from "./window-theme.ts";
 import { WINDOW_MEMORY_KEY, WorkspaceMemory, windowMemories, visibleBounds, type WindowMemory } from "./workspace/memory.ts";
@@ -93,7 +94,8 @@ const workspaceMemory = new WorkspaceMemory((rows) => {
 function rememberWindow(window: BrowserWindow): void {
   if (window.isDestroyed()) return;
   const id = window.webContents.id, path = windowPaths.get(id);
-  workspaceMemory.update(id, path && ctx.isAllowedPath(path) && isScreenplayFile(path) ? { path, bounds: window.getNormalBounds() } : null);
+  const location = path ? realLocation(path) : null;
+  workspaceMemory.update(id, path && ctx.isAllowedPath(path) && isScreenplayFile(path) ? { path, ...(location ? { location } : {}), bounds: window.getNormalBounds() } : null);
 }
 
 type WindowMode = "open" | "recover";
@@ -421,7 +423,7 @@ app.whenReady().then(() => {
   rebuildMenu();
   if (pendingOpen.length) for (const path of pendingOpen) (ctx.allowPath(path), createWindow(path));
   else {
-    const restore = ctx.settings.get("workspace.restoreWindows") === true ? previousWindows.filter((row) => isScreenplayFile(row.path) && !isLink(row.path)) : [];
+    const restore = ctx.settings.get("workspace.restoreWindows") === true ? previousWindows.filter((row) => reopenable(row.path, row.location)) : [];
     // Grant only the main-owned, validated saved-file list. Recovery remains a separate explicit prompt.
     for (const row of restore) ctx.allowPath(row.path);
     if (restore.length) for (const row of restore) createWindow(row.path, "open", undefined, row.bounds);

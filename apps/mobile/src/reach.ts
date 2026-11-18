@@ -1,4 +1,4 @@
-import type { Pairing } from "./pairing.ts";
+import { PAIR_AGAIN, type Pairing } from "./pairing.ts";
 
 // A remembered iPhone that cannot reach the Mac explains why in plain words. The iPhone cannot see Tailscale's
 // state, so the tailnet message names the likely causes rather than guessing one.
@@ -18,4 +18,4 @@ export function reachStatus(reason: ReachReason, options: { tailnet: boolean; fo
 }
 
 export const pairingEnded = (status: string) =>
-  ["Pairing expired", "Refused", "Host stopped sharing", "This Mac revoked the pairing"].includes(status);
+  ["Pairing expired", "Refused", "Host stopped sharing", "This Mac revoked the pairing", PAIR_AGAIN].includes(status);

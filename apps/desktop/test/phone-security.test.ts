@@ -9,17 +9,18 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { PhoneServer } from "../src/main/phone/server.ts";
 import { phoneTls } from "../src/main/phone/tls.ts";
+import { phoneLink } from "./phone-link.ts";
 
 const snapshot = { title: "Synthetic draft", revision: "r1", cues: [{ id: "c", paragraphId: "p", speaker: "Mara", heading: "Kitchen", text: "Close the door." }] };
 const message = { id: "message-00000001", kind: "note", text: "Check the prop.", cueId: "c", revision: "r1" };
 const deferred = () => { let resolve!: () => void, reject!: (error: Error) => void; const promise = new Promise<void>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-const post = (url: URL, body: unknown) => fetch(`${url.origin}/api/inbox`, { method: "POST", headers: { authorization: `Bearer ${url.hash.slice(1)}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+const post = (link: ReturnType<typeof phoneLink>, body: unknown) => link.post("/api/inbox", body);
 
 test("concurrent phone retries wait for the same durable write and never acknowledge a failed save", async () => {
   for (const succeeds of [true, false]) {
     const write = deferred(); let calls = 0, done = 0;
     const server = new PhoneServer(snapshot, () => {}, async () => { calls++; await write.promise; });
-    const u = new URL((await server.start("127.0.0.1")).url);
+    const u = phoneLink((await server.start("127.0.0.1")).pairing);
     try {
       const first = post(u, message).then((r) => { done++; return r; });
       const second = post(u, message).then((r) => { done++; return r; });
@@ -37,7 +38,7 @@ test("concurrent phone retries wait for the same durable write and never acknowl
 test("receipt identity cannot be reused for changed text or reinserted after desktop acknowledgement", async () => {
   let writes = 0;
   const server = new PhoneServer(snapshot, () => {}, () => { writes++; });
-  const u = new URL((await server.start("127.0.0.1")).url);
+  const u = phoneLink((await server.start("127.0.0.1")).pairing);
   try {
     assert.equal((await post(u, message)).status, 200);
     server.acknowledge(message.id);
@@ -52,10 +53,11 @@ test("temporary pairing expires and revokes its listener", async () => {
   const info = await server.start("127.0.0.1", undefined, () => { closed = true; }, 40);
   await delay(80);
   assert.equal(closed, true);
-  await assert.rejects(fetch(new URL(info.url).origin + "/"));
+  await assert.rejects(fetch(phoneLink(info.pairing).origin + "/"));
   await server.stop();
 });
 
+// The Tailscale path: an HTTPS listener with a certificate the phone trusts, a bearer inside TLS, a version 1 code.
 test("HTTPS validates IP, expiry and matching private key and serves through a verified TLS connection", async () => {
   const root = await mkdtemp(join(tmpdir(), "inklot-tls-test-"));
   let server: PhoneServer | undefined;
@@ -74,6 +76,7 @@ test("HTTPS validates IP, expiry and matching private key and serves through a v
     const info = await server.start("127.0.0.1", tls), u = new URL(info.url);
     const { parseInvite, roomUrl } = await import("@screenplay/relay/protocol");
     const { WebSocket } = await import("ws");
+    assert.equal(JSON.parse(info.pairing).v, 1);
     const invite = parseInvite(JSON.parse(info.pairing).invite);
     assert.equal(invite.relay, u.origin.replace("https:", "wss:"));
     const reader = new WebSocket(roomUrl(invite.relay, invite.room, invite.key), { ca: cert });
@@ -95,20 +98,21 @@ test("pairing QR grants only a same-origin reader and revokes its room on Stop",
   const { RelayClient } = await import("@screenplay/relay/client");
   const { ScreenplayDoc } = await import("@screenplay/engine");
   const { publishToPhone } = await import("../src/renderer/features/phone/publisher.ts");
+  const { sealedWebSocket } = await import("@screenplay/relay/sealed");
   const server = new PhoneServer(snapshot);
   const info = await server.start("127.0.0.1");
-  const qr = JSON.parse(info.pairing);
-  const url = new URL(qr.url);
-  const invite = parseInvite(qr.invite);
-  assert.equal(invite.relay, url.origin.replace("http", "ws"));
+  const link = phoneLink(info.pairing);
+  const invite = parseInvite(link.invite);
+  assert.equal(invite.relay, link.origin.replace("http", "ws"));
   assert.equal(invite.readOnly, true);
   assert.ok(!info.pairing.includes(info.publisher.key));
+  assert.equal(info.url, "", "home Wi-Fi pairing makes no Safari link unless the writer asks");
   const host = new ScreenplayDoc(), reader = new ScreenplayDoc();
   host.insertParagraph(0, { type: "action", runs: [{ text: "Before." }] });
   const publisher = publishToPhone(info.publisher, host, () => ({
     title: "Synthetic", name: "Writer", cursor: null, writers: ["Co-writer"],
   }));
-  const client = new RelayClient({ ...invite, doc: reader.ydoc });
+  const client = new RelayClient({ ...invite, doc: reader.ydoc, WebSocket: sealedWebSocket(link.keys) });
   try {
     await client.whenSynced();
     for (let i = 0; i < 80 && !reader.paragraphs().length; i++) await delay(5);
@@ -121,10 +125,15 @@ test("pairing QR grants only a same-origin reader and revokes its room on Stop",
 
 test("live anchors and review outcomes require the pairing token and bounded content", async () => {
   const server = new PhoneServer(snapshot);
-  const info = await server.start("127.0.0.1"), u = new URL(info.url);
+  const info = await server.start("127.0.0.1"), u = phoneLink(info.pairing);
   const item = { id: message.id, kind: "note", text: "Prop", paragraphId: "p", sourceText: "Door" };
   try {
-    assert.equal((await fetch(u.origin + "/api/receipts")).status, 401);
+    // Nothing answers in the clear, not even to the pairing secret offered as a bearer.
+    for (const headers of [{}, { authorization: `Bearer ${u.secret}` }] as Record<string, string>[]) {
+      assert.equal((await fetch(u.origin + "/api/receipts", { headers })).status, 404);
+      assert.equal((await fetch(u.origin + "/", { headers })).status, 404);
+    }
+    assert.equal((await u.get("/api/receipts")).status, 200);
     assert.equal((await post(u, { ...item, kind: "draft", paragraphId: "" })).status, 400);
     assert.equal((await post(u, { ...item, kind: "draft", paragraphId: " " })).status, 400);
     // A note written without choosing a passage is accepted unattached.

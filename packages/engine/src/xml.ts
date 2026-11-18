@@ -29,8 +29,10 @@ export function disallowedCharacters(node: XmlNode): string[] {
   const scan = (value: string) => {
     for (const match of value.match(DISALLOWED) ?? []) found.push(`U+${match.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}`);
   };
+  // Only what serializeXml writes.
   const walk = (current: XmlNode) => {
-    for (const [, value] of current.attrs) scan(value);
+    if (!isNodeShape(current)) return;
+    for (const pair of current.attrs) if (isXmlAttr(pair)) scan(pair[1]);
     for (const child of current.children) {
       if (typeof child === "string") scan(child);
       else walk(child);
@@ -125,16 +127,78 @@ function escapeAttr(value: string): string {
   return escapeText(value).replace(/"/g, "&quot;").replace(/\t/g, "&#9;").replace(/\n/g, "&#10;").replace(/\r/g, "&#13;");
 }
 
-/** XML for a tree. Characters XML 1.0 cannot hold are never written (see xmlSafe). */
+// ----- Names and shapes ------------------------------------------------------------------------------------
+//
+// Trees kept in the shared document (the raw FDX in meta, paragraph extras, "fdx:" run attributes) can be written by
+// any co-writer with any JSON shape, and their element and attribute names go into the file unescaped. A name that is
+// not an XML name would inject markup or make a file Final Draft cannot open, so these checks run when such a tree is
+// read and again when one is written.
+
+// XML 1.0 (fifth edition) Name, which is what saxes accepts.
+const XML_NAME = /^[:A-Z_a-zÀ-ÖØ-öø-˿Ͱ-ͽͿ-῿‌‍⁰-↏Ⰰ-⿯、-퟿豈-﷏ﷰ-�\u{10000}-\u{EFFFF}][:A-Z_a-zÀ-ÖØ-öø-˿Ͱ-ͽͿ-῿‌‍⁰-↏Ⰰ-⿯、-퟿豈-﷏ﷰ-�\u{10000}-\u{EFFFF}\-.0-9·̀-ͯ‿-⁀]*$/u;
+
+export function isXmlName(value: unknown): value is string {
+  return typeof value === "string" && XML_NAME.test(value);
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const isXmlAttr = (pair: unknown): pair is [string, string] => Array.isArray(pair) && pair.length === 2 && isXmlName(pair[0]) && typeof pair[1] === "string";
+const isNodeShape = (value: unknown): value is XmlNode =>
+  isRecord(value) && isXmlName(value.name) && Array.isArray(value.attrs) && Array.isArray(value.children);
+
+/** Attribute pairs without the malformed ones: the same array when all are fine, undefined when it is no array. */
+export function asXmlAttrs(value: unknown): [string, string][] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const kept = value.filter(isXmlAttr);
+  return kept.length === value.length ? (value as [string, string][]) : kept;
+}
+
+/**
+ * How deep a stored tree may nest. Final Draft nests a handful of levels; a co-writer's tree a thousand levels deep
+ * would overflow the stack in structuredClone and in the writer, so anything below this depth is left out.
+ */
+export const MAX_XML_DEPTH = 64;
+
+/**
+ * A tree without its malformed attributes and children: the same object when nothing is malformed, so caches keyed on
+ * it keep working. Undefined when the node itself is malformed (not an object, a bad name, attrs or children not lists)
+ * or sits deeper than MAX_XML_DEPTH. Keys other than the three a node has are left out too, since export clones the
+ * whole object.
+ */
+export function asXmlNode(value: unknown, level = 0): XmlNode | undefined {
+  if (level >= MAX_XML_DEPTH || !isNodeShape(value)) return undefined;
+  const attrs = asXmlAttrs(value.attrs)!;
+  let changed = attrs !== value.attrs || Object.keys(value).length !== 3;
+  const children: (XmlNode | string)[] = [];
+  for (const child of value.children as unknown[]) {
+    const clean = typeof child === "string" ? child : asXmlNode(child, level + 1);
+    // An undefined child (Yjs sends holes as undefined) equals its own result, so it is checked apart.
+    if (clean === undefined || clean !== child) changed = true;
+    if (clean !== undefined) children.push(clean);
+  }
+  return changed ? { name: value.name, attrs, children } : value;
+}
+
+/**
+ * XML for a tree. Characters XML 1.0 cannot hold are never written (see xmlSafe). Malformed parts are left out rather
+ * than written or thrown on: an attribute with a bad name or a value that is not a string, a repeated attribute, a
+ * child that is neither text nor a node, and a node with a bad name, with everything inside it. A malformed root
+ * gives "".
+ */
 export function serializeXml(node: XmlNode, indent = ""): string {
-  const attrs = node.attrs.map(([name, value]) => ` ${name}="${escapeAttr(value)}"`).join("");
-  if (!node.children.length) return `${indent}<${node.name}${attrs}/>`;
-  if (node.children.some((child) => typeof child === "string")) {
+  if (!isNodeShape(node)) return "";
+  const seen = new Set<string>();
+  const attrs = node.attrs
+    .filter((pair) => isXmlAttr(pair) && !seen.has(pair[0]) && !!seen.add(pair[0]))
+    .map(([name, value]) => ` ${name}="${escapeAttr(value)}"`).join("");
+  const children = node.children.filter((child) => typeof child === "string" || isNodeShape(child));
+  if (!children.length) return `${indent}<${node.name}${attrs}/>`;
+  if (children.some((child) => typeof child === "string")) {
     // Text content (or rare mixed content) is written inline so no layout whitespace leaks into it.
-    const inner = node.children.map((child) => typeof child === "string" ? escapeText(child) : serializeXml(child)).join("");
+    const inner = children.map((child) => typeof child === "string" ? escapeText(child) : serializeXml(child)).join("");
     return `${indent}<${node.name}${attrs}>${inner}</${node.name}>`;
   }
-  const inner = node.children.map((child) => serializeXml(child as XmlNode, `${indent}  `)).join("\n");
+  const inner = children.map((child) => serializeXml(child as XmlNode, `${indent}  `)).join("\n");
   return `${indent}<${node.name}${attrs}>\n${inner}\n${indent}</${node.name}>`;
 }
 

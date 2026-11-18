@@ -41,8 +41,7 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
       <View style={{ padding: 16, gap: 6, backgroundColor: c.group, borderRadius: 14 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           <Symbol name="laptopcomputer" /><Label style={{ fontWeight: "600", flex: 1 }}>{status}</Label><StatusDot status={status} />
-        </View><Warning secure={pair.secure} />
-        {pair.secure && status === "Reconnecting" && <Caption>This iPhone must trust the Mac’s HTTPS certificate.</Caption>}
+        </View><Warning legacy={pair.legacy} />
         {pair.remembered && <Caption>Remembered until revoked on the Mac. This iPhone follows the script it was paired with.</Caption>}
         {!terminal && !pair.remembered && <Caption>Pairing ends {new Date(pair.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.</Caption>}
       </View>
@@ -56,7 +55,7 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
           this iPhone saves pending items there. Accepted and Ignored arrive when the live link returns.</Caption>
         {folderError && <Label accessibilityRole="alert">{folderError}</Label>}
       </View>}
-      {pair.remembered && !terminal && unsent.length > 0 && <View style={{ gap: 8 }}>
+      {pair.remembered && (!terminal || pair.legacy) && unsent.length > 0 && <View style={{ gap: 8 }}>
         <Action label={`Send to Mac (${unsent.length} remaining)`} icon="square.and.arrow.up"
           disabled={sending} press={() => void send()} />
         <Caption>AirDrop a takes file to the Mac when this iPhone and the Mac share no network.

@@ -40,13 +40,20 @@ test("pinning verifies the copied digest and removal is limited to an installed 
     await m.remove(name, digest);
     assert.equal(deleted, true);
 });
-test("phone pairing requires the token, rejects other origins, queues reviewed text, and revokes on stop", async () => {
+test("the opt-in Safari link requires its own token, rejects other origins, queues reviewed text, and revokes on stop", async () => {
     const source = { title: "Draft", revision: "session:1", cues: [{ id: "c1", paragraphId: "p1", speaker: "MARA", heading: "INT. ROOM", text: "Open the door." }] };
     const commands: string[] = [];
     const server = new PhoneServer(source, (c) => commands.push(c));
-    const { url } = await server.start("127.0.0.1");
+    const { url, pairing } = await server.start("127.0.0.1", undefined, undefined, undefined, undefined, true);
     const parsed = new URL(url), token = parsed.hash.slice(1), base = parsed.origin, headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
     try {
+        // The Safari page's token is not the pairing secret, and the secret is worth nothing as a bearer.
+        const secret = JSON.parse(pairing).secret as string;
+        assert.notEqual(token, secret);
+        assert.equal((await fetch(base + "/api/snapshot", { headers: { authorization: `Bearer ${secret}` } })).status, 401);
+        // The page's token reads the table read and leaves notes on it; the iPhone app's requests stay out of reach.
+        assert.equal((await fetch(base + "/api/receipts", { headers })).status, 404);
+        assert.equal((await fetch(base + "/api/inbox", { method: "POST", headers, body: JSON.stringify({ id: "client-item-0009", kind: "draft", text: "INT. ROOM", paragraphId: "p1", sourceText: "Open the door." }) })).status, 404);
         const page = await fetch(base);
         assert.equal(page.status, 200);
         const html = await page.text();

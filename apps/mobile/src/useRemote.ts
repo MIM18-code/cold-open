@@ -3,7 +3,7 @@ import { AppState } from "react-native";
 import * as Keychain from "expo-secure-store";
 import { randomUUID } from "expo-crypto";
 import { sha256 } from "./crypto";
-import { decodePairing, type Pairing } from "./pairing";
+import { decodePairing, PAIR_AGAIN, type Pairing } from "./pairing";
 import { folderProduction } from "./production.ts";
 import { readScript, connect, type Presence, type Row } from "./live";
 import { sendPending, deviceStatus, permanentFailure, validateTakeSize, DeliveryError, syncReceipts, type Take } from "./outbox";
@@ -33,6 +33,8 @@ export function useRemote() {
     setRows(pair ? cachedRows(pair.invite.room) : []); setPeople({ title: "", writers: [], cursor: null, offset: 0,
       production: pair ? cachedProduction(pair.invite.room) : undefined }); setStatus("Connecting");
     if (!pair) return;
+    // Paired on Wi-Fi before links were encrypted: nothing is sent or received until it is paired again.
+    if (pair.legacy) { setStatus(PAIR_AGAIN); return; }
     if (pair.expiresAt > Date.now() && !endedPairing(pair.invite.room) && claimUnpairedNotes(pair.invite.room)) setTakes(listTakes());
     let stopped = false, busy = false, reported = false, wait = 1000;
     let timer: ReturnType<typeof setTimeout>, expiry: ReturnType<typeof setTimeout>;

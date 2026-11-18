@@ -11,6 +11,7 @@ import { decodePairing } from "../src/pairing.ts";
 import { deliver, folderItem, inboxBody, syncReceipts, type Take } from "../src/outbox.ts";
 import { folderProduction } from "../src/production.ts";
 import { signTake, contentHash } from "../src/signing.ts";
+import { phoneLink } from "../../desktop/test/phone-link.ts";
 
 const snapshot = { title: "Script", revision: "r1", cues: [] };
 const production = { v: 2 as const, active: null, sets: [], scenes: [], marks: {}, lockedPages: [] };
@@ -25,9 +26,7 @@ test("live scene suggestions require HMAC, bind destination and preserve receipt
     catch (e) { if ((e as NodeJS.ErrnoException).code === "EPERM") { t.skip("Sandbox forbids listening on localhost"); return; } throw e; }
     const pair = decodePairing(info.pairing);
     const item = take(pair.invite.room), signal = new AbortController().signal;
-    const unsigned = await fetch(pair.origin + "/api/inbox", { method: "POST",
-      headers: { Authorization: "Bearer " + pair.token, "Content-Type": "application/json" }, body: JSON.stringify(inboxBody(item)) });
-    assert.equal(unsigned.status, 403);
+    assert.equal((await phoneLink(info.pairing).post("/api/inbox", inboxBody(item))).status, 403);
     await deliver(pair, item, signal);
     assert.equal(server.items()[0].kind, "scene-after");
     server.acknowledge(item.id, "accepted");
@@ -45,9 +44,9 @@ test("offline scene suggestions preserve signatures and production snapshots are
     const devices = new PhoneDevices(join(path, "devices.json"));
     await devices.load();
     const scriptId = "a".repeat(64);
-    const { device, token } = await devices.create(scriptId, "127.0.0.1", undefined, false);
-    const pair = { ...decodePairing(JSON.stringify({ v: 1, url: "http://127.0.0.1:4455/#" + "t".repeat(43), expiresAt: Date.now() + 3600000,
-      invite: "screenplay://join?relay=ws%3A%2F%2F127.0.0.1%3A4455&room=" + "r".repeat(22) + "&key=" + "k".repeat(22) + "&access=read" })), remembered: true, deviceId: device.id, scriptId, token };
+    const { device, token } = await devices.create(scriptId, "127.0.0.1");
+    const pair = { ...decodePairing(JSON.stringify({ v: 1, url: "https://mac.tail123.ts.net:4455/#" + "t".repeat(43), expiresAt: Date.now() + 3600000,
+      invite: "screenplay://join?relay=wss%3A%2F%2Fmac.tail123.ts.net%3A4455&room=" + "r".repeat(22) + "&key=" + "k".repeat(22) + "&access=read" })), remembered: true, deviceId: device.id, scriptId, token };
     const item = take(pair.invite.room), raw = await folderItem(pair, item);
     const signed = JSON.parse(raw);
     assert.equal(validateFolderItem(signed, device.id, scriptId, devices.verifyTake.bind(devices)).kind, "scene-after");
@@ -65,8 +64,8 @@ test("offline scene suggestions preserve signatures and production snapshots are
 });
 
 test("HTTP scene envelopes use v2 and sign both destinations with the existing HMAC fields", async t => {
-  const pair = decodePairing(JSON.stringify({ v: 1, url: "http://127.0.0.1:4455/#" + "t".repeat(43), expiresAt: Date.now() + 3600000,
-    invite: "screenplay://join?relay=ws%3A%2F%2F127.0.0.1%3A4455&room=" + "r".repeat(22) + "&key=" + "k".repeat(22) + "&access=read" }));
+  const pair = decodePairing(JSON.stringify({ v: 1, url: "https://mac.tail123.ts.net:4455/#" + "t".repeat(43), expiresAt: Date.now() + 3600000,
+    invite: "screenplay://join?relay=wss%3A%2F%2Fmac.tail123.ts.net%3A4455&room=" + "r".repeat(22) + "&key=" + "k".repeat(22) + "&access=read" }));
   let body: Record<string, unknown> = {};
   t.mock.method(globalThis, "fetch", async (_url: string, options: RequestInit) => {
     body = JSON.parse(String(options.body));
@@ -88,7 +87,7 @@ test("folder publication bounds the final UTF-8 envelope and keeps the last read
   const scriptId = "a".repeat(64);
   const devices = new PhoneDevices(join(path, "devices.json"));
   await devices.load();
-  const { device } = await devices.create(scriptId, "127.0.0.1", undefined, false);
+  const { device } = await devices.create(scriptId, "127.0.0.1");
   const folder = new PhoneFolder(path, devices, new PhoneInboxStore(join(path, "inbox")), () => {}, () => {});
   try {
     const initial = { ...snapshot, production, paragraphs: [] };

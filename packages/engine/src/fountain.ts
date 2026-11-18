@@ -13,7 +13,8 @@ import { type ElementType, type Paragraph, type Run, type Script, type TitleFiel
 import { isOmitted, omittedHeading, omittedParagraphs } from "./revisions.ts";
 
 const HEADING = /^(?:INT\.?\/EXT|INT|EXT|EST|I\/E)[. ]/i;
-const SCENE_NUMBER = /\s+#([A-Za-z0-9][A-Za-z0-9.\-]*)#$/;
+// No leading \s+: unanchored, it rescans a long run of spaces from every position. The space before is checked apart.
+const SCENE_NUMBER = /#([A-Za-z0-9][A-Za-z0-9.\-]*)#$/;
 const TITLE_KEY = /^([A-Za-z][^:\n]*):(.*)$/;
 const PAGE_BREAK = /^={3,}$/;
 const FORCE_CHARS = /^[!@~=#>.]|^\[\[|^\/\*/;
@@ -121,7 +122,8 @@ export function parseFountain(source: string): Script {
     }
     if (blankBefore() && ((/^\.(?!\.)/.test(trimmed)) || HEADING.test(trimmed))) {
       let text = trimmed.startsWith(".") ? trimmed.slice(1).trim() : trimmed;
-      const number = SCENE_NUMBER.exec(text);
+      const found = SCENE_NUMBER.exec(text);
+      const number = found && /\s/.test(text[found.index - 1] ?? "") ? found : null;
       if (number) text = text.slice(0, number.index).trim();
       push(state, "sceneHeading", readInline(text), number ? { sceneNumber: number[1]! } : {});
       i++;
@@ -320,8 +322,12 @@ function block(paragraph: Paragraph): string[] {
 }
 
 function writeTitlePage(fields: readonly TitleField[]): string[] {
-  return fields.flatMap(({ key, values }) =>
-    values.length === 1 ? [`${key}: ${values[0]}`] : [`${key}:`, ...values.map((value) => `   ${value}`)]);
+  return fields.flatMap(({ key, values }) => {
+    // A line break in a value would end the title page (a blank line) or start a field or the script, so each of its
+    // lines is a continuation line of its own, as multi-line values are written; blank ones cannot be and are left out.
+    const lines = values.flatMap((value) => (/[\r\n]/.test(value) ? value.split(/\r\n?|\n/).filter((line) => line.trim()) : [value]));
+    return values.length === 1 && lines.length === 1 && lines[0] === values[0] ? [`${key}: ${values[0]}`] : [`${key}:`, ...lines.map((line) => `   ${line}`)];
+  });
 }
 
 export function writeFountain(script: Script): string {

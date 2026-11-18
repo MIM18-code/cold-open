@@ -498,7 +498,8 @@ export function applyTextEdits(doc: ScreenplayDoc, edits: readonly TextEdit[]): 
       offset += 1;
       continue;
     }
-    if (op.attributes?.soft) {
+    // Only true counts, as in readEntries (doc.ts).
+    if (op.attributes?.soft === true) {
       offset += op.insert.length;
       continue;
     }

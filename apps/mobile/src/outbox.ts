@@ -1,5 +1,6 @@
+import { LinkClient, LinkError } from "@screenplay/relay/sealed";
 import { contentHash, signTake, type Sha256 } from "./signing.ts";
-import type { Pairing } from "./pairing.ts";
+import { PAIR_AGAIN, type Pairing } from "./pairing.ts";
 
 export type Outcome = "pending" | "saved" | "airdropped" | "rejected" | "delivered" | "accepted" | "ignored";
 export type Take = {
@@ -47,12 +48,41 @@ export async function deviceStatus(pair: Pairing, signal: AbortSignal, name?: st
   if (!pair.remembered) return { open: true };
   return request(pair, "/api/device", signal, undefined, name);
 }
+// One sealed client per pairing, so a correction for this iPhone's clock is learned once.
+const links = new WeakMap<Pairing, LinkClient>();
+function linkClient(pair: Pairing): LinkClient {
+  let client = links.get(pair);
+  if (!client) links.set(pair, client = new LinkClient(pair.link!, async (sealed, signal) => {
+    const response = await fetch(pair.origin + "/link", {
+      signal, redirect: "error", method: "POST", headers: { "Content-Type": "text/plain" }, body: sealed,
+    });
+    // Anything but a sealed answer could come from anyone on the network, so it only means "not reached".
+    if (!response.ok) throw new LinkError("unanswered", "The Mac did not answer this pairing.");
+    return response.text();
+  }));
+  return client;
+}
 async function request(pair: Pairing, path: string, signal: AbortSignal, item?: Take, name?: string, hash?: Sha256) {
   if (Date.now() >= pair.expiresAt) throw new DeliveryError(410, "Pairing expired");
+  // A pairing from before Wi-Fi links were encrypted never puts its token on the network again.
+  if (pair.legacy) throw new DeliveryError(426, PAIR_AGAIN);
+  const body = item ? { ...inboxBody(item), ...(item.kind.startsWith("scene-") ? { v: 2, sig: await signTake(pair.token, pair.deviceId ?? "", pair.scriptId ?? "", item, hash) } : {}) }
+    : name ? { name } : undefined;
+  if (pair.link) {
+    // Wi-Fi: the request and the answer are sealed. The token is a key here and is never sent.
+    const reply = await linkClient(pair).call(body ? "POST" : "GET", path, body, signal).catch(e => {
+      if (e instanceof LinkError) throw new DeliveryError(502, "The Mac did not answer this pairing.");
+      throw e;
+    });
+    if (reply.status < 200 || reply.status > 299) throw new DeliveryError(reply.status, reply.body?.error || "The Mac could not save the item.");
+    return reply.body;
+  }
+  // The bearer goes out only inside TLS (Tailscale).
+  if (!pair.origin.startsWith("https://")) throw new DeliveryError(426, PAIR_AGAIN);
   const response = await fetch(pair.origin + path, {
-    signal, redirect: "error", method: item || name ? "POST" : "GET",
+    signal, redirect: "error", method: body ? "POST" : "GET",
     headers: { Authorization: "Bearer " + pair.token, "Content-Type": "application/json" },
-    body: item ? JSON.stringify({ ...inboxBody(item), ...(item.kind.startsWith("scene-") ? { v: 2, sig: await signTake(pair.token, pair.deviceId ?? "", pair.scriptId ?? "", item, hash) } : {}) }) : name ? JSON.stringify({ name }) : undefined,
+    body: body ? JSON.stringify(body) : undefined,
   });
   const json = await response.json().catch(() => ({ error: "The Mac could not save the item." }));
   if (!response.ok) throw new DeliveryError(response.status, json.error || "The Mac could not save the item.");

@@ -1,5 +1,5 @@
 // The Electron, Chromium, FFmpeg and NASM sources that must accompany every binary release (docs/NATIVE_SOURCE.md).
-// Same pins as Backlot, which ships the same Electron.
+// Pinned to the Electron in apps/desktop/package.json. Backlot may ship another Electron, so its cache can lack these.
 import { copyFileSync, linkSync, mkdirSync, readFileSync, writeFileSync, existsSync, createReadStream, createWriteStream, renameSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
@@ -11,9 +11,9 @@ import { pipeline } from 'node:stream/promises';
 const root = resolve(import.meta.dirname, '..');
 const run = promisify(execFile);
 export const nativeSources = [
-  { file: 'electron-v44.2.0.tar.gz', url: 'https://codeload.github.com/electron/electron/tar.gz/refs/tags/v44.2.0', sha256: '2f09160dd4cce720dd11507a898350b44019ebd5623e7c42eb1d045daa8e046a', prefix: 'electron-44.2.0/', required: ['DEPS', 'build/args/release.gn', 'patches/ffmpeg/.patches', 'patches/ffmpeg/link_with_loader_path.patch'] },
+  { file: 'electron-v44.11.3.tar.gz', url: 'https://codeload.github.com/electron/electron/tar.gz/refs/tags/v44.11.3', sha256: '5b92adbed3dd582f641c2ab1103bd361e2088a0e93658da71bc2140d7d7147d8', prefix: 'electron-44.11.3/', required: ['DEPS', 'build/args/release.gn', 'patches/ffmpeg/.patches', 'patches/ffmpeg/link_with_loader_path.patch', 'patches/ffmpeg/avformat_mov_keep_frag_index_current_on_its_fragment_in.patch', 'patches/ffmpeg/avcodec_h264_slice_reset_next_output_pic.patch', 'patches/ffmpeg/avformat_mov_zero_uninitialized_tts_data_realloc_slack.patch'] },
   { file: 'ffmpeg-2b68d2babae73714846961fb0ee47e3b3d2e39a9.tar.gz', url: 'https://chromium.googlesource.com/chromium/third_party/ffmpeg/+archive/2b68d2babae73714846961fb0ee47e3b3d2e39a9.tar.gz', sha256: '871fa9a410946d0dda25004449cabec8030f5ced99d53b2ecb92a0d5e82fc104', prefix: '', required: ['BUILD.gn', 'COPYING.LGPLv2.1', 'libavcodec/libopus.c', 'chromium/config/Chrome/mac/arm64/config.h'] },
-  { file: 'chromium-152.0.7977.76.tar.gz', url: 'https://codeload.github.com/chromium/chromium/tar.gz/refs/tags/152.0.7977.76', sha256: '2dc388258d14660a26e36646473f0fe894772456e8804152beb11adfc7b2f425', prefix: 'chromium-152.0.7977.76/', required: ['LICENSE', 'DEPS', '.gn', 'BUILD.gn', 'third_party/opus/README.chromium', 'third_party/opus/BUILD.gn', 'third_party/opus/src/COPYING', 'third_party/opus/src/src/opus_decoder.c', 'third_party/opus/src/include/opus.h', 'build/buildflag_header.gni', 'build/config/compiler/compiler.gni', 'build/config/sanitizers/sanitizers.gni', 'build/config/BUILDCONFIG.gn', 'build/config/arm.gni', 'tools/generate_stubs/generate_stubs.py'] },
+  { file: 'chromium-152.0.7977.169.tar.gz', url: 'https://codeload.github.com/chromium/chromium/tar.gz/refs/tags/152.0.7977.169', sha256: '78ba4f02f37b6e65c3a649ba83f5f2c3f9c444b340f2e860ae6ff904c3b56e50', prefix: 'chromium-152.0.7977.169/', required: ['LICENSE', 'DEPS', '.gn', 'BUILD.gn', 'third_party/opus/README.chromium', 'third_party/opus/BUILD.gn', 'third_party/opus/src/COPYING', 'third_party/opus/src/src/opus_decoder.c', 'third_party/opus/src/include/opus.h', 'build/buildflag_header.gni', 'build/config/compiler/compiler.gni', 'build/config/sanitizers/sanitizers.gni', 'build/config/BUILDCONFIG.gn', 'build/config/arm.gni', 'tools/generate_stubs/generate_stubs.py'] },
   { file: 'nasm-525a09a813be0f75b646ee93fc2a31c27b87d722.tar.gz', url: 'https://chromium.googlesource.com/chromium/deps/nasm/+archive/525a09a813be0f75b646ee93fc2a31c27b87d722.tar.gz', sha256: 'df44b947163f174b96fbdb4ced46b780d9b1fbf049c422b1486482e564d9b833', prefix: '', required: ['LICENSE', 'BUILD.gn', 'nasm_assemble.gni'] },
 ];
 
@@ -42,7 +42,7 @@ export async function verifyNativeSource(destination) {
 /** `cache` is a folder that may already hold verified archives (Backlot's dist/upstream-source), to skip a 1.5 GB download. */
 export async function prepareNativeSource(destination, cache = process.env.NATIVE_SOURCE_CACHE) {
   const manifest = JSON.parse(readFileSync(join(root, 'apps/desktop/package.json')));
-  if (manifest.devDependencies.electron !== '44.2.0') throw new Error('Update native source pins when changing Electron');
+  if (manifest.devDependencies.electron !== '44.11.3') throw new Error('Update native source pins when changing Electron');
   mkdirSync(destination, { recursive: true });
   for (const source of nativeSources) {
     const path = join(destination, source.file);

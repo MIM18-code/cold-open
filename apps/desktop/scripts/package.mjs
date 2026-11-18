@@ -1,7 +1,9 @@
 // Builds the Mac app (.app and .dmg) into release/. Main, preload and renderer are bundled, so the staged app
 // carries no node_modules: just dist/, the icon, and native speech and voice resources.
 // Unsigned by default; set SCREENPLAY_SIGN=developer-id to sign with the keychain's Developer ID.
+// A release build sets the Electron fuses in fuses.mjs; SCREENPLAY_FUSES=1 does the same to a local build.
 import { build, Platform } from "electron-builder";
+import { releaseFuses, sha256 } from "./fuses.mjs";
 import { stageParakeet } from "./parakeet-resources.mjs";
 import { releasePolicy } from "./release-policy.mjs";
 import { cpSync, existsSync, readdirSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -55,6 +57,20 @@ extraResources.push({ from: voiceStage, to: "voice-helper" });
 
 const document = (ext, name, role = "Editor", rank = "Default") => ({ ext, name, role, rank, icon: join(root, "build/icon.icns") });
 
+const fused = policy.release || process.env.SCREENPLAY_FUSES === "1";
+// electron-builder calls this when the app is assembled, before it sets the fuses and signs. The packaged-app test
+// drives the app with Playwright, which attaches through --inspect, and the finished app refuses --inspect. So the
+// test runs here, on the files that ship, with every fuse but that one already set. scripts/verify-release.mjs
+// checks the record written below against the app.asar that ships.
+async function testBeforeSealing(context) {
+  const app = join(context.appOutDir, "Cold Open.app");
+  const { enableNodeCliInspectArguments, ...testable } = releaseFuses;
+  // Changing the binary voids its ad hoc signature, and macOS won't run it on Apple silicon until it is re-signed.
+  await context.packager.addElectronFuses(context, await context.packager.generateFuseConfig({ ...testable, resetAdHocDarwinSignature: true }));
+  execFileSync(process.execPath, [join(root, "scripts/test-packaged-basic.mjs"), "--full", app], { stdio: "inherit" });
+  writeFileSync(join(root, "release/packaged-test.json"), JSON.stringify({ version: manifest.version, asar: sha256(join(app, "Contents/Resources/app.asar")) }) + "\n");
+}
+
 await build({
   targets: Platform.MAC.createTarget(["dmg", "dir"]),
   projectDir: stage,
@@ -72,6 +88,9 @@ await build({
     extraResources,
     asar: true,
     npmRebuild: false,
+    // Set after afterPack and before signing, so the signature covers them. An unsigned build re-signs ad hoc.
+    electronFuses: fused ? { ...releaseFuses, resetAdHocDarwinSignature: !policy.signed } : undefined,
+    afterPack: fused ? testBeforeSealing : undefined,
     mac: {
       category: "public.app-category.productivity",
       // The bundled speech helper needs macOS 14; the voice helper checks for 15 itself.

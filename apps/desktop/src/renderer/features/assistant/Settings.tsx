@@ -176,6 +176,12 @@ function BacklotRow() {
   );
 }
 
+/** Whether the Ollama address is this Mac. An address that can't be read falls back to the default, which is. */
+export function ollamaOnThisMac(endpoint: string): boolean {
+  try { return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(endpoint.trim() || DEFAULT_OLLAMA_ENDPOINT).hostname); }
+  catch { return true; }
+}
+
 export function AiSettings() {
   const [provider, setProvider] = useSetting<ProviderId>(AI_SETTINGS.provider, "ollama");
   const [endpoint] = useSetting<string>(AI_SETTINGS.ollamaEndpoint, DEFAULT_OLLAMA_ENDPOINT);
@@ -219,7 +225,8 @@ export function AiSettings() {
           {PROVIDERS.map((id) => <option key={id} value={id}>{PROVIDER_LABELS[id]}</option>)}
         </select>
         <small className="ai-settings-hint">
-          {provider === "ollama" ? "Runs on this Mac. Nothing leaves it." : "Text you send, such as a scene or a question, goes to this provider."}
+          {provider === "ollama" ? (ollamaOnThisMac(endpoint) ? "Runs on this Mac. Nothing leaves it."
+            : "Text you send goes to the Ollama server at the address under Advanced, not to a model on this Mac.") : "Text you send, such as a scene or a question, goes to this provider."}
         </small>
       </label>
 

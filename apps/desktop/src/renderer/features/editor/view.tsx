@@ -1,7 +1,7 @@
 // The Script view: a sheet of paper drawn with the script's own geometry (its FDX element settings and page
 // margins, and the paper size chosen for printing, as printing resolves them), the find bar and the SmartType
 // popup. The ProseMirror view inside is owned by an EditorController.
-import { MARKS, resolveLayout, plainText, type ElementType, type FdxDocumentExtras, type Mark, type Marks, type Pagination } from "@screenplay/engine";
+import { MARKS, resolveLayout, plainText, storedFdx, type ElementType, type Mark, type Marks, type Pagination } from "@screenplay/engine";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type RefObject } from "react";
 
 import { app } from "../../core/app.ts";
@@ -57,7 +57,8 @@ function useScriptLayout(): Layout {
     const observer = (event: { keysChanged: Set<string> }) => event.keysChanged.has("fdx") && onChange();
     meta.observe(observer);
     return () => meta.unobserve(observer);
-  }, () => session.doc.meta.get("fdx") as FdxDocumentExtras | undefined);
+    // The guarded read: the value is shared, and a wrong-shaped one would throw here, in the editor's render.
+  }, () => storedFdx(session.doc));
   const [paper] = useSetting(SETTINGS.paper, "letter");
   return useMemo(() => resolveLayout(printOptions({ titlePage: [], paragraphs: [], ...(fdx ? { fdx } : {}) }, readPrintSettings({ [SETTINGS.paper]: paper }))), [fdx, paper]);
 }

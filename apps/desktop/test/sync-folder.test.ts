@@ -1,7 +1,7 @@
 // Folder sync: the log format, and two documents syncing through folders with a fake cloud that delivers files
 // late, in pieces, and more than once.
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -11,6 +11,7 @@ import * as Y from "yjs";
 
 import { HEADER_BYTES, crc32, encodeHeader, encodeRecords, parseLog } from "../src/main/sync/folder-log.ts";
 import { FolderSync, syncFolderFor } from "../src/main/sync/folder-sync.ts";
+import { openForRead } from "../src/main/safe-fs.ts";
 
 const temp = mkdtempSync(join(tmpdir(), "screenplay-sync-test-"));
 after(() => rmSync(temp, { recursive: true, force: true }));
@@ -294,4 +295,188 @@ test("stopping while the start is still under way leaves no watcher or timer beh
   const internals = a.sync as unknown as { watcher?: unknown; timer?: unknown };
   assert.equal(internals.watcher, undefined);
   assert.equal(internals.timer, undefined);
+});
+
+// Hostile or damaged logs. Anyone who can write the sync folder can put a record with a valid checksum in it, or a
+// file of any size, so one bad record or file must cost only itself.
+
+/** The update for typing `text` at the start of an otherwise empty script, from a device of its own. */
+function typed(text: string): Uint8Array {
+  const doc = new Y.Doc();
+  doc.getText("body").insert(0, text);
+  return Y.encodeStateAsUpdate(doc);
+}
+
+const logFile = (...records: Uint8Array[]) => new Uint8Array([...encodeHeader(), ...encodeRecords(records)]);
+// A valid checksum over bytes that are not a Yjs update: one client, two structs, then nothing.
+const NOT_AN_UPDATE = new Uint8Array([1, 2, 3]);
+const isUpdate = (record: Uint8Array) => {
+  try {
+    Y.decodeUpdate(record);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** A device that records what folder sync hands it instead of failing on the first error. */
+function watcher(folder: string, options: { maxLogBytes?: number } = {}) {
+  const doc = new Y.Doc();
+  const delivered: Uint8Array[] = [];
+  const errors: string[] = [];
+  const sync = new FolderSync({
+    folder, deviceId: "device-aaaa", rescanMs: 60_000, watch: false, ...options,
+    onUpdates: (updates) => {
+      delivered.push(...updates);
+      for (const update of updates) Y.applyUpdate(doc, update, REMOTE);
+    },
+    onError: (error) => errors.push(error instanceof Error ? error.message : String(error)),
+  });
+  return { doc, sync, delivered, errors, text: () => doc.getText("body").toString() };
+}
+
+test("a record that is not a Yjs update is skipped and reported, and the records around it still arrive", async () => {
+  const folder = freshDir();
+  const a = watcher(folder);
+  await a.sync.start();
+  writeFileSync(join(folder, "device-good.ylog"), logFile(typed("GOOD ")));
+  writeFileSync(join(folder, "device-evil.ylog"), logFile(typed("BEFORE "), NOT_AN_UPDATE, typed("AFTER ")));
+  await a.sync.scan();
+  assert.ok(a.delivered.every(isUpdate), "only Yjs updates are handed on");
+  for (const word of ["GOOD ", "BEFORE ", "AFTER "]) assert.ok(a.text().includes(word), `${word}arrived`);
+  assert.equal(a.errors.length, 1);
+  assert.match(a.errors[0]!, /device-evil\.ylog.*not a script change/);
+
+  // The reader moved past the bad record: a later record in the same log arrives, and nothing is reported twice.
+  writeFileSync(join(folder, "device-evil.ylog"), logFile(typed("BEFORE "), NOT_AN_UPDATE, typed("AFTER "), typed("LATER ")));
+  await a.sync.scan();
+  assert.ok(a.text().includes("LATER "));
+  assert.equal(a.errors.length, 1);
+  await a.sync.stop();
+});
+
+test("starting with a bad record in another device's log still returns the good records", async () => {
+  const folder = freshDir();
+  writeFileSync(join(folder, "device-evil.ylog"), logFile(NOT_AN_UPDATE, typed("GOOD ")));
+  const a = watcher(folder);
+  const updates = await a.sync.start();
+  assert.equal(updates.length, 1);
+  assert.ok(updates.every(isUpdate));
+  // A second window opening the same script reads every log from the start.
+  assert.ok((await a.sync.snapshot()).every(isUpdate));
+  await a.sync.stop();
+});
+
+test("a bad record in this device's own log does not stop sync from starting, and the log is rewritten clean", async () => {
+  const folder = freshDir();
+  const own = join(folder, "device-aaaa.ylog");
+  writeFileSync(own, logFile(typed("MINE "), NOT_AN_UPDATE));
+  const a = watcher(folder);
+  const updates = await a.sync.start(typed("OPENED "));
+  // What the log had that the opened script lacks comes back, as before.
+  const doc = new Y.Doc();
+  for (const update of updates) Y.applyUpdate(doc, update);
+  assert.ok(doc.getText("body").toString().includes("MINE "));
+  const records = parseLog(new Uint8Array(readFileSync(own))).records;
+  assert.ok(records.length > 0 && records.every(isUpdate));
+  const rebuilt = new Y.Doc();
+  for (const record of records) Y.applyUpdate(rebuilt, record);
+  assert.ok(rebuilt.getText("body").toString().includes("MINE ") && rebuilt.getText("body").toString().includes("OPENED "));
+  await a.sync.scan();
+  assert.equal(a.errors.length, 1);
+  assert.match(a.errors[0]!, /own log.*not a script change/);
+  await a.sync.stop();
+});
+
+test("a record in this device's own log that decodes but cannot be applied does not stop sync from starting", async () => {
+  const folder = freshDir();
+  const own = join(folder, "device-aaaa.ylog");
+  // Decodes as an update, and names a parent that does not exist.
+  const unappliable = new Uint8Array([1, 1, 7, 0, 132, 7, 10, 1, 120, 0]);
+  assert.ok(isUpdate(unappliable));
+  writeFileSync(own, logFile(typed("MINE "), unappliable));
+  const a = watcher(folder);
+  const updates = await a.sync.start(typed("OPENED "));
+  const doc = new Y.Doc();
+  for (const update of updates) {
+    try {
+      Y.applyUpdate(doc, update);
+    } catch {
+      // The window applies each on its own and skips one that fails.
+    }
+  }
+  assert.ok(doc.getText("body").toString().includes("MINE "));
+  await a.sync.append([typed("LATER ")]);
+  await a.sync.stop();
+});
+
+test("a log too large to read is skipped and reported while the other logs are still read", async () => {
+  const folder = freshDir();
+  const a = watcher(folder);
+  await a.sync.start();
+  // A sparse file: free to make, and past the 2 GiB that can be read into memory at once.
+  const huge = join(folder, "device-huge.ylog");
+  writeFileSync(huge, logFile(typed("HUGE ")));
+  truncateSync(huge, 2 ** 31 + 1);
+  writeFileSync(join(folder, "device-good.ylog"), logFile(typed("GOOD ")));
+  await a.sync.scan();
+  assert.ok(a.text().includes("GOOD "));
+  assert.equal(a.errors.length, 1);
+  assert.match(a.errors[0]!, /device-huge\.ylog.*larger than 64 MB/);
+  // Still skipped, still reported once, and the other log keeps syncing.
+  writeFileSync(join(folder, "device-good.ylog"), logFile(typed("GOOD "), typed("MORE ")));
+  await a.sync.scan();
+  assert.ok(a.text().includes("MORE "));
+  assert.equal(a.errors.length, 1);
+  await a.sync.stop();
+});
+
+test("a log that grows after its size was checked is read only up to the size that was checked", async () => {
+  // Folder sync checks a log's size on the open file and then reads it. Someone who can write the folder can grow the
+  // file in between (a sparse file costs nothing), so the read takes the checked size and no more.
+  const folder = freshDir();
+  const path = join(folder, "device-grow.ylog");
+  writeFileSync(path, logFile(typed("FIRST ")));
+  const opened = (await openForRead(path))!;
+  try {
+    const size = opened.info.size;
+    truncateSync(path, 300 * 1024 * 1024);
+    const bytes = await opened.readFirst(size);
+    assert.equal(bytes.length, size);
+    assert.equal(parseLog(bytes).records.length, 1);
+    // A file that shrank gives what is left.
+    truncateSync(path, 10);
+    assert.equal((await opened.readFirst(size)).length, 10);
+  } finally {
+    await opened.close();
+  }
+});
+
+test("the size limit applies to any log, and a log back under it is read again", async () => {
+  const folder = freshDir();
+  const a = watcher(folder, { maxLogBytes: 200 });
+  await a.sync.start();
+  const big = join(folder, "device-big.ylog");
+  writeFileSync(big, logFile(typed("x".repeat(400))));
+  await a.sync.scan();
+  assert.equal(a.text(), "");
+  assert.equal(a.errors.length, 1);
+  writeFileSync(big, logFile(typed("SMALL ")));
+  await a.sync.scan();
+  assert.ok(a.text().includes("SMALL "));
+  await a.sync.stop();
+});
+
+// Root reads a file of any mode, so there the unreadable log would simply be read.
+test("a log that cannot be read does not lose the records of the logs read before it", { skip: process.getuid?.() === 0 }, async () => {
+  const folder = freshDir();
+  const a = watcher(folder);
+  await a.sync.start();
+  writeFileSync(join(folder, "device-good.ylog"), logFile(typed("GOOD ")));
+  writeFileSync(join(folder, "device-zzzz.ylog"), logFile(typed("LOCKED ")), { mode: 0o000 });
+  await a.sync.scan();
+  assert.ok(a.text().includes("GOOD "));
+  assert.equal(a.errors.length, 1);
+  assert.match(a.errors[0]!, /could not read the log device-zzzz\.ylog/);
+  await a.sync.stop();
 });

@@ -28,7 +28,7 @@ interface Status {
         tailscale?: boolean;
         hostname?: string;
     }[];
-    remembered: { id: string; name: string; scriptId: string; created: number; lastSeen: number }[];
+    remembered: { id: string; name: string; scriptId: string; created: number; lastSeen: number; pairAgain?: boolean }[];
     port: number;
     folderChosen: boolean;
     folderError: string;
@@ -40,9 +40,9 @@ interface Status {
     pairing?: string;
     revision: string;
     inbox: PhoneInbox[];
-    encrypted: boolean;
+    /** The Safari page's link, "" when the pairing has none, and whether that link is encrypted. */
+    urlEncrypted: boolean;
     expiresAt: number | null;
-    certificate: { fingerprint: string; expires: string } | null;
 }
 const pathKey = (path: string) => desktop.invoke<string>("phone:path-key", path);
 const moveInbox = (from: string, to: string) => desktop.invoke("phone:move-inbox", from, to);
@@ -128,7 +128,7 @@ function PhonePanel() {
     const isCurrent = () => app.session === session && identity === phoneIdentity(session, historyId);
     const [remember, setRemember] = useState(false);
     const [port, setPort] = useState("4456");
-    const [transport, setTransport] = useState<"https" | "http">("https");
+    const [safari, setSafari] = useState(false);
     const refresh = async (recheck = false) => {
         try {
             if (!documentId) return;
@@ -278,7 +278,6 @@ function PhonePanel() {
         await run("phone:acknowledge", documentId, item.id, "ignored", item.deviceId);
     };
     const tail = status?.addresses.find(a => a.address === address)?.tailscale;
-    const protection = tail ? "https" : transport;
     return <section className="roadmap-dialog phone-panel" aria-label="Phone companion">
     <div className="panel-header"><h2>Phone companion</h2></div>
     <p className="phone-lede">Read the script on your iPhone, and write, dictate or leave notes. Notes go straight into Notes. Writing and dictation arrive here for you to accept or ignore.</p>
@@ -307,72 +306,64 @@ function PhonePanel() {
             {a.tailscale ? a.name : `${a.name} · ${a.address}`}</option>)}
         </select>
       </label>
-      {tail ? <p className="phone-note">Encrypted automatically. Sign in to Tailscale on your iPhone with the same account.</p> : <>
-        <label className="field"><span>Connection protection</span>
-          <select aria-label="Phone connection protection" value={transport}
-            onChange={e => setTransport(e.target.value as "https" | "http")}>
-            <option value="https">HTTPS · encrypted (certificate required)</option>
-            <option value="http">HTTP · unencrypted, trusted Wi-Fi only</option>
-          </select>
-        </label>
-        {transport === "https" && <>
-          <button className="button" disabled={busy || !address}
-            onClick={() => void run("phone:choose-tls", address)}>Choose HTTPS certificate and key…</button>
-          {status?.certificate && <>
-            <p>SHA-256 fingerprint: <code style={{ overflowWrap: "anywhere" }}>{status.certificate.fingerprint}</code></p>
-            <small>Certificate expires {status.certificate.expires}. The phone must trust its issuer.
-              Remembered links keep the key in this Mac’s private app data.</small>
-            <button className="button" disabled={busy} onClick={() => void run("phone:forget-tls")}>Forget certificate</button>
-          </>}
-          <p>Choose a server certificate containing this Mac’s selected IP address.</p>
-        </>}
-      </>}
+      <p className="phone-note">{tail ? "Encrypted automatically. Sign in to Tailscale on your iPhone with the same account."
+        : "Encrypted automatically. No certificate or setup needed."}</p>
       <label className="field"><span><input type="checkbox" aria-label="Remember this iPhone"
         checked={remember} onChange={e => setRemember(e.target.checked)} /> Remember this iPhone</span></label>
       <p>{remember ? "Follows this saved script until revoked. Save the script before pairing."
         : "One-off pairing expires after two hours."}</p>
-      <label className="field"><span>Remembered phone port</span><input aria-label="Remembered phone port"
-        type="number" min={1024} max={65535} value={port} onChange={e => setPort(e.target.value)} /></label>
-      <button className="button" disabled={busy || !!status?.remembered.length} onClick={async () => {
-        setError("");
-        const value = Number(port);
-        if (!Number.isInteger(value) || value < 1024 || value > 65535) {
-          setError("Choose a port from 1024 to 65535."); return;
-        }
-        await run("phone:set-port", value);
-      }}>Save phone port</button>
-      <small>Keep this port unchanged while an iPhone is remembered.</small>
-      <button className="button primary"
-        disabled={busy || !address || !documentId || (!tail && protection === "https" && !status?.certificate)}
-        onClick={() => void run("phone:start", address, snapshot(), documentId, protection, remember)}>
+      <details className="phone-advanced"><summary>Advanced</summary>
+        {!tail && <>
+          <label className="field"><span><input type="checkbox" aria-label="Also make a Safari link, not encrypted"
+            checked={safari && !remember} disabled={remember} onChange={e => setSafari(e.target.checked)} /> Also make a Safari link (not encrypted)</span></label>
+          <small>{remember ? "Only for one-off pairing." : "For the table-read page in Safari. Anyone on this Wi-Fi could read what that page shows and sends. The iPhone app stays encrypted."}</small>
+        </>}
+        <label className="field"><span>Remembered phone port</span><input aria-label="Remembered phone port"
+          type="number" min={1024} max={65535} value={port} onChange={e => setPort(e.target.value)} /></label>
+        <button className="button" disabled={busy || !!status?.remembered.length} onClick={async () => {
+          setError("");
+          const value = Number(port);
+          if (!Number.isInteger(value) || value < 1024 || value > 65535) {
+            setError("Choose a port from 1024 to 65535."); return;
+          }
+          await run("phone:set-port", value);
+        }}>Save phone port</button>
+        <small>The network port remembered iPhones connect to. Change it only if another program uses {status?.port ?? 4456}, and before remembering an iPhone.</small>
+      </details>
+      <button className="button primary" disabled={busy || !address || !documentId}
+        onClick={() => void run("phone:start", address, snapshot(), documentId, remember, safari && !tail && !remember)}>
         Start phone pairing…
       </button>
       {!status?.addresses.length && <p>Connect this Mac to Tailscale or private Wi-Fi first.</p>}
     </> : <>
       {status.pairing && <figure>
         <QRCodeSVG value={status.pairing} size={220} marginSize={4} title="Private Cold Open phone pairing code" />
-        <figcaption>Scan in Cold Open on your iPhone for the live script.</figcaption>
+        <figcaption>Scan in Cold Open on your iPhone for the live script. If the iPhone won’t accept the code, update Cold Open on it.</figcaption>
         <button className="button" onClick={() => void run("phone:copy-link", "remote")}>Copy app pairing code</button>
       </figure>}
-      <label className="field"><span>{status.encrypted ? "Encrypted HTTPS pairing link" : "Unencrypted HTTP pairing link"}</span>
-        <input aria-label="Private phone pairing link" readOnly value={status.url} /></label>
-      <p>{status.encrypted ? "HTTPS encryption active." : "Unencrypted: trusted Wi-Fi only."}
-        {status.expiresAt ? ` Expires ${new Date(status.expiresAt).toLocaleTimeString()}.` : " Remembered until revoked."}</p>
-      <button className="button" onClick={() => void run("phone:copy-link")}>Copy pairing link</button>
+      <p>Encrypted.{status.expiresAt ? ` Expires ${new Date(status.expiresAt).toLocaleTimeString()}.` : " Remembered until revoked."}</p>
+      {status.url && <>
+        <label className="field"><span>{status.urlEncrypted ? "Safari link" : "Safari link (not encrypted)"}</span>
+          <input aria-label="Private phone pairing link" readOnly value={status.url} /></label>
+        <button className="button" onClick={() => void run("phone:copy-link")}>Copy Safari link</button>
+      </>}
       <button className="button" onClick={() => void stop()}>Stop sharing / revoke link</button>
       {!status.expiresAt && <button className="button" disabled={busy}
         onClick={() => void run("phone:new-pairing")}>Pair another iPhone</button>}
-      <p>{status.revision === `${session.id}:${version}` ? "Browser table read has the current draft."
-        : "The browser table read has an older draft. The app follows the live screenplay."}</p>
-      <button className="button" disabled={busy} onClick={() => void run("phone:publish", snapshot())}>
-        Publish current draft to phone
-      </button>
+      {status.url && <>
+        <p>{status.revision === `${session.id}:${version}` ? "The Safari table read has the current draft."
+          : "The Safari table read has an older draft. The app follows the live screenplay."}</p>
+        <button className="button" disabled={busy} onClick={() => void run("phone:publish", snapshot())}>
+          Publish current draft to Safari
+        </button>
+      </>}
     </>}
     <h3>Remembered iPhones</h3>
     {status?.remembered.filter(d => d.scriptId === documentId).map(device => <article key={device.id}>
       <strong>{device.name}</strong>
-      <p>Paired {new Date(device.created).toLocaleDateString()}. {device.lastSeen
-        ? `Last seen ${new Date(device.lastSeen).toLocaleString()}.` : "Waiting for the iPhone."}</p>
+      <p>Paired {new Date(device.created).toLocaleDateString()}. {device.pairAgain
+        ? "Paired before Wi-Fi links were encrypted, so it no longer connects. Pair this iPhone again, then revoke this entry."
+        : device.lastSeen ? `Last seen ${new Date(device.lastSeen).toLocaleString()}.` : "Waiting for the iPhone."}</p>
       <button className="button" disabled={busy} onClick={() => void revoke(device)}>Revoke {device.name}</button>
     </article>)}
     <p>A remembered iPhone follows the script it was paired to. If that script is closed, it keeps queueing.

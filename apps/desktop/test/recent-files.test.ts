@@ -1,14 +1,16 @@
 // The recent-files list grants access to files across restarts, so a page must not be able to put a file on it
 // that the writer never chose, and a launch must not re-open access to anything that is not a screenplay file.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, test } from "node:test";
 
 import { CHANNELS } from "../src/shared/api.ts";
 import type { Handler, ServiceContext } from "../src/main/context.ts";
-import { RECENT_KEY, registerRecentFiles } from "../src/main/recent-files.ts";
+import { RECENT_KEY, registerRecentFiles, reopenable } from "../src/main/recent-files.ts";
+import { realLocation } from "../src/main/safe-fs.ts";
+import { windowMemories } from "../src/main/workspace/memory.ts";
 import { Settings } from "../src/main/settings-store.ts";
 
 const temp = mkdtempSync(join(tmpdir(), "screenplay-recent-"));
@@ -96,4 +98,60 @@ test("a granted file of another type is opened but not kept as a recent file", (
   run.addRecent(pdf);
   assert.deepEqual(run.recent(), []);
   assert.deepEqual(run.documents, []);
+});
+
+// A script can sit in a folder someone else changes (Dropbox shared with a co-writer). While the app is closed they
+// can swap a folder above it for a link, so the remembered path now leads to another file on this Mac.
+function sharedScript() {
+  const root = mkdtempSync(join(temp, "swap-"));
+  const shared = join(root, "Shared");
+  const elsewhere = join(root, "Private");
+  mkdirSync(shared);
+  mkdirSync(elsewhere);
+  const script = join(shared, "Pilot.fdx");
+  writeFileSync(script, "<FinalDraft/>");
+  writeFileSync(join(elsewhere, "Pilot.fdx"), "<FinalDraft>another script</FinalDraft>");
+  const swap = () => {
+    renameSync(shared, join(root, "Shared (moved)"));
+    symlinkSync(elsewhere, shared);
+  };
+  return { root, script, swap, settingsFile: join(root, "settings.json") };
+}
+
+test("a recent file whose folder was swapped for a link while the app was closed is not granted again", () => {
+  const { script, swap, settingsFile } = sharedScript();
+  const first = launch(settingsFile);
+  first.ctx.allowPath(script);
+  first.addRecent(script);
+  assert.equal(launch(settingsFile).ctx.isAllowedPath(script), true, "unchanged, it is still granted after a restart");
+
+  swap();
+  const after = launch(settingsFile);
+  assert.equal(after.ctx.isAllowedPath(script), false);
+  assert.deepEqual(after.recent(), []);
+});
+
+test("a recent file remembered by an older version gets its location recorded at the next launch", () => {
+  const { script, swap, settingsFile } = sharedScript();
+  writeFileSync(settingsFile, JSON.stringify({ [RECENT_KEY]: [script] }));
+  const upgraded = launch(settingsFile);
+  assert.equal(upgraded.ctx.isAllowedPath(script), true);
+  assert.deepEqual(upgraded.recent(), [script]);
+
+  swap();
+  assert.equal(launch(settingsFile).ctx.isAllowedPath(script), false);
+});
+
+test("a window is restored only while its script still sits where it was", () => {
+  const { script, swap } = sharedScript();
+  const [row] = windowMemories([{ path: script, location: realLocation(script), bounds: { x: 0, y: 0, width: 900, height: 700 } }]);
+  assert.equal(row!.location, realLocation(script));
+  assert.equal(reopenable(row!.path, row!.location), true);
+  // A row saved by an older version has no location and is restored as before.
+  const [legacy] = windowMemories([{ path: script, bounds: { x: 0, y: 0, width: 900, height: 700 } }]);
+  assert.equal(reopenable(legacy!.path, legacy!.location), true);
+
+  swap();
+  assert.equal(reopenable(row!.path, row!.location), false);
+  assert.equal(reopenable(join(temp, "missing.fdx"), undefined), false);
 });

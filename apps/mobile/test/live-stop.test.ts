@@ -4,7 +4,7 @@ import { connect } from "../src/live.ts";
 import type { Pairing } from "../src/pairing.ts";
 import { FakeSocket } from "../../../packages/relay/test/fake-socket.ts";
 
-const pair = { invite: { relay: "ws://localhost:4456", room: "room", key: "key", readOnly: true } } as Pairing;
+const pair = { invite: { relay: "wss://mac.tail123.ts.net:4456", room: "room", key: "key", readOnly: true } } as Pairing;
 
 test("interruptions replace one reader and Disconnect stops every reader and retry", t => {
   t.mock.timers.enable({ apis: ["setTimeout"] });

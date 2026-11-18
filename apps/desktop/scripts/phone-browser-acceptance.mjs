@@ -1,5 +1,6 @@
-// Real phone HTTP service and durable inbox, exercised by a mobile-sized browser.
-// Loopback HTTP is deliberate in this isolated test; HTTPS/key validation has separate unit coverage.
+// The Safari page against the real phone HTTP service and durable inbox, exercised by a mobile-sized browser.
+// On home Wi-Fi that page is the writer's opt-in, unencrypted link, which is what this starts over loopback.
+// The iPhone app's sealed link and the HTTPS listener have separate unit coverage.
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -24,7 +25,7 @@ const server = new PhoneServer(snapshot, command => commands.push(command), asyn
   if (failNext) { failNext = false; throw new Error('Simulated full disk'); }
   await store.append(key, item);
 });
-const link = await server.start('127.0.0.1');
+const link = await server.start('127.0.0.1', undefined, undefined, undefined, undefined, true);
 const browser = await chromium.launch({ headless: true,
   ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : {}),
   args: ['--no-sandbox'] });

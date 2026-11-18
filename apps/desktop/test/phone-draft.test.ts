@@ -55,20 +55,9 @@ test("draft acceptance refuses changed or missing attachments without consuming 
 
 test("server accepts anchored drafts, deduplicates receipts and rejects invalid draft requests without a listener", async () => {
   const { PhoneServer } = await import("../src/main/phone/server.ts");
-  const { Readable } = await import("node:stream");
   const server = new PhoneServer({ title: "Test", revision: "r1", cues: [] });
   const item = { id: "draft-receipt-001", kind: "draft", text, paragraphId: "p", sourceText: "Attached." };
-  async function post(body: unknown) {
-    const req = Object.assign(Readable.from([JSON.stringify(body)]), {
-      headers: { host: "", authorization: `Bearer ${server["token"]}`, "content-type": "application/json" },
-      method: "POST", url: "/api/inbox", socket: { remoteAddress: "127.0.0.1" },
-    });
-    let code = 0;
-    const res = { writeHead(status: number) { code = status; }, end() {} };
-    await server["route"](req as unknown as import("node:http").IncomingMessage,
-      res as unknown as import("node:http").ServerResponse, "", "");
-    return code;
-  }
+  const post = async (body: unknown) => (await server["handle"]("POST", "/api/inbox", body)).status;
   try {
     assert.equal(await post(item), 200);
     assert.equal(server.items()[0]?.kind, "draft");

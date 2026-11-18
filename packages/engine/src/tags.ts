@@ -109,7 +109,11 @@ export function projectTags(doc: ScreenplayDoc, source: Script): Script {
         category: string;
         categoryId: string;
         categoryNumber: number;
-    }).filter(v => v && typeof v.id === "string" && typeof v.label === "string" && typeof v.categoryId === "string" && typeof v.category === "string").sort((a, b) => a.id.localeCompare(b.id));
+    }).filter(v => v && typeof v.id === "string" && typeof v.label === "string" && typeof v.categoryId === "string" && typeof v.category === "string")
+        // The records sync, so a category number can be any value; String() throws on some ({ toString: 1 }). applyTag
+        // writes a whole number, and Miscellaneous (25) when it knows none.
+        .map(v => Number.isSafeInteger(v.categoryNumber) && v.categoryNumber >= 0 ? v : { ...v, categoryNumber: 25 })
+        .sort((a, b) => a.id.localeCompare(b.id));
     if (!records.length) {
         resolveTagReferences(source, new Map(tagDefinitions(source).map(d => [d.id, d.number])));
         return source;

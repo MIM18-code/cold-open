@@ -1,6 +1,8 @@
 // Check a prepared release before publishing: notices in the app and the source snapshot, no private material,
-// Developer ID signatures, notarization tickets, the source manifest and the native source archives. Writes SHA256SUMS.
+// Electron fuses, Developer ID signatures, notarization tickets, the source manifest and the native source archives.
+// Writes SHA256SUMS.
 import { verifyParakeet } from "../apps/desktop/scripts/parakeet-resources.mjs";
+import { fuseProblems, sha256 } from "../apps/desktop/scripts/fuses.mjs";
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
@@ -84,6 +86,17 @@ async function checkApp(bundle, version) {
   } finally { rmSync(unpacked, { recursive: true, force: true }); }
 }
 
+/** The fuses that keep other programs' code out of the app, and proof that the packaged-app test passed on this
+ * app.asar before the inspect fuse was set (apps/desktop/scripts/package.mjs writes the record). */
+async function checkSealed(bundle, version) {
+  const problems = await fuseProblems(bundle);
+  assert.deepEqual(problems, [], `${bundle} has the wrong Electron fuses: ${problems.join('; ')}`);
+  const record = join(root, 'apps/desktop/release/packaged-test.json');
+  assert.ok(existsSync(record), 'No record of the packaged-app test. Package with SCREENPLAY_RELEASE=1 so it runs.');
+  assert.deepEqual(JSON.parse(readFileSync(record)), { version, asar: sha256(join(bundle, 'Contents/Resources/app.asar')) },
+    `The packaged-app test did not run on the app.asar in ${bundle}`);
+}
+
 async function verifyRelease() {
   if (!privateText) console.warn('scripts/private-text.json is absent, so no private-text check runs (expected for builds from the public source).');
   const version = JSON.parse(readFileSync(join(root, 'apps/desktop/package.json'))).version;
@@ -101,6 +114,7 @@ async function verifyRelease() {
     assert.ok(existsSync(join(source, name)), `Missing ${name} in the source snapshot`);
   }
   await checkApp(appBundle, version);
+  await checkSealed(appBundle, version);
   verifySignature(appBundle);
   verifyNotarized(appBundle, 'exec');
   verifyNotarized(dmg, 'open');
@@ -113,6 +127,7 @@ async function verifyRelease() {
     verifySignature(shipped);
     verifyNotarized(shipped, 'exec');
     await checkApp(shipped, version);
+    await checkSealed(shipped, version);
   } finally { spawnSync('hdiutil', ['detach', mount, '-quiet']); rmSync(mount, { recursive: true, force: true }); }
   const extracted = mkdtempSync(join(tmpdir(), 'coldopen-src-'));
   try {
@@ -130,6 +145,6 @@ async function verifyRelease() {
   const archives = [`ColdOpen-${version}.dmg`, `ColdOpen-${version}-source.tar.gz`, ...nativeSources.map((s) => s.file)];
   const checksums = (await Promise.all(archives.map(async (file) => `${await sha256File(join(release, file))}  ${file}`))).join('\n') + '\n';
   writeFileSync(join(release, 'SHA256SUMS'), checksums);
-  console.log('Notices, contents and versions of the app, the DMG and the source tarball; Developer ID signatures, notarization tickets and native sources verified. SHA256SUMS written.');
+  console.log('Notices, contents and versions of the app, the DMG and the source tarball; Electron fuses, Developer ID signatures, notarization tickets and native sources verified. SHA256SUMS written.');
 }
 if (process.argv[1] && realpathSync(process.argv[1]) === import.meta.filename) await verifyRelease();

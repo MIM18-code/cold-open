@@ -298,3 +298,47 @@ test("the scene number lock survives FDX export and reopening", async () => {
   await expect(second.page.locator(".toast", { hasText: "Scene numbers are locked. Unlock them first." })).toHaveCount(1);
   await second.electronApp.close();
 });
+
+test("wrong-shaped values in the shared document do not blank the editor or stop Save and Export", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "screenplay-file-"));
+  const { electronApp, page } = await launch();
+  try {
+    await page.evaluate(write);
+    // What a co-writer with the write key, or a sent .screenplay file, can put in the synced metadata.
+    await page.evaluate(() => {
+      const doc = (window as any).__app.session.doc;
+      doc.ydoc.transact(() => {
+        doc.meta.set("fdx", { rootAttrs: [], contentAttrs: [], before: 7, after: [{ name: "a b=\"x\"><Evil/", attrs: [], children: [] }] });
+        doc.meta.set("revisions", { sets: 5 });
+        doc.meta.set("pageLocks", { pages: "x" });
+        doc.meta.set("titlePage", "not a list");
+        doc.meta.set("sceneNumbersLocked", { yes: 1 });
+      }, "a co-writer");
+    });
+    // The editor still shows the script and still takes typing.
+    await expect(page.locator(".ProseMirror")).toContainText("Maya stands at the sink.");
+    await page.evaluate(() => {
+      const s = (window as any).__app.session;
+      const last = s.doc.toScript().paragraphs.at(-1).id;
+      s.edit(() => s.doc.insertText(last, 0, "Later, "));
+    });
+    await expect(page.locator(".ProseMirror")).toContainText("Later, Maya stands at the sink.");
+
+    for (const [command, name, expected] of [
+      ["file.saveAs", "Kitchen.screenplay", null], ["file.exportFdx", "Kitchen.fdx", "Later, Maya stands at the sink."],
+      ["file.exportFountain", "Kitchen.fountain", "Later, Maya stands at the sink."],
+    ] as const) {
+      const path = join(dir, name);
+      await electronApp.evaluate(({ dialog }, filePath) => {
+        dialog.showSaveDialog = (async () => ({ canceled: false, filePath })) as any;
+      }, path);
+      await page.evaluate((id) => (window as any).__app.runCommand(id), command);
+      await expect.poll(() => existsSync(path), { message: name }).toBe(true);
+      if (expected) expect(readFileSync(path, "utf8")).toContain(expected);
+    }
+    expect(readFileSync(join(dir, "Kitchen.fdx"), "utf8")).not.toContain("Evil");
+    await expect(page.locator(".toast.toast-error")).toHaveCount(0);
+  } finally {
+    await close(electronApp, page);
+  }
+});

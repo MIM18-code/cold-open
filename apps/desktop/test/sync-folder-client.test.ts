@@ -11,10 +11,16 @@ import { DocumentSession } from "../src/renderer/core/session.ts";
 type Handler = (...args: any[]) => unknown;
 
 const handlers = new Map<string, Handler>();
+/** What the main process sends to the window, by channel: every client made so far listens. */
+const listeners = new Map<string, Handler[]>();
+const emit = (channel: string, ...args: unknown[]) => listeners.get(channel)?.forEach((listener) => listener(...args));
 (globalThis as any).window = {
   desktop: {
     invoke: async (channel: string, ...args: unknown[]) => handlers.get(channel)?.(...args),
-    on: () => () => undefined,
+    on: (channel: string, listener: Handler) => {
+      listeners.set(channel, [...(listeners.get(channel) ?? []), listener]);
+      return () => undefined;
+    },
     spelling: { isMisspelled: () => false, suggestions: () => [], addToDictionary: () => undefined },
     platform: "darwin",
   },
@@ -158,4 +164,81 @@ test("failed local appends remain visible and retry sends the complete current d
   const rebuilt = new Y.Doc(); Y.applyUpdate(rebuilt, snapshots.at(-1)!);
   assert.equal(rebuilt.getText("body").toString(), session.doc.ydoc.getText("body").toString());
   await client.stop(); rebuilt.destroy(); session.destroy();
+});
+
+/** A change another device made to the same script, as the update its log would hold. */
+function remoteEdit(session: DocumentSession, text: string): Uint8Array {
+  const other = new Y.Doc();
+  Y.applyUpdate(other, session.doc.encodeState());
+  const before = Y.encodeStateVector(other);
+  other.getText("body").insert(0, text);
+  return Y.encodeStateAsUpdate(other, before);
+}
+
+// Not a Yjs update: it claims one client with two structs and then ends.
+const GARBAGE = new Uint8Array([1, 2, 3]);
+
+test("a record that is not a Yjs update does not stop the good changes that arrive with it", async () => {
+  const path = "/scripts/Poisoned.screenplay";
+  const session = savedSession(path, "INT. LAB - NIGHT");
+  const app = { session, toast: () => undefined };
+  handlers.set(SYNC.folderEnabled, () => true);
+  handlers.set(SYNC.folderStart, () => ({ folder: `${path}-sync`, deviceId: "device-aaaa", subscription: "sub-poisoned", updates: [] }));
+  handlers.set(SYNC.folderAppend, () => undefined);
+  handlers.set(SYNC.folderStop, () => undefined);
+  const client = new FolderSyncClient(app, () => undefined);
+  client.watch(session);
+  await until(() => client.state.active);
+
+  // The main process has already moved past these records in the logs, so a batch dropped here is gone for good.
+  const first = remoteEdit(session, "ONE ");
+  emit(SYNC.folderUpdates, path, [first, GARBAGE, remoteEdit(session, "TWO ")]);
+  const text = session.doc.ydoc.getText("body").toString();
+  assert.ok(text.includes("ONE ") && text.includes("TWO "), text);
+  assert.match(client.state.error ?? "", /skipped a change/);
+  assert.equal(client.state.active, true);
+  await client.stop();
+});
+
+test("an update that decodes but cannot be applied costs only itself", async () => {
+  // The main process can only check that a record decodes. This one does, and names a parent that does not exist.
+  const unappliable = new Uint8Array([1, 1, 7, 0, 132, 7, 10, 1, 120, 0]);
+  assert.doesNotThrow(() => Y.decodeUpdate(unappliable));
+  const path = "/scripts/Unappliable.screenplay";
+  const session = savedSession(path, "INT. LAB - NIGHT");
+  const app = { session, toast: () => undefined };
+  handlers.set(SYNC.folderEnabled, () => true);
+  handlers.set(SYNC.folderStart, () => ({ folder: `${path}-sync`, deviceId: "device-aaaa", subscription: "sub-unappliable", updates: [] }));
+  handlers.set(SYNC.folderAppend, () => undefined);
+  handlers.set(SYNC.folderStop, () => undefined);
+  const client = new FolderSyncClient(app, () => undefined);
+  client.watch(session);
+  await until(() => client.state.active);
+  emit(SYNC.folderUpdates, path, [unappliable, remoteEdit(session, "STILL ARRIVES ")]);
+  assert.ok(session.doc.ydoc.getText("body").toString().includes("STILL ARRIVES "));
+  assert.match(client.state.error ?? "", /skipped a change/);
+  // The document still takes edits and encodes afterwards.
+  const id = session.doc.toScript().paragraphs[0]!.id;
+  session.edit(() => session.doc.insertText(id, 0, "1. "));
+  assert.ok(session.doc.encodeState().length > 0);
+  await client.stop();
+});
+
+test("folder sync still starts when the logs hold a record that is not a Yjs update", async () => {
+  const path = "/scripts/PoisonedStart.screenplay";
+  const session = savedSession(path, "INT. LAB - NIGHT");
+  const app = { session, toast: () => undefined };
+  handlers.set(SYNC.folderEnabled, () => true);
+  handlers.set(SYNC.folderStart, () => ({
+    folder: `${path}-sync`, deviceId: "device-aaaa", subscription: "sub-start",
+    updates: [GARBAGE, remoteEdit(session, "FROM THE OTHER MAC ")],
+  }));
+  handlers.set(SYNC.folderAppend, () => undefined);
+  handlers.set(SYNC.folderStop, () => undefined);
+  const client = new FolderSyncClient(app, () => undefined);
+  client.watch(session);
+  await until(() => client.state.active || !!client.state.error);
+  assert.equal(client.state.active, true, client.state.error ?? "");
+  assert.ok(session.doc.ydoc.getText("body").toString().includes("FROM THE OTHER MAC "));
+  await client.stop();
 });

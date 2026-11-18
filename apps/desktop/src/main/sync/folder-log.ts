@@ -10,8 +10,14 @@ const MAGIC = new TextEncoder().encode("SPYLOG01");
 const GENERATION_BYTES = 16;
 export const HEADER_BYTES = MAGIC.length + GENERATION_BYTES;
 const RECORD_HEADER_BYTES = 8;
-/** Larger lengths can only come from damage; a whole feature script is a few megabytes. */
-const MAX_RECORD_BYTES = 256 * 1024 * 1024;
+/**
+ * A log larger than this is skipped, not read. A whole feature script is a few megabytes and a device compacts its
+ * log long before this, so a larger file is damage or something planted in a shared folder (a sparse file costs
+ * nothing to make and would otherwise be read into memory on every scan).
+ */
+export const MAX_LOG_BYTES = 64 * 1024 * 1024;
+/** Larger lengths can only come from damage: a record cannot be longer than the file that holds it. */
+const MAX_RECORD_BYTES = MAX_LOG_BYTES;
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);

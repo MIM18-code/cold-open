@@ -1,18 +1,16 @@
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import type { Invite } from "@screenplay/relay/protocol";
-import { PhoneDevices } from "../phone/devices.ts";
+import { ReplayGuard } from "@screenplay/relay/sealed";
+import { PhoneDevices, unsealedPhone } from "../phone/devices.ts";
 import { PhoneHost } from "../phone/host.ts";
 import { FolderGuard, PhoneFolder } from "../phone/folder.ts";
 import { importTakesFile, type TakesImportResult } from "../phone/takes.ts";
 import { tailscaleCheck, tailscaleNetwork, tailscaleTls, type TailNetwork } from "../phone/tailscale.ts";
-import { replaceFile } from "../safe-fs.ts";
 import type { PhoneSnapshot, PhoneTailscale } from "../../shared/channels/phone.ts";
 import { phonePathKey } from "../phone/identity.ts";
 import { PhoneInboxStore } from "../phone/inbox.ts";
 import { createRequire } from "node:module";
-import { openForRead } from "../safe-fs.ts";
-import { phoneTls, type PhoneCertificateInfo } from "../phone/tls.ts";
+import type { PhoneTls } from "../phone/tls.ts";
 import type { ServiceContext } from "../context.ts";
 import { PhoneServer, lanAddresses, validateSnapshot } from "../phone/server.ts";
 const require = createRequire(import.meta.url);
@@ -90,21 +88,15 @@ export function register(ctx: ServiceContext,
             throw new Error("The phone port must be a number from 1024 to 65535.");
         return port as number;
     };
-    const idleRoutes = (host: PhoneHost, address: string) => {
-        for (const device of devices.all().filter(d => !d.revoked && d.address === address)) {
-            if (remembered.has(device.id)) continue;
-            host.routes.set(device.tokenHash, async (req, res) => {
-                await devices.seen(device.id);
-                const receipts = req.method === "GET" && req.url === "/api/receipts";
-                const status = req.url === "/api/device" && req.method === "GET";
-                res.writeHead(receipts || status ? 200 : 503,
-                    { "content-type": "application/json", "cache-control": "no-store" });
-                res.end(JSON.stringify(receipts ? devices.decisions(device.id) : status ? { open: false }
-                    : { error: "The paired script is not open on the Mac. Keep queueing." }));
-            });
-        }
+    // One replay guard per home Wi-Fi pairing for as long as the app runs, whichever route is answering it.
+    const guards = new Map<string, ReplayGuard>();
+    const guardFor = (id: string) => guards.get(id) ?? guards.set(id, new ReplayGuard()).get(id)!;
+    /** Remembered iPhones on this listener that no open script is serving, revoked ones included. */
+    const idleRoutes = (host: PhoneHost) => {
+        for (const device of devices.all().filter(d => d.address === host.address && !unsealedPhone(d) && !d.hostname === host.sealed))
+            if (!remembered.has(device.id)) host.park(device, devices, guardFor(device.id));
     };
-    const hostFor = async (address: string, hostname: string, tls?: ReturnType<typeof phoneTls>) => {
+    const hostFor = async (address: string, hostname: string, tls?: PhoneTls) => {
         const key = `${address}:${tls ? "https" : "http"}`;
         if (hosts.has(key)) return hosts.get(key)!;
         if (hostStarts.has(key)) return hostStarts.get(key)!;
@@ -113,7 +105,7 @@ export function register(ctx: ServiceContext,
             try {
                 await host.start(address, hostname, stablePort(), tls);
                 hosts.set(key, host);
-                idleRoutes(host, address);
+                idleRoutes(host);
                 return host;
             } catch (e) { await host.stop(); throw e; }
         })();
@@ -130,7 +122,6 @@ export function register(ctx: ServiceContext,
             for (const opened of openScripts.values()) await folder.publish(opened.documentId, opened.snapshot);
         } catch (e) { folderError = String(e); }
     };
-    const certificates = new Map<number, { cert: string; key: string; info: PhoneCertificateInfo }>();
     const reportDevice = async (id: string, name?: string) => {
         await devices.seen(id, name);
         if (name) ctx.broadcast("phone:sharing-changed");
@@ -141,15 +132,6 @@ export function register(ctx: ServiceContext,
         if (sessionOwners.has(sender)) return;
         sessionOwners.add(sender);
         sender.once("destroyed", () => { void stop(sender.id); });
-    };
-    const certificateOwners = new WeakSet<object>();
-    const readPem = async (path: string, maximum: number) => {
-        const file = await openForRead(path);
-        if (!file) throw new Error("The chosen certificate file no longer exists.");
-        try {
-            if (file.info.size > maximum) throw new Error("The chosen certificate file is too large.");
-            return new TextDecoder().decode(await file.read(maximum));
-        } finally { await file.close(); }
     };
     const sessions = new Map<number, {
         server: PhoneServer;
@@ -175,9 +157,7 @@ export function register(ctx: ServiceContext,
             await connection.server.stop();
         }
         await session?.server.stop();
-        for (const host of hosts.values()) idleRoutes(host, new URL(host.origin).hostname.endsWith(".ts.net")
-            ? devices.all().find(d => d.hostname === new URL(host.origin).hostname)?.address ?? ""
-            : new URL(host.origin).hostname);
+        for (const host of hosts.values()) idleRoutes(host);
         emit(id);
     };
     // A window may use only the inbox keys it was given: the key of a script it has open, or a fresh key for an
@@ -257,40 +237,17 @@ export function register(ctx: ServiceContext,
         return {
             addresses: await networks(), active: !!session,
             liveRemembered: [...remembered.values()].some(c => c.windowId === event.sender.id), url: session?.url ?? "", pairing: session?.pairing,
-            revision: session?.revision ?? "", encrypted: session?.encrypted ?? false,
-            expiresAt: session?.expiresAt ?? null, certificate: certificates.get(event.sender.id)?.info ?? null,
+            revision: session?.revision ?? "", urlEncrypted: session?.encrypted ?? false,
+            expiresAt: session?.expiresAt ?? null,
             tailscale: await setupCheck(recheck === true),
             remembered: devices.all().filter(d => !d.revoked && owns(event.sender, d.scriptId)).map(d => ({
                 id: d.id, name: d.name, scriptId: d.scriptId, created: d.created, lastSeen: d.lastSeen,
+                ...(unsealedPhone(d) ? { pairAgain: true } : {}),
             })), port: stablePort(), folderChosen: !!devices.folder(), folderError, connectionError,
             inbox: owns(event.sender, key) ? await store.list(key) : [],
         };
     });
-    ctx.handle("phone:choose-tls", async (event, address: unknown) => {
-        const window = ctx.windowOf(event.sender), id = event.sender.id;
-        if (!window || typeof address !== "string" || !lanAddresses().some((a) => a.address === address))
-            throw new Error("Choose an available private-network address first.");
-        if (sessions.has(id) || starting.has(id)) throw new Error("Stop sharing before replacing its HTTPS identity.");
-        const certificate = await dialog.showOpenDialog(window, { title: "Choose HTTPS server certificate (PEM)", properties: ["openFile"], filters: [{ name: "Certificate", extensions: ["pem", "crt"] }] });
-        if (certificate.canceled || !certificate.filePaths[0] || event.sender.isDestroyed()) return null;
-        const privateKey = await dialog.showOpenDialog(window, { title: "Choose matching HTTPS private key (PEM)", properties: ["openFile"], filters: [{ name: "Private key", extensions: ["pem", "key"] }] });
-        if (privateKey.canceled || !privateKey.filePaths[0] || event.sender.isDestroyed()) return null;
-        const cert = await readPem(certificate.filePaths[0], 256_000), key = await readPem(privateKey.filePaths[0], 32_000);
-        const checked = phoneTls(cert, key, address);
-        if (event.sender.isDestroyed()) return null;
-        if (sessions.has(id) || starting.has(id)) throw new Error("Sharing started while the certificate dialog was open. Stop sharing and choose the certificate again.");
-        certificates.set(id, { cert, key, info: checked.info });
-        if (!certificateOwners.has(event.sender)) {
-            certificateOwners.add(event.sender);
-            event.sender.once("destroyed", () => certificates.delete(id));
-        }
-        return checked.info; // Private key and original file paths never enter the renderer or settings.
-    });
-    ctx.handle("phone:forget-tls", (event) => {
-        if (sessions.has(event.sender.id) || starting.has(event.sender.id)) throw new Error("Stop sharing before forgetting its certificate.");
-        certificates.delete(event.sender.id);
-    });
-    ctx.handle("phone:start", async (event, address: unknown, input: unknown, documentId: unknown, transport: unknown = "https", remember: unknown = false) => {
+    ctx.handle("phone:start", async (event, address: unknown, input: unknown, documentId: unknown, remember: unknown = false, browser: unknown = false) => {
         await ready;
         const window = ctx.windowOf(event.sender), snapshot = validateSnapshot(input), id = event.sender.id;
         const network = (await networks()).find(a => a.address === address);
@@ -298,31 +255,29 @@ export function register(ctx: ServiceContext,
             throw new Error("Choose an available private-network or Tailscale address.");
         if (typeof remember !== "boolean") throw new Error("Choose whether to remember this iPhone.");
         const tail = "tailscale" in network ? network as TailNetwork : undefined;
-        if (tail && transport !== "https") throw new Error("Tailscale requires HTTPS. No HTTP fallback is used.");
+        // Home Wi-Fi only, one-off only: the Safari page cannot use the sealed link, so its own link is plain HTTP.
+        if (typeof browser !== "boolean" || browser && (tail || remember))
+            throw new Error("A Safari link without encryption is only for a one-off pairing on home Wi-Fi.");
         if (remember && !/^[a-f0-9]{64}$/.test(String(documentId)))
             throw new Error("Save the script before remembering this iPhone, so it can follow the same script after restart.");
         if (!owns(event.sender, documentId))
             throw new Error("A document identity is required for the saved inbox.");
         if (sessions.has(id) || starting.has(id))
             throw new Error("Stop this window’s existing phone link first.");
-        if (transport !== "https" && transport !== "http") throw new Error("Choose HTTPS or explicitly choose trusted-network HTTP.");
-        const material = certificates.get(id);
-        if (transport === "https" && !material && !tail) throw new Error("Choose an HTTPS certificate and its private key first. No unencrypted fallback is used.");
-        const tls = tail ? await tailscaleTls(ctx.paths.userData, tail)
-            : transport === "https" && material ? phoneTls(material.cert, material.key, address) : undefined;
+        // Tailscale gets HTTPS with its own certificate. Home Wi-Fi gets a sealed link keyed from the pairing code.
+        const tls = tail ? await tailscaleTls(ctx.paths.userData, tail) : undefined;
         starting.add(id);
         const target = { documentId };
         inboxTargets.set(id, target);
         const generation = generations.get(id) ?? 0;
         let server: PhoneServer | undefined, deviceId: string | undefined;
         try {
-            const protection = tls
-                ? "HTTPS encrypts this session. The phone must trust the issuer of your certificate."
-                : "You selected unencrypted HTTP. Use trusted private Wi-Fi only.";
+            const protection = browser
+                ? `The link to the iPhone app is encrypted. The Safari link is not: anyone on this Wi-Fi could read the ${snapshot.cues.length} table-read passages it shows. `
+                : "The link is encrypted. ";
             const answer = await dialog.showMessageBox(window, {
                 type: "warning", message: "Share this live screenplay with your iPhone?",
-                detail: `A paired phone can read “${snapshot.title}” as you write. The browser link shares ` +
-                    `${snapshot.cues.length} captured table-read passages. ${protection} ` +
+                detail: `A paired phone can read “${snapshot.title}” as you write. ${protection}` +
                     (remember ? "This iPhone follows this saved script until you revoke it. " : "Pairing expires after two hours. Stop sharing revokes both links. ") +
                     "Notes and dictated text stay in a local review inbox until you accept or discard them.",
                 buttons: ["Cancel", "Start private-network link"], defaultId: 0, cancelId: 0,
@@ -337,16 +292,10 @@ export function register(ctx: ServiceContext,
             let info;
             if (remember) {
                 const host = await hostFor(address, tail?.hostname ?? address, tls);
-                if (material && tls && !tail) {
-                    for (const [extension, text] of [["crt", material.cert], ["key", material.key]]) {
-                        const path = join(ctx.paths.userData, `phone-${address}.${extension}`);
-                        await replaceFile(path, path + "." + randomUUID() + ".saving", text!, 0o600);
-                    }
-                }
-                const created = await devices.create(documentId, address, tail?.hostname, !!tls);
+                const created = await devices.create(documentId, address, tail?.hostname);
                 deviceId = created.device.id;
                 info = server.attach(host, created.device, created.token,
-                    name => reportDevice(deviceId!, name), () => devices.decisions(deviceId!));
+                    name => reportDevice(deviceId!, name), () => devices.decisions(deviceId!), guardFor(deviceId));
                 remembered.set(deviceId, { server, windowId: id, publisher: info.publisher });
                 openScripts.set(id, { documentId, snapshot });
                 scriptsChanged();
@@ -356,7 +305,7 @@ export function register(ctx: ServiceContext,
                     inboxTargets.delete(id);
                     emit(id);
                 }
-            }, undefined, tail?.hostname ?? address);
+            }, undefined, tail?.hostname ?? address, browser);
             if (event.sender.isDestroyed() || generation !== (generations.get(id) ?? 0)) {
                 await server.stop();
                 if (deviceId) { remembered.delete(deviceId); await devices.revoke(deviceId); }
@@ -453,6 +402,7 @@ export function register(ctx: ServiceContext,
         const session = sessions.get(event.sender.id);
         if (!session) throw new Error("Start pairing first.");
         if (kind !== "browser" && kind !== "remote") throw new Error("Invalid pairing link type.");
+        if (kind === "browser" && !session.url) throw new Error("This pairing has no Safari link.");
         clipboard.writeText(kind === "remote" ? session.pairing : session.url);
     });
     ctx.handle("phone:choose-folder", async event => {
@@ -477,6 +427,7 @@ export function register(ctx: ServiceContext,
         remembered.delete(device.id);
         for (const host of hosts.values()) host.routes.delete(device.tokenHash);
         await connection?.server.stop(true);
+        for (const host of hosts.values()) idleRoutes(host);
         for (const [windowId, session] of sessions) {
             if (session.deviceId === device.id) { sessions.delete(windowId); inboxTargets.delete(windowId); }
         }
@@ -492,16 +443,16 @@ export function register(ctx: ServiceContext,
         const opened = { documentId: key, snapshot };
         openScripts.set(event.sender.id, opened);
         scriptsChanged();
-        for (const device of devices.all().filter(d => !d.revoked && d.scriptId === key)) {
+        for (const device of devices.all().filter(d => !d.revoked && d.scriptId === key && !unsealedPhone(d))) {
             if (remembered.has(device.id)) continue;
-            const host = hosts.get(`${device.address}:${device.encrypted ? "https" : "http"}`);
+            const host = hosts.get(`${device.address}:${device.hostname ? "https" : "http"}`);
             if (!host) continue;
             const server = new PhoneServer(snapshot, command => ctx.send(window, "phone:command", command), async item => {
                 await devices.receive(device.id, key, item, store);
                 ctx.send(window, "phone:inbox-changed");
             });
             const { publisher } = server.attach(host, device, undefined,
-                name => reportDevice(device.id, name), () => devices.decisions(device.id));
+                name => reportDevice(device.id, name), () => devices.decisions(device.id), guardFor(device.id));
             remembered.set(device.id, { server, windowId: event.sender.id, publisher });
         }
         trackWindow(event.sender);
@@ -511,18 +462,16 @@ export function register(ctx: ServiceContext,
                 && devices.device(id)?.scriptId === key).map(([, connection]) => connection.publisher) : [] };
     });
     const restoreHosts = async () => {
-        for (const device of devices.all().filter(d => !d.revoked)) {
+        // An iPhone paired on home Wi-Fi before links were sealed gets no listener: it must be paired again.
+        for (const device of devices.all().filter(d => !d.revoked && !unsealedPhone(d))) {
             try {
-                if (hosts.has(`${device.address}:${device.encrypted ? "https" : "http"}`)) continue;
+                if (hosts.has(`${device.address}:${device.hostname ? "https" : "http"}`)) continue;
                 let tls;
                 if (device.hostname) {
                     const tail = await detectTailscale();
                     if (!tail || tail.hostname !== device.hostname || tail.address !== device.address)
                         throw new Error("Reconnect this Mac to its paired Tailscale network to resume the iPhone.");
                     tls = await tailscaleTls(ctx.paths.userData, tail);
-                } else if (device.encrypted) {
-                    tls = phoneTls(await readPem(join(ctx.paths.userData, `phone-${device.address}.crt`), 256000),
-                        await readPem(join(ctx.paths.userData, `phone-${device.address}.key`), 32000), device.address);
                 }
                 await hostFor(device.address, device.hostname ?? device.address, tls);
                 connectionError = "";
@@ -556,6 +505,6 @@ export function register(ctx: ServiceContext,
         await folder?.stop();
         await Promise.allSettled([...new Set([...sessions.keys(), ...openScripts.keys()])].map(stop));
         await Promise.allSettled([...hosts.values()].map(h => h.stop()));
-        await store.flush(); await devices.flush(); certificates.clear();
+        await store.flush(); await devices.flush();
     });
 }

@@ -66,6 +66,11 @@ async function openRegular(path: string, flags: number, follow: boolean): Promis
 export interface OpenedRegular {
   info: Stats;
   read(maximum?: number): Promise<Uint8Array>;
+  /**
+   * The first `length` bytes, or fewer when the file is shorter. For a file someone else can grow: checking its
+   * size and then reading it whole would read whatever it had become by then.
+   */
+  readFirst(length: number): Promise<Uint8Array>;
   close(): Promise<void>;
 }
 
@@ -86,6 +91,16 @@ export async function openForRead(path: string): Promise<OpenedRegular | null> {
         offset += bytesRead;
       }
       if (offset > maximum) throw new Error(`${basename(path)} exceeds its size limit.`);
+      return new Uint8Array(bytes.subarray(0, offset));
+    },
+    readFirst: async (length: number) => {
+      const bytes = Buffer.alloc(length);
+      let offset = 0;
+      while (offset < length) {
+        const { bytesRead } = await handle.read(bytes, offset, length - offset, offset);
+        if (!bytesRead) break;
+        offset += bytesRead;
+      }
       return new Uint8Array(bytes.subarray(0, offset));
     },
     close: () => handle.close(),

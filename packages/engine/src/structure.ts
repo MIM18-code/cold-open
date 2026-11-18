@@ -15,10 +15,11 @@
 // arrives, so their session can select it for manual cutting and pasting.
 import * as Y from "yjs";
 import type { ScreenplayDoc } from "./doc.ts";
-import { MOVE_KNOWLEDGE_PREFIX, MOVE_KNOWLEDGE_LIMIT, moveDeletions, type MoveKnowledge } from "./move-knowledge.ts";
+import { MOVE_KNOWLEDGE_PREFIX, MOVE_KNOWLEDGE_LIMIT, isMoveKnowledge, moveDeletions, type MoveKnowledge } from "./move-knowledge.ts";
 import { compareNumbers, numberBetween, paginate, sceneEighths, type Pagination } from "./pagination.ts";
 import { NON_PRINTING, type FdxDocumentExtras, type Paragraph, type Script, type XmlNode, plainText } from "./model.ts";
 import { characterName } from "./reports.ts";
+import { storedFdx } from "./shapes.ts";
 import { sceneLetters, templateSceneNumbering } from "./template-rules.ts";
 
 type DeltaOp = { insert: unknown; attributes?: Record<string, unknown> };
@@ -128,7 +129,8 @@ function moveRanges(doc: ScreenplayDoc, paragraphs: readonly Paragraph[], ranges
     doc.body.applyDelta([...(target > 0 ? [{ retain: target }] : []), ...slices.flat()]);
     const knowledge: MoveKnowledge = { sv, at: Y.getState(doc.ydoc.store, doc.ydoc.clientID), ...moveDeletions(doc, transaction, before) };
     const key = `${MOVE_KNOWLEDGE_PREFIX}${doc.ydoc.clientID}`, previous = doc.meta.get(key);
-    doc.meta.set(key, [...(Array.isArray(previous) ? previous : []), knowledge].slice(-MOVE_KNOWLEDGE_LIMIT));
+    const kept = Array.isArray(previous) ? previous.filter(isMoveKnowledge).map(({ sv, at, spans, chars }) => ({ sv, at, spans, chars })) : [];
+    doc.meta.set(key, [...kept, knowledge].slice(-MOVE_KNOWLEDGE_LIMIT));
   });
   return true;
 }
@@ -581,7 +583,7 @@ export function lockedSceneNumbersOf(doc: ScreenplayDoc): Map<string, string> {
 
 /** The numbers the last Final Draft file this document came from recorded as issued. */
 export function issuedSceneNumbers(doc: ScreenplayDoc): Map<string, string> {
-  return issuedSceneNumbersFromFdx(doc.meta.get("fdx") as FdxDocumentExtras | undefined);
+  return issuedSceneNumbersFromFdx(storedFdx(doc));
 }
 
 /** Write the lock into FDX extras (a copy): set its attributes, or take them off when the scene numbers are free. */
@@ -616,8 +618,9 @@ export function writeSceneNumberLock(extras: FdxDocumentExtras, locked: boolean,
  */
 export function sceneNumbersLocked(doc: ScreenplayDoc): boolean {
   const own = doc.meta.get("sceneNumbersLocked");
-  if (own !== undefined) return own === true;
-  return sceneNumberLockFromFdx(doc.meta.get("fdx") as FdxDocumentExtras | undefined) === true;
+  // Only setSceneNumbersLocked's own values count; anything else reads as no lock of its own.
+  if (typeof own === "boolean") return own;
+  return sceneNumberLockFromFdx(storedFdx(doc)) === true;
 }
 
 /** Lock or unlock scene numbers. Unlocking changes no number; Number Scenes then renumbers 1 to N. */

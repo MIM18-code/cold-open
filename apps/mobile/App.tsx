@@ -65,7 +65,7 @@ function Workspace({ r }: { r: Remote }) {
     {view === "note" && !editor && <Capture initial={capture} script={ended ? null : r.people.title || "your script"} ended={ended}
       waiting={waiting} keep={keepCapture} save={r.note} reader={() => setView("script")} readerLabel="Script" />}
     <View style={{ flex: 1, display: view === "script" && !editor ? "flex" : "none" }}>
-      <Reader rows={r.rows} people={r.people} status={r.status} secure={pair.secure}
+      <Reader rows={r.rows} people={r.people} status={r.status}
         showStatus={() => setView("status")} note={note}
         compose={(kind, row) => edit({ kind, row, text: "" })} />
     </View>

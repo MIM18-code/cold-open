@@ -17,3 +17,6 @@
   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 8.2l2.3 2.3 4.7-4.9' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/16px no-repeat; }
 .setup-steps li.todo .setup-mark { border-color: var(--accent); }
 .setup-steps li.optional .setup-mark { border-style: dashed; }
+.phone-advanced > summary { cursor: pointer; color: var(--ink-2); }
+.phone-advanced[open] > summary { margin-bottom: 8px; }
+.phone-advanced small { display: block; margin-top: 6px; color: var(--ink-2); }

@@ -1,8 +1,10 @@
 // The app's own file format (.screenplay): an 8-byte magic, a 4-byte header length, a JSON header, then the
 // Yjs document state. The state carries the whole collaborative document, so co-writing and sync history
-// survive saving and reopening.
+// survive saving and reopening. The header is this Mac's own: nothing in it is synced to co-writers.
 import { ScreenplayDoc, SCHEMA_VERSION } from "@screenplay/engine";
 import * as Y from "yjs";
+
+import { HISTORY_ID_KEY, validHistoryId } from "./session.ts";
 
 const MAGIC = new TextEncoder().encode("SCRNPLY1");
 
@@ -10,12 +12,27 @@ export interface FileHeader {
   format: 1;
   schema: number;
   title?: string;
+  /**
+   * The ID the saving window used for this script's Draft History, or null when it had none. Kept here and not
+   * only in the document's metadata, which a co-writer or a sync folder log can change: the window that opens the
+   * file takes its ID from the header. Absent in files saved before this field existed.
+   */
+  historyId?: string | null;
   savedAt: string;
   app: string;
 }
 
-export function encodeNative(doc: ScreenplayDoc, title?: string): Uint8Array {
-  const header: FileHeader = { format: 1, schema: SCHEMA_VERSION, savedAt: new Date().toISOString(), app: "screenplay-desktop 0.1", ...(title ? { title } : {}) };
+/**
+ * `historyId` is the ID the saving window uses for this script's local history (DocumentSession.historyId), or
+ * null when it has none yet. It goes in the header and the document is written as it is: putting the ID back into
+ * the document's metadata on save would add a change to the file that every other window on the script then
+ * merges, so two windows with their own IDs would overwrite the shared value, and grow the document, on each save.
+ */
+export function encodeNative(doc: ScreenplayDoc, title?: string, historyId?: string | null): Uint8Array {
+  const header: FileHeader = {
+    format: 1, schema: SCHEMA_VERSION, savedAt: new Date().toISOString(), app: "screenplay-desktop 0.1",
+    ...(title ? { title } : {}), ...(historyId !== undefined ? { historyId } : {}),
+  };
   const json = new TextEncoder().encode(JSON.stringify(header));
   const state = doc.encodeState();
   const out = new Uint8Array(MAGIC.length + 4 + json.length + state.length);
@@ -30,7 +47,11 @@ export function isNative(data: Uint8Array): boolean {
   return data.length >= MAGIC.length + 4 && MAGIC.every((byte, i) => data[i] === byte);
 }
 
-export function decodeNative(data: Uint8Array): { header: FileHeader; doc: ScreenplayDoc } {
+/**
+ * `historyId` is the Draft History ID a window opening this file starts with: the header's, or for a file saved
+ * before the header carried one, the ID in the document's metadata (so existing histories stay reachable).
+ */
+export function decodeNative(data: Uint8Array): { header: FileHeader; doc: ScreenplayDoc; historyId: string | null } {
   if (!isNative(data)) throw new Error("This is not a screenplay file.");
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const length = view.getUint32(MAGIC.length, false);
@@ -39,7 +60,8 @@ export function decodeNative(data: Uint8Array): { header: FileHeader; doc: Scree
   const header = JSON.parse(new TextDecoder().decode(data.subarray(MAGIC.length + 4, headerEnd))) as FileHeader;
   if (header.schema > SCHEMA_VERSION) throw new Error("This file was saved by a newer version of the app.");
   const doc = ScreenplayDoc.fromUpdate(data.subarray(headerEnd));
-  return { header, doc };
+  const historyId = validHistoryId(Object.hasOwn(header, "historyId") ? header.historyId : doc.meta.get(HISTORY_ID_KEY));
+  return { header, doc, historyId };
 }
 
 /** How a .screenplay file on disk relates to an open document. */
@@ -67,18 +89,6 @@ export function mergeNativeFromDisk(doc: ScreenplayDoc, data: Uint8Array, origin
     return changed ? "merged" : "contained";
   } finally {
     disk.ydoc.destroy();
-  }
-}
-
-/** The value a metadata key will have once `data` is merged into `doc`, worked out on a copy. */
-export function metaAfterMerge(doc: ScreenplayDoc, data: Uint8Array, key: string): unknown {
-  const { doc: disk } = decodeNative(data);
-  const merged = ScreenplayDoc.fromUpdate(Y.mergeUpdates([doc.encodeState(), disk.encodeState()]));
-  try {
-    return merged.meta.get(key);
-  } finally {
-    disk.ydoc.destroy();
-    merged.ydoc.destroy();
   }
 }
 

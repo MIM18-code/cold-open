@@ -63,8 +63,9 @@ export function StatusDot({ status }: { status: string }) {
     ? c.danger : c.orange;
   return <View accessible={false} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />;
 }
-export function Warning({ secure }: { secure: boolean }) {
-  return <Caption>{secure ? "Encrypted on private Wi-Fi" : "Unencrypted link · Trusted Wi-Fi only"}</Caption>;
+export function Warning({ legacy }: { legacy: boolean }) {
+  return <Caption>{legacy ? "This pairing was made before Cold Open encrypted Wi-Fi links. Update Cold Open on the Mac, then pair again."
+    : "Encrypted"}</Caption>;
 }
 
 export function ToolbarAction({ label, icon, press, primary, disabled, checked }: {

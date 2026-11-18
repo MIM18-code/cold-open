@@ -36,7 +36,7 @@ export class FolderSyncClient {
     if (!isDesktop) return;
     desktop.on(SYNC.folderUpdates, (path, updates) => {
       if (path !== this.path || !this.session || !Array.isArray(updates) || !updates.length) return;
-      this.session.doc.applyUpdate(updates.length === 1 ? updates[0] as Uint8Array : Y.mergeUpdates(updates as Uint8Array[]), FOLDER_ORIGIN);
+      this.apply(this.session, updates as Uint8Array[]);
     });
     desktop.on(SYNC.folderError, (path, message) => {
       if (path !== this.path) return;
@@ -151,8 +151,28 @@ export class FolderSyncClient {
     session.doc.ydoc.on("update", onUpdate);
     this.stopSession.push(() => session.doc.ydoc.off("update", onUpdate));
     if (early.length) send(Y.mergeUpdates(early));
-    if (result.updates.length) session.doc.applyUpdate(Y.mergeUpdates(result.updates), FOLDER_ORIGIN);
     this.set({ active: true, folder: result.folder, error: null });
+    this.apply(session, result.updates);
+  }
+
+  /**
+   * Apply other devices' changes one at a time, in one transaction. The main process drops records that are not
+   * Yjs updates, but anyone who can write the sync folder can still craft one that decodes and then fails to
+   * apply. Merging the batch first, or applying it as one update, would lose the good changes beside it, and the
+   * main process has already moved past them in the logs, so they would never arrive again.
+   */
+  private apply(session: DocumentSession, updates: Uint8Array[]): void {
+    let skipped = 0;
+    Y.transact(session.doc.ydoc, () => {
+      for (const update of updates) {
+        try {
+          session.doc.applyUpdate(update, FOLDER_ORIGIN);
+        } catch {
+          skipped++;
+        }
+      }
+    }, FOLDER_ORIGIN, false);
+    if (skipped) this.set({ error: `Folder sync skipped ${skipped === 1 ? "a change" : `${skipped} changes`} it could not read. The other changes arrived.` });
   }
 
   private set(change: Partial<FolderState>): void {

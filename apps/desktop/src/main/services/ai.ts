@@ -63,7 +63,7 @@ export function register(ctx: ServiceContext): void {
   ctx.handle(AI_CHANNELS.offerSetup, () => { const offer = !setupOffered; setupOffered = true; return offer; });
   ctx.handle(AI_CHANNELS.localSetup, () => runner.localReadiness("fresh"));
   ctx.handle(AI_CHANNELS.startOllama, () => new Promise<void>((resolve, reject) => {
-    execFile("open", ["-a", "Ollama"], (error) => error ? reject(new Error("Could not start the Ollama app. Open it from Applications and try again.")) : resolve());
+    execFile("/usr/bin/open", ["-a", "Ollama"], (error) => error ? reject(new Error("Could not start the Ollama app. Open it from Applications and try again.")) : resolve());
   }));
   ctx.handle(AI_CHANNELS.setKey, (_event, name: string, key: string) => runner.setKey(name, key));
   ctx.handle(AI_CHANNELS.clearKey, (_event, name: string) => runner.clearKey(name));

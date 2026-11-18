@@ -1,7 +1,7 @@
 import * as Y from "yjs";
 import type { ScreenplayDoc } from "./doc.ts";
 import { plainText } from "./model.ts";
-import { MOVE_KNOWLEDGE_PREFIX, type MoveKnowledge, type MoveSpan } from "./move-knowledge.ts";
+import { MOVE_KNOWLEDGE_PREFIX, isMoveKnowledge, type MoveKnowledge, type MoveSpan } from "./move-knowledge.ts";
 
 type Delta = { insert: string; attributes?: Record<string, unknown> };
 type Span = { client: number; clock: number; length: number };
@@ -94,9 +94,9 @@ export function strandedByMove(doc: ScreenplayDoc, transaction: Y.Transaction): 
     // Undo/Redo restores an old array under a new item identity and is deliberately not diagnosed.
     if (!item || item.id.client !== mover || item.id.clock !== records.at(-1)?.at) continue;
     const previous = changes.get(key)?.oldValue;
-    const received = new Set(Array.isArray(previous) ? previous.map((record: MoveKnowledge) => record.at) : []);
-    for (const record of records as MoveKnowledge[]) {
-      if (!record || typeof record.sv !== "string" || !Array.isArray(record.spans) || !Array.isArray(record.chars)) continue;
+    const received = new Set(Array.isArray(previous) ? previous.filter(isMoveKnowledge).map((record) => record.at) : []);
+    for (const record of records) {
+      if (!isMoveKnowledge(record)) continue;
       if (received.has(record.at)) continue;
       // moveRanges writes the record in the move's own transaction. A record whose deletions arrived earlier
       // cannot tell concurrent typing from typing done since, so it is skipped (a miss, never a false notice).
@@ -141,7 +141,7 @@ export function strandedByMove(doc: ScreenplayDoc, transaction: Y.Transaction): 
       tokens.push({ item, clock, length, start: at, paragraphId, ...(part !== undefined ? { text: part, attributes: { ...attributes } } : {}) });
       if (part !== undefined) {
         at += length;
-        if (part === "\n" && !attributes.soft && typeof attributes.id === "string") paragraphId = attributes.id;
+        if (part === "\n" && attributes.soft !== true && typeof attributes.id === "string") paragraphId = attributes.id;
       }
     }
   }
@@ -153,7 +153,7 @@ export function strandedByMove(doc: ScreenplayDoc, transaction: Y.Transaction): 
       if (inSpans(chars, token.item.id.client, token.clock)) original += token.length;
       if (token.text === undefined || token.item.id.client !== mover || token.clock < (vector.get(mover) ?? 0) || token.clock + token.length > record.at) continue;
       const attrs = token.attributes!;
-      if (token.text === "\n" && !attrs.soft && typeof attrs.id === "string") {
+      if (token.text === "\n" && attrs.soft !== true && typeof attrs.id === "string") {
         if (!labels.length || attrs.type === "sceneHeading" || attrs.type === "section") {
           sceneId = typeof attrs.sceneId === "string" ? attrs.sceneId : attrs.id; headingId = attrs.id;
         }
@@ -258,7 +258,7 @@ function locateRanges(doc: ScreenplayDoc, conflicts: readonly StructuralMoveConf
         match.matched += to - from;
         append(match.delta, text.slice(from - clock, to - clock), attributes);
       }
-      if (text === "\n" && !attributes.soft && typeof attributes.id === "string") {
+      if (text === "\n" && attributes.soft !== true && typeof attributes.id === "string") {
         paragraphId = attributes.id;
         boundary = { client: item.id.client, clock, length: 1 };
       }

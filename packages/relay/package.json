@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
-    "./protocol": "./src/protocol.ts"
+    "./protocol": "./src/protocol.ts",
+    "./sealed": "./src/sealed.ts"
   },
   "bin": {
     "screenplay-relay": "./src/cli.ts"
@@ -21,6 +22,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@noble/ciphers": "2.4.0",
+    "@noble/hashes": "2.4.0",
     "lib0": "^0.2.119",
     "ws": "^8.22.0",
     "y-protocols": "^1.0.7",

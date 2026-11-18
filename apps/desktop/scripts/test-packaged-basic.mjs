@@ -1,19 +1,27 @@
 // Exercises the packaged app with fictional scripts and an attributed speech test fixture.
 // Native file pickers and the exact CJK system-font confirmation receive test responses;
 // no PDF rendering or other app functionality is mocked.
-// Run after packaging: node apps/desktop/scripts/test-packaged-basic.mjs [path/to/Cold Open.app]
+// Run after packaging: node apps/desktop/scripts/test-packaged-basic.mjs [--full] [path/to/Cold Open.app]
+//
+// Playwright attaches through --inspect, which a release build's fuses turn off (fuses.mjs). So package.mjs runs
+// this with --full on the assembled app before it sets that fuse, and a sealed app gets the bundled-speech check
+// and the checks that need no debugger: it starts, ignores injected code, quits cleanly, and refuses to start
+// with Chromium's page debugger switched on.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { connect, createServer } from 'node:net';
 import { _electron as electron } from 'playwright';
 import { PDFDocument } from 'pdf-lib';
+import { fuseProblems, readFuses } from './fuses.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const appPath = resolve(process.argv[2] ?? join(here, '../release/mac-arm64/Cold Open.app'));
+const full = process.argv.includes('--full');
+const appPath = resolve(process.argv.slice(2).find(arg => arg !== '--full') ?? join(here, '../release/mac-arm64/Cold Open.app'));
 const resources = join(appPath, 'Contents/Resources');
 const binary = join(appPath, 'Contents/MacOS/Cold Open');
 const expectedVersion = JSON.parse(readFileSync(join(here, '../package.json'), 'utf8')).version;
@@ -67,8 +75,79 @@ function verifyModelAndInference() {
   console.log('PASS bundled Parakeet checksums and offline licensed speech fixture, with user cache denied');
 }
 
+/** The sealed app, with nothing attached: it opens its window, ignores the three ways another program could push
+ * code into its main process, quits when asked, and refuses to start with Chromium's page debugger switched on. */
+async function sealedChecks() {
+  // Read the fuses too: a packaged app drops --require from NODE_OPTIONS whatever that fuse says, so the launch
+  // below cannot tell whether it is set.
+  assert.deepEqual(await fuseProblems(appPath), [], 'The sealed app has the wrong Electron fuses');
+  const sleep = ms => new Promise(done => setTimeout(done, ms));
+  const freePort = () => new Promise(done => { const server = createServer().listen(0, '127.0.0.1', () => { const { port } = server.address(); server.close(() => done(port)); }); });
+  // SCREENPLAY_E2E keeps the window and the Dock icon hidden. It must not relax any of these checks.
+  const start = (profile, args, extraEnv = {}, extraStdio = []) => {
+    const child = spawn(binary, [`--user-data-dir=${output(profile)}`, ...args],
+      { env: { ...env, SCREENPLAY_E2E: '1', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe', ...extraStdio] });
+    const run = { child, log: '', exit: undefined };
+    child.stdout.on('data', data => { run.log += data; }); child.stderr.on('data', data => { run.log += data; });
+    run.exited = new Promise(done => child.on('exit', (code, signal) => { run.exit = { code, signal }; done(); }));
+    run.describe = () => `${JSON.stringify(run.exit)} ${run.log}`;
+    return run;
+  };
+
+  const port = await freePort();
+  // Ask the port for a debugger's target list, so another program that happens to take the port is not mistaken for one.
+  const debuggerOn = () => fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2000) })
+    .then(async response => /webSocketDebuggerUrl/.test(await response.text()), () => false);
+  const marker = output('injected'), hook = output('hook.cjs');
+  writeFileSync(hook, `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "");`);
+  const app = start('sealed-profile', [`--inspect=${port}`], { ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: `--require=${hook}` });
+  // A renderer process under this app means it started as the app and made its window.
+  const rendering = () => spawnSync('/bin/ps', ['-axo', 'ppid=,command='], { encoding: 'utf8' }).stdout.split('\n')
+    .some(line => line.trim().startsWith(`${app.child.pid} `) && line.includes('Helper (Renderer)'));
+  try {
+    for (let i = 0; i < 120 && !app.exit && !rendering(); i++) await sleep(250);
+    check(!app.exit && rendering(), `The sealed app did not open its window: ${app.describe()}`);
+    await sleep(3000);
+    check(!app.exit, `The sealed app quit on its own: ${app.describe()}`);
+    check(!existsSync(marker), 'ELECTRON_RUN_AS_NODE or NODE_OPTIONS ran code in the sealed app');
+    check(!/Debugger listening/.test(app.log) && !(await debuggerOn()), `--inspect opened a debugger port in the sealed app: ${app.log}`);
+    app.child.kill('SIGTERM');
+    await Promise.race([app.exited, sleep(15000)]);
+    check(app.exit?.code === 0, `The sealed app did not quit cleanly: ${app.describe()}`);
+  } finally { if (!app.exit) app.child.kill('SIGKILL'); }
+  console.log('PASS sealed app has the release fuses, opens hidden, ignores ELECTRON_RUN_AS_NODE, NODE_OPTIONS and --inspect, quits cleanly');
+
+  // Chromium's own debugger switches reach the page, and no fuse covers them. The app must quit instead
+  // (src/main/page-debugger.ts) without the debugger ever answering. Both launches are watched from the first
+  // moment, so a debugger that opens briefly before the app quits fails the check.
+  const pagePort = await freePort();
+  const accepts = () => new Promise(done => { const socket = connect(pagePort, '127.0.0.1'); socket.on('connect', () => { socket.destroy(); done(true); }); socket.on('error', () => done(false)); });
+  const byPort = start('page-port-profile', [`--remote-debugging-port=${pagePort}`]);
+  try {
+    let accepted = false;
+    for (const until = Date.now() + 20000; !byPort.exit && !accepted && Date.now() < until;) { accepted = await accepts(); await new Promise(setImmediate); }
+    for (let i = 0; i < 50 && !accepted; i++) { accepted = await accepts(); await sleep(10); }
+    check(!accepted && !/DevTools listening/.test(byPort.log), `--remote-debugging-port opened the page to a debugger in the sealed app: ${byPort.describe()}`);
+    check(byPort.exit?.code === 1, `The sealed app did not refuse --remote-debugging-port: ${byPort.describe()}`);
+  } finally { if (!byPort.exit) byPort.child.kill('SIGKILL'); }
+
+  // The pipe form talks over file descriptors 3 and 4: null-terminated JSON in, answers out.
+  const byPipe = start('page-pipe-profile', ['--remote-debugging-pipe'], {}, ['pipe', 'pipe']);
+  const [, , , toApp, fromApp] = byPipe.child.stdio;
+  let answer = '';
+  fromApp.on('data', data => { answer += data; });
+  toApp.on('error', () => {});
+  const asking = setInterval(() => { if (toApp.writable) toApp.write('{"id":1,"method":"Browser.getVersion"}\0'); }, 20);
+  try {
+    await Promise.race([byPipe.exited, sleep(20000)]);
+    await sleep(500);
+    check(!answer, `--remote-debugging-pipe opened the page to a debugger in the sealed app: ${answer.slice(0, 200)}`);
+    check(byPipe.exit?.code === 1, `The sealed app did not refuse --remote-debugging-pipe: ${byPipe.describe()}`);
+  } finally { clearInterval(asking); if (!byPipe.exit) byPipe.child.kill('SIGKILL'); }
+  console.log('PASS sealed app quits before --remote-debugging-port or --remote-debugging-pipe can reach its page');
+}
+
 async function main() {
-  verifyModelAndInference();
   const launch = (profile, path) => electron.launch({ executablePath: binary, args: [`--user-data-dir=${output(profile)}`, ...(path ? [path] : [])], env });
   let app;
   const open = async (profile, path) => { app = await launch(profile, path); assert.equal(await app.evaluate(({ app }) => app.getVersion()), expectedVersion, 'Packaged app version differs from package.json'); const p = await app.firstWindow(); await p.locator('.editor-pm').waitFor(); return p; };
@@ -198,5 +277,13 @@ async function main() {
     if (app) await app.evaluate(({ app }) => app.exit(1)).catch(() => {});
   }
 }
-try { await main(); } catch (error) { console.error(error); process.exitCode = 1; }
+try {
+  const sealed = (await readFuses(appPath)).enableNodeCliInspectArguments === false;
+  if (sealed && full) throw new Error(`${appPath} has the inspect fuse off, so Playwright cannot attach to it. The full test runs during packaging.`);
+  verifyModelAndInference();
+  if (sealed) {
+    console.log('The inspect fuse is off, so this runs the sealed-app checks. The full test ran during packaging, before the fuse was set.');
+    await sealedChecks();
+  } else await main();
+} catch (error) { console.error(error); process.exitCode = 1; }
 finally { if (process.exitCode || process.env.KEEP_PACKAGED_BASIC_ARTIFACTS === '1') console.log(`Artifacts: ${root}`); else rmSync(root, { recursive: true, force: true }); }

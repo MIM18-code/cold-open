@@ -3,14 +3,13 @@ import test from "node:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Readable } from "node:stream";
 import { PhoneDevices } from "../src/main/phone/devices.ts";
 import { PhoneFolder, validateFolderItem } from "../src/main/phone/folder.ts";
 import { PhoneInboxStore } from "../src/main/phone/inbox.ts";
 import { importTakesFile } from "../src/main/phone/takes.ts";
 import { PhoneServer } from "../src/main/phone/server.ts";
 import type { PhoneHost } from "../src/main/phone/host.ts";
-import { folderItem, type Take } from "../../mobile/src/outbox.ts";
+import { folderItem, inboxBody, type Take } from "../../mobile/src/outbox.ts";
 import { takesFile } from "../../mobile/src/takes-file.ts";
 import { decodePairing } from "../../mobile/src/pairing.ts";
 import { signEnvelope } from "./phone-signing.ts";
@@ -26,7 +25,7 @@ async function fixture() {
   const store = new PhoneInboxStore(join(root, "inbox"));
   const server = new PhoneServer({ title: "Draft", revision: "r1", cues: [] }, () => {},
     item => devices.receive(device.id, scriptId, item, store).then(() => {}));
-  const host = { origin: "http://127.0.0.1:4456", routes: new Map(), relay: {
+  const host = { origin: "http://127.0.0.1:4456", routes: new Map(), links: new Map(), relay: {
     port: 4456, createRoom: () => ({ room: "r".repeat(22), key: "k".repeat(22), readKey: "s".repeat(22) }),
     closeRoom() {},
   } } as unknown as PhoneHost;
@@ -37,14 +36,8 @@ async function fixture() {
   const errors: string[] = [];
   const folder = new PhoneFolder(root, devices, store, () => {}, e => errors.push(e));
   const live = async () => {
-    const req = Object.assign(Readable.from([JSON.stringify(item)]), {
-      headers: { host: "127.0.0.1:4456", authorization: `Bearer ${token}`, "content-type": "application/json" },
-      method: "POST", url: "/api/inbox", socket: { remoteAddress: "127.0.0.1" },
-    });
-    let code = 0, reply = "";
-    await server["route"](req as never, { writeHead(n: number) { code = n; },
-      end(body: string) { reply = body; } } as never, "", "");
-    assert.equal(code, 200, reply);
+    const reply = await server["handle"]("POST", "/api/inbox", inboxBody(item));
+    assert.equal(reply.status, 200, JSON.stringify(reply.body));
   };
   return { root, devices, device, store, pair, item, sub, errors, folder, server, live };
 }

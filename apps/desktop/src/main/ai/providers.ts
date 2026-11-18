@@ -334,7 +334,8 @@ const NAMES: Record<HttpProvider, string> = { ollama: "Ollama", anthropic: "Anth
 async function send(provider: HttpProvider, built: BuiltRequest, fetchFn: FetchLike, signal: AbortSignal): Promise<Response> {
   let response: Response;
   try {
-    response = await fetchFn(built.url, { ...built.init, signal });
+    // fetch drops only Authorization on a redirect to another origin; x-api-key and x-goog-api-key would follow it.
+    response = await fetchFn(built.url, { ...built.init, redirect: "error", signal });
   } catch (error) {
     if (signal.aborted) throw new AiError("cancelled", "Cancelled.");
     const reason = error instanceof Error ? error.message : String(error);

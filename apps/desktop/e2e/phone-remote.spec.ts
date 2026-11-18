@@ -4,7 +4,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { close, confirmNextPrompt, launch, runCommand } from "./helpers.ts";
 import { decodePairing } from "../../mobile/src/pairing.ts";
-import { deliver, folderItem, syncReceipts, type Take } from "../../mobile/src/outbox.ts";
+import { deliver, deviceStatus, folderItem, syncReceipts, type Take } from "../../mobile/src/outbox.ts";
 import { connect, type Row } from "../../mobile/src/live.ts";
 
 test("pair the iPhone reader, follow typing and review an anchored suggestion", async () => {
@@ -25,9 +25,10 @@ test("pair the iPhone reader, follow typing and review an anchored suggestion", 
     const address = page.getByLabel("Phone network address");
     const addresses = await page.evaluate(async () => (await (window as any).desktop.invoke("phone:status")).addresses);
     const lan = addresses.find((a: { tailscale?: boolean }) => !a.tailscale);
-    test.skip(!lan, "The Phone panel requires a private LAN interface for this HTTP test.");
+    test.skip(!lan, "The Phone panel requires a private LAN interface for this test.");
     await address.selectOption(lan.address);
-    await page.getByLabel("Phone connection protection").selectOption("http");
+    await expect(page.getByText(/^Encrypted automatically/)).toBeVisible();
+    await expect(page.getByLabel("Phone connection protection")).toHaveCount(0);
     await page.getByRole("button", { name: "Start phone pairing…" }).click();
     await expect(page.locator("figure svg")).toHaveCount(1);
     const payload = await page.evaluate(async () => (await (window as any).desktop.invoke("phone:status")).pairing);
@@ -117,7 +118,6 @@ test("remember an iPhone on a saved script and revoke it from the Phone panel", 
     const lan = addresses.find((a: { tailscale?: boolean }) => !a.tailscale);
     test.skip(!lan, "This test requires a private LAN interface.");
     await page.getByLabel("Phone network address").selectOption(lan.address);
-    await page.getByLabel("Phone connection protection").selectOption("http");
     await page.getByLabel("Remember this iPhone", { exact: true }).check();
     await page.getByRole("button", { name: "Start phone pairing…" }).click();
     await expect(page.locator("figure svg")).toHaveCount(1);
@@ -125,9 +125,8 @@ test("remember an iPhone on a saved script and revoke it from the Phone panel", 
     const pair = decodePairing(raw);
     expect(pair.remembered).toBe(true);
     expect(new URL(pair.origin).port).toBe("4456");
-    await fetch(pair.origin + "/api/device", { method: "POST", headers: {
-      authorization: `Bearer ${pair.token}`, "content-type": "application/json",
-    }, body: JSON.stringify({ name: "Maya’s iPhone" }) });
+    expect(pair.link).toBeTruthy();
+    await deviceStatus(pair, new AbortController().signal, "Maya’s iPhone");
     await page.getByRole("button", { name: "Refresh connection" }).click();
     let status = "", rows: Row[] = [];
     leave = connect(pair, value => { rows = value; }, () => {}, value => { status = value; });

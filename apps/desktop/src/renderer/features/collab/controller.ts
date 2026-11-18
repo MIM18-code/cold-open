@@ -290,10 +290,13 @@ export class CollabController {
 
   private onStatus(live: Live, status: ConnectionStatus): void {
     if (this.live !== live) return;
+    // A relay can also turn a writer away mid-session, or a host whose script is past its size limit as it starts
+    // sharing; neither is a refused invite.
+    const wasConnected = this.state.status === "connected" || this.state.status === "reconnecting";
     this.set({ status });
     if (live.joining) return;
     if (status === "ended") void this.stop(this.state.mode === "guest" ? "The host stopped sharing. The script stays open here." : "The session ended.");
-    else if (status === "denied") void this.stop(`The invite was refused: ${live.client.reason || "wrong key"}.`);
+    else if (status === "denied") void this.stop(`${wasConnected || this.state.mode === "host" ? "Co-writing stopped" : "The invite was refused"}: ${live.client.reason || "wrong key"}.`);
   }
 
   private onAwareness(live: Live): void {

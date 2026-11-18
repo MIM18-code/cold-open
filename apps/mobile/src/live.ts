@@ -1,5 +1,6 @@
 import { isPhoneProduction, ScreenplayDoc, plainText, type PhoneProduction } from "@screenplay/engine";
 import { RelayClient, type ConnectionStatus } from "@screenplay/relay/client";
+import { sealedWebSocket } from "@screenplay/relay/sealed";
 import type { Pairing } from "./pairing.ts";
 
 export const states: Record<ConnectionStatus, string> = {
@@ -31,10 +32,13 @@ export function connect(pair: Pairing, script: (rows: Row[]) => void,
   let stopped = false, attempts = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cleanup: (() => void) | undefined;
+  // Wi-Fi: the relay's messages, the room and its key all travel inside a sealed tunnel.
+  const Socket = pair.link ? sealedWebSocket(pair.link) : undefined;
+  if (pair.legacy || !Socket && !pair.invite.relay.startsWith("wss://")) throw new Error("This pairing is not encrypted.");
   const start = () => {
     if (stopped) return;
     const doc = new ScreenplayDoc();
-    const client = new RelayClient({ ...pair.invite, doc: doc.ydoc, readOnly: true });
+    const client = new RelayClient({ ...pair.invite, doc: doc.ydoc, readOnly: true, ...(Socket ? { WebSocket: Socket } : {}) });
     client.awareness.setLocalState({ user: { name: "Cold Open Remote", app: "inklot-phone", readOnly: true }, cursor: null });
     // Each reconnect starts from an empty doc. Until the relay's sync arrives, an update would replace the cached reader with nothing.
     const update = () => { if (client.synced && readPresence(client.awareness.getStates().values())) script(readScript(doc)); };

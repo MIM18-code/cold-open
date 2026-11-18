@@ -176,3 +176,15 @@ test("an omitted scene's text survives a Fountain save, and Restore Omitted Scen
   const note = parseFountain("INT. A - DAY\n\n/*\nOMITTED SCENES list\n*/\n");
   assert.deepEqual(note.paragraphs.map((p) => p.type), ["sceneHeading", "note"]);
 });
+
+test("a scene heading with a very long run of spaces parses quickly", () => {
+  const started = performance.now();
+  const script = parseFountain(`INT. HOUSE${" ".repeat(200_000)}x\n\nAction.\n`);
+  assert.ok(performance.now() - started < 2000, "the scene-number match is linear");
+  assert.equal(script.paragraphs[0]!.type, "sceneHeading");
+  const numbered = parseFountain("INT. HOUSE - DAY   #12A#\n\nAction.\n\nINT. SHED#3#\n\nMore.\n");
+  assert.equal(numbered.paragraphs[0]!.sceneNumber, "12A");
+  assert.equal(plainText(numbered.paragraphs[0]!.runs), "INT. HOUSE - DAY");
+  // A number needs a space before it, as before.
+  assert.equal(numbered.paragraphs[2]!.sceneNumber, undefined);
+});

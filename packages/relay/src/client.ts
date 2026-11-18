@@ -9,12 +9,12 @@ import * as syncProtocol from "y-protocols/sync";
 import type * as Y from "yjs";
 
 import {
-  CLOSE_BAD_MESSAGE, CLOSE_DENIED, CLOSE_NOT_OPEN, CLOSE_NO_ROOM, MESSAGE_AUTH, MESSAGE_AWARENESS, MESSAGE_QUERY_AWARENESS, MESSAGE_SYNC, roomUrl,
+  CLOSE_BAD_MESSAGE, CLOSE_DENIED, CLOSE_FULL, CLOSE_NOT_OPEN, CLOSE_NO_ROOM, CLOSE_TOO_LARGE, MESSAGE_AUTH, MESSAGE_AWARENESS, MESSAGE_QUERY_AWARENESS, MESSAGE_SYNC, roomUrl,
 } from "./protocol.ts";
 
 /**
  * connecting: opening the socket. connected: open and in sync. reconnecting: lost, retrying with backoff.
- * denied: the relay refused the key. ended: the room is gone (the host stopped sharing). stopped: we left.
+ * denied: the relay refused the key or the script is too large for it. ended: the room is gone (the host stopped sharing). stopped: we left.
  */
 export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "denied" | "ended" | "stopped";
 
@@ -172,6 +172,16 @@ export class RelayClient {
       // A reader of a self-hosted room that no writer has opened since the relay started: wait for one.
       this.refused = false;
       this.reason = reason || "Waiting for a writer to open the session.";
+    } else if (code === CLOSE_FULL) {
+      // Space opens when another room or writer leaves.
+      this.refused = false;
+      this.reason = reason || "the relay is full";
+    } else if (code === CLOSE_TOO_LARGE || code === 1009) {
+      // Reconnecting would resend the same oversized script. 1009 is the WebSocket code for a message past the
+      // relay's message limit, which the relay's socket library sends before the document limit is checked.
+      this.reason = reason || "the script is too large for this relay";
+      this.setStatus("denied");
+      return;
     } else if (this.refused || code === CLOSE_DENIED || code === CLOSE_BAD_MESSAGE) {
       this.reason ||= reason || "The relay refused the key.";
       this.setStatus("denied");

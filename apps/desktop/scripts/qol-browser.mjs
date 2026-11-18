@@ -235,15 +235,13 @@ try {
     await page.evaluate(() => { delete document.documentElement.dataset.theme; });
     await load();
     await page.evaluate(() => window.__app.runCommand("phone.open"));
-    await page.getByLabel("Phone connection protection", { exact: true }).waitFor();
-    assert.equal(await page.getByLabel("Phone connection protection", { exact: true }).inputValue(), "https");
-    assert.equal(await page.getByRole("button", { name: "Start phone pairing…", exact: true }).isDisabled(), true);
-    await page.getByLabel("Phone connection protection", { exact: true }).selectOption("http");
-    await expect(page.getByRole("button", { name: "Start phone pairing…", exact: true })).toBeEnabled();
-    await page.getByLabel("Phone connection protection", { exact: true }).selectOption("https");
-    assert.equal(await page.getByRole("button", { name: "Start phone pairing…", exact: true }).isDisabled(), true);
-    check("phone sharing defaults to HTTPS and never silently falls back to HTTP");
-    if (output) await page.screenshot({ path: join(output, "phone-https-setup.png") });
+    await page.getByText(/^Encrypted automatically/).waitFor();
+    assert.equal(await page.getByLabel("Phone connection protection", { exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: /certificate/i }).count(), 0);
+    await page.getByText("Advanced", { exact: true }).click();
+    assert.equal(await page.getByLabel("Also make a Safari link, not encrypted", { exact: true }).isChecked(), false);
+    check("phone sharing is encrypted with nothing to choose; the unencrypted Safari link is off unless asked for");
+    if (output) await page.screenshot({ path: join(output, "phone-setup.png") });
     await page.evaluate(() => window.__app.togglePanel("phone", false));
 
     const original = await rows();

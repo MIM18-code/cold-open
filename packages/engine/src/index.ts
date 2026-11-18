@@ -15,6 +15,8 @@ export * from "./reports.ts";
 export * from "./compare.ts";
 export * from "./proofread.ts";
 export * from "./revisions.ts";
+// For readers outside the engine that need the document's raw FDX data: the guarded read, never meta.get("fdx").
+export { storedFdx } from "./shapes.ts";
 
 export * from "./read-plan.ts";
 export * from "./characters.ts";

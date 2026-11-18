@@ -24,8 +24,8 @@ test("remembered rooms share a stable port, follow their script after restart an
   let host = new PhoneHost();
   const devices = new PhoneDevices(join(root, "devices.json")); await devices.load();
   const inbox = new PhoneInboxStore(join(root, "inbox"));
-  const first = await devices.create("a".repeat(64), "127.0.0.1", undefined, false);
-  const second = await devices.create("b".repeat(64), "127.0.0.1", undefined, false);
+  const first = await devices.create("a".repeat(64), "127.0.0.1");
+  const second = await devices.create("b".repeat(64), "127.0.0.1");
   const doc = new ScreenplayDoc(); doc.insertParagraph(0, { type: "action", runs: [{ text: "Original script." }] });
   const reopenedDoc = new ScreenplayDoc();
   const otherDoc = new ScreenplayDoc(); otherDoc.insertParagraph(0, { type: "action", runs: [{ text: "Other window." }] });
@@ -53,7 +53,8 @@ test("remembered rooms share a stable port, follow their script after restart an
     publisher = publishToPhone(initial.info.publisher, doc, () => ({ title: "Ferry", name: "Jo", writers: [], cursor: null }));
     const otherInitial = attach(second, second.token); other = otherInitial.server;
     otherPublisher = publishToPhone(otherInitial.info.publisher, otherDoc, () => ({ title: "Other", name: "Jo", writers: [], cursor: null }));
-    assert.equal(new URL(otherInitial.info.url).port, String(port));
+    assert.equal(new URL(decodePairing(otherInitial.info.pairing).origin).port, String(port));
+    assert.equal(otherInitial.info.url, "", "a home Wi-Fi pairing has no Safari link");
     assert.notEqual(otherInitial.info.publisher.room, initial.info.publisher.room);
     let text = "", status = "";
     leave = connect(pair, rows => { text = rows.map(r => r.text).join(" "); }, () => {}, value => { status = value; });
@@ -89,7 +90,17 @@ test("remembered rooms share a stable port, follow their script after restart an
     assert.equal(plainText(doc.paragraphs()[0]!.runs), "Resumed. Original script.");
     await devices.revoke(first.device.id); await server.stop(true);
     await until(() => status === "Refused");
-    await assert.rejects(deliver(pair, take, new AbortController().signal), /revoked/);
+    // Until the Mac parks the revoked iPhone, nothing answers it, and the iPhone does not take that as final.
+    await assert.rejects(deliver(pair, take, new AbortController().signal),
+      (e: unknown) => e instanceof Error && "status" in e && e.status === 502);
+    host.park(devices.device(first.device.id)!, devices);
+    await assert.rejects(deliver(pair, take, new AbortController().signal),
+      (e: unknown) => e instanceof Error && "status" in e && e.status === 403 && /revoked/.test(e.message));
+    // An iPhone that is still paired, with its script closed, hears that and gets its receipts.
+    await other.stop(); host.park(devices.device(second.device.id)!, devices);
+    const idle = decodePairing(otherInitial.info.pairing);
+    await assert.rejects(deliver(idle, { ...take, room: idle.invite.room }, new AbortController().signal), /not open on the Mac/);
+    assert.deepEqual([...await syncReceipts(idle, new AbortController().signal, [])], []);
   } finally {
     leave?.(); publisher?.stop(); otherPublisher?.stop(); await server?.stop(); await other?.stop();
     await host.stop(); doc.ydoc.destroy(); reopenedDoc.ydoc.destroy(); otherDoc.ydoc.destroy(); await rm(root, { recursive: true, force: true });

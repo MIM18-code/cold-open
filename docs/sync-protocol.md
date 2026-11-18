@@ -10,7 +10,7 @@ Both paths move the same thing: Yjs updates for the screenplay document describe
 
 There is no hosted server. A session runs on one of two relays:
 
-- **The host's Mac.** "Share for Co-writing…" starts a relay inside the desktop app's main process, bound to `0.0.0.0` on a port the OS picks. It runs only while at least one window is sharing and stops listening when the last one stops. Guests on the same network use the host’s local address. For writers on different networks, the panel offers an invite using the host’s Tailscale address once Tailscale is connected.
+- **The host's Mac.** "Share for Co-writing…" starts a relay inside the desktop app's main process, bound to `0.0.0.0` on a port the OS picks. It runs only while at least one window is sharing and stops listening when the last one stops. Guests on the same network use the host’s local address. For writers on different networks, the panel offers an invite using the host’s Tailscale address once Tailscale is connected. A local invite is plain `ws://` with the room key in the URL, so it is readable to anyone on that network; Tailscale and `wss://` relays are encrypted. The paired phone's [sealed link](#sealed-link-home-wi-fi) is not yet used for co-writing.
 - **A self-hosted relay.** `npx screenplay-relay --port 4455` (or `node packages/relay/src/cli.ts`). Writers enter its address under Settings > Co-writing; sharing then uses it instead of the embedded relay. Put it behind a TLS proxy and use `wss://` on the internet.
 
 Everyone, the host included, is an ordinary client of the relay. The relay keeps a Y.Doc per room, so a writer who joins late gets the whole script from the relay even if no other writer is online. Nothing is written to disk.
@@ -21,7 +21,7 @@ A writer would choose **Invite over the internet**. Cold Open would connect to o
 
 One always-on process can run the existing relay behind TLS. No database is needed for live rooms. Start with an existing MindInMotion server if it can accept secure WebSockets. An alternative for a small pilot is a single Render Starter instance, listed at $7/month for compute as of November 2, 2026, before bandwidth or other charges. Render's free instance can take around a minute to wake, longer than Cold Open's 15-second Join timeout. [WebSockets](https://render.com/docs/websocket), [pricing](https://render.com/pricing), [free service behavior](https://render.com/docs/free).
 
-Before a public pilot, limit who can create rooms, cap connections and document memory, and make **End session** invalidate both links. Today any writer key can claim its room. When the host leaves, other people can still join while the room exists. After expiry a writer can recreate an empty room with the same key. The current relay keeps a readable copy of the script in memory. TLS protects the network connection. The host should see who operates the relay before the script is sent, and the proxy and hosting platform must omit invite keys from access logs.
+The self-hosted relay now caps rooms open at once (`--max-rooms`, default 20), connections across all rooms (`--max-connections`, default 100), the size of each room's script (`--max-doc-mb`, default 8) and each connection's presence (8 client IDs, 64 KiB per update). Ordinary scripts use a few megabytes each, but a document built to be expensive takes about 20 times its size in memory, a room can run up to a third past its limit between measurements, and each connection can hold about 16 MiB plus one script of unread answers. So the defaults bound a deliberate attack at about 7.5 GB (the arithmetic is in `packages/relay/README.md`); run the relay under a container or process memory limit sized from that. Before a public pilot, limit who can create rooms and make **End session** invalidate both links. Today any writer key can claim its room, up to the room cap. When the host leaves, other people can still join while the room exists. After expiry a writer can recreate an empty room with the same key. The current relay keeps a readable copy of the script in memory. TLS protects the network connection. The host should see who operates the relay before the script is sent, and the proxy and hosting platform must omit invite keys from access logs.
 
 Test the pilot with two Macs on different internet connections, including a host disconnect, relay restart and revoked invite. Keep the existing private-network option for writers who want the script to stay on their own machines.
 
@@ -69,8 +69,11 @@ with binary messages. A refused connection is accepted at the WebSocket level, s
 | --- | --- | --- |
 | 4401 | Wrong or malformed key | Stop; show "refused". |
 | 4404 | No such room, the host stopped sharing, or the host's app quit | Stop; the session is over. |
-| 4400 | The client sent a malformed message | Stop or reconnect once. |
+| 4400 | The client sent a malformed message, or more presence than the relay allows | Stop or reconnect once. |
 | 4425 | A self-hosted relay has no such room yet, and this key cannot open it (a read-only key) | Reconnect with backoff; the room opens when a writer connects. |
+| 4429 | The relay is full: it has no room for another room or connection | Reconnect with backoff; show "the relay is full". |
+| 4413 | The change would take the room's script past the relay's size limit. Sent mid-session, without an auth message; the change is not applied | Stop; resending the same state would fail again. Show "the script is too large for this relay". |
+| 1009 | A message was larger than the relay accepts (the WebSocket "message too big" code), usually a writer's first sync of a script past the relay's size limit; nothing from it is applied | Stop, as for 4413; resending the same state would fail again. Show "the script is too large for this relay". |
 | 1001 | A self-hosted relay is shutting down | Reconnect with backoff; the first writer back rebuilds the room. |
 | anything else | Network loss | Reconnect with backoff. |
 
@@ -144,7 +147,7 @@ A file is a header followed by zero or more records.
 
 - Append records for local changes. The desktop app batches changes for 250 ms and merges them (`Y.mergeUpdates`) into one record.
 - On start, the device appends whatever its document has that its log lacks (`Y.diffUpdate` against the log's merged state vector), so edits made while sync was off still reach the other Macs.
-- If its own log ends in a torn record (a crash mid-append), the device rewrites the log before appending, so readers are never stuck behind it.
+- If its own log ends in a torn record (a crash mid-append), or holds a record that is not a Yjs update, the device rewrites the log before appending, so readers are never stuck behind it.
 - **Compaction:** past 1 MB the device rewrites its log as a single merged record under a new random generation, written to a temporary file and renamed into place.
 - Temporary files get a random name (`.<deviceId>.ylog.<random>.tmp`) and are created with `O_CREAT | O_EXCL`, so a file or link someone put at a guessable name is never written through.
 
@@ -153,6 +156,9 @@ A file is a header followed by zero or more records.
 - Watch the folder (`fs.watch`) and also rescan every few seconds, since cloud folders deliver changes late and file watchers miss some.
 - Keep, per log file, the generation and the offset just past the last record read. Skip files whose size and modification time have not changed.
 - Read from the offset. Stop at the first record that is incomplete (fewer bytes than its length) or whose CRC does not match: the file is still arriving. Do not advance past it; read again on the next change.
+- A CRC shows only that a record arrived whole. Anyone who can write the folder can write a record with a valid CRC that is not a Yjs update, and merging or applying it throws. Decode each record (`Y.decodeUpdate`) before passing it on. Skip one that fails, advance past it (it will never become valid), and tell the writer once per log.
+- Treat each log on its own. A log that cannot be read, or is larger than 64 MiB (`MAX_LOG_BYTES`; a sparse file costs nothing to make), is skipped and reported, and the other logs are still read. Check the size on the open descriptor before reading.
+- Apply the records one at a time, so a record that decodes but fails to apply costs only itself. A reader has already moved its offsets past a batch by the time it applies it, so a batch dropped whole is lost for good.
 - If the generation changed (the owner compacted) or the file is now shorter than the offset (an older version was synced in), read the file from the start. Re-applying records is harmless.
 - Apply records with a transaction origin the undo manager does not track.
 
@@ -167,7 +173,7 @@ The sync folder can sit in a folder other people write to, such as a Dropbox fol
 - **Your own log.** Append only with `O_WRONLY | O_APPEND | O_NOFOLLOW`, without `O_CREAT`, and only to a regular file with one name. If your log is missing or is anything else, write a new log under a temporary name and rename it into place. The rename replaces the link itself and never writes through it. The new log holds everything the old one held plus the new changes (the desktop app keeps its own records in memory for this), so a device that had not read the old log yet still gets every change. The writer's text stays in the open document throughout.
 - Every file folder sync reads or writes is therefore a regular file directly inside the real sync folder.
 
-The desktop app applies the same rule outside folder sync. A script the writer opened is granted by the path and by where that path led at the time. If someone later swaps the script for a link to another file, or swaps a folder above it for a link, the app refuses to read or save through that path until the writer picks the file again. Recent files that are links are not re-granted at launch. Saves create their temporary file with a random name and `O_EXCL`. Reads refuse anything that is not a regular file, so a FIFO cannot hang the app.
+The desktop app applies the same rule outside folder sync. A script the writer opened is granted by the path and by where that path led at the time. If someone later swaps the script for a link to another file, or swaps a folder above it for a link, the app refuses to read or save through that path until the writer picks the file again. Recent files and remembered windows are stored with where the script really sat (its folder's real path plus its name), and are not re-granted at launch if the script is now a link or no longer sits there, which is what a folder above it swapped for a link looks like. Saves create their temporary file with a random name and `O_EXCL`. Reads refuse anything that is not a regular file, so a FIFO cannot hang the app.
 
 ## Backlot client checklist
 
@@ -210,31 +216,57 @@ See [Tailscale HTTPS setup](https://tailscale.com/docs/how-to/set-up-https-certi
 and the [cert command](https://tailscale.com/docs/reference/tailscale-cli). Enabling
 HTTPS publishes the machine's DNS name in certificate transparency logs.
 
-LAN HTTPS retains the native certificate/key picker and certificate identity checks.
-Plain HTTP remains an explicit trusted-LAN choice. Pairing validation accepts private
-LAN IPv4 (and loopback for local tests), HTTPS CGNAT addresses, and HTTPS `*.ts.net`
-hostnames. It rejects public hosts, other DNS names, credentials, paths and mixed-origin
-invites. Both the HTTP bearer and the read-only relay invite must address the same origin.
+Home Wi-Fi links are plain `http://` and `ws://` carrying a [sealed link](#sealed-link-home-wi-fi):
+every body and message is encrypted and authenticated under keys from the pairing
+secret, with no certificate, no trust prompt and no HTTP or HTTPS choice. The Mac no
+longer accepts a certificate and key for a LAN address, and a LAN listener never
+accepts a bearer for the app's requests. Pairing validation accepts private LAN IPv4
+(and loopback for local tests) for sealed links, and HTTPS CGNAT addresses and HTTPS
+`*.ts.net` hostnames for Tailscale. It rejects public hosts, other DNS names,
+credentials, paths and mixed-origin invites. The link and the read-only relay invite
+must address the same origin.
 
 ### Pairing and lifetime
 
-The QR code is JSON. One-off codes retain the existing four fields:
+The QR code is JSON, in one of two versions. Tailscale codes are version 1:
 
 | Field | Value |
 | --- | --- |
 | `v` | `1`. |
-| `url` | HTTP(S) browser URL with the bearer token in its fragment. |
+| `url` | HTTPS URL with the bearer token in its fragment. Also the Safari page's link. |
 | `invite` | Same-origin `screenplay://join` read-only invite. |
 | `expiresAt` | Expiry in Unix milliseconds, at most two hours after creation. |
+
+Home Wi-Fi codes are version 2:
+
+| Field | Value |
+| --- | --- |
+| `v` | `2`. |
+| `host` | The Mac's private IPv4 address and port, `192.168.1.20:4456`. |
+| `secret` | 32 random bytes, base64url (43 characters). The root of the sealed link's keys. Never sent. |
+| `invite` | Same-origin `screenplay://join` read-only invite (`ws://`). Its key travels only inside the sealed tunnel. |
+| `expiresAt` | As above. |
+
+An iPhone build that knows only version 1 refuses a version 2 code at the scan, with
+its general "Scan the code in the Mac’s Phone panel" message. A build that knows
+version 2 answers a higher version with **Update Cold Open on this iPhone**, and a
+version 1 code for a LAN address (an older Mac) with **Update Cold Open on your Mac**.
+A version 1 LAN pairing already in the Keychain loads as unusable: it never connects
+and never sends its token, the status reads **Pair again to encrypt this link**, and
+its waiting takes can still leave by AirDrop or the iCloud folder.
 
 When **Remember this iPhone** is selected, the script must already be saved. The code
 adds `remembered: true`, `deviceId` (a UUID), and `scriptId` (the saved script's 64-character
 path hash); `expiresAt` is `null`. The phone keeps the code in its device-only Keychain.
 The Mac persists device ID, phone-reported name, token SHA-256 hash, script identity,
-created/last-seen times, transport and a separate room writer key in main-only
+created/last-seen times, transport, a separate room writer key and, for a home Wi-Fi
+pairing, the sealed link's root key (`link`) in main-only
 `userData/phone-devices.json` (mode 0600). The file is outside renderer file grants and
-settings. Only the initial QR/browser code contains the raw bearer; it cannot be
-reconstructed from saved state. Status IPC returns device names and times, never hashes
+settings. Only the initial QR code contains the raw token or secret; it cannot be
+reconstructed from saved state. A device saved by an earlier version with neither a
+Tailscale hostname nor a `link` was paired over an unencrypted LAN listener: the Mac
+starts no listener for it, lists it as needing to be paired again, and still imports its
+signed takes from the iCloud folder or an AirDrop file until the writer revokes it. Status IPC returns device names and times, never hashes
 or room writer keys. `POST /api/device { name }` reports the phone's name;
 `GET /api/device` returns `{ open: boolean }`.
 
@@ -243,8 +275,9 @@ Remembered listeners share a stable port per interface, default **4456**, config
 all remembered devices to be revoked first. Keep it unchanged while devices are remembered; changing it requires new
 pairings. Each device has its own stable reader room derived from its saved writer key.
 The desktop publishes its Y.Doc to that room through a loopback socket. The external
-listener accepts only the read key, even if presented with the writer key. HTTPS uses
-WSS with the same certificate. Other co-writing sessions are unaffected.
+listener accepts only the read key, even if presented with the writer key. Tailscale
+uses WSS with the same certificate; home Wi-Fi uses the sealed tunnel. Other co-writing
+sessions are unaffected.
 
 A remembered device always follows the saved path it was paired to. Other windows do
 not redirect it. If the same script is open twice, the first window to resume the room
@@ -262,9 +295,92 @@ Pair again for the new copy. Renaming or moving the file also requires a new pai
 Untitled scripts support one-off links only. Stopping sharing explicitly revokes this
 window's connected remembered devices as well as its one-off link. Window/document
 changes only detach remembered links. **Revoke** beside a device permanently disables
-its bearer, stops its room with **4401**, and refuses future folder imports. The phone
+its credential, stops its room with **4401**, and refuses future folder imports. The phone
 shows **This Mac revoked the pairing** and persists that terminal state across launches.
+On home Wi-Fi the Mac keeps answering a revoked iPhone with a sealed 403, so the iPhone
+ends the pairing only on the Mac's own word.
 One-off links still expire after two hours or end on Stop/document change/window close.
+
+### Sealed link (home Wi-Fi)
+
+The reference code is `packages/relay/src/sealed.ts` (MIT, no Node APIs), run unchanged
+by the Mac and the iPhone. The cipher is XChaCha20-Poly1305 and the key derivation
+HKDF-SHA256, both from the audited pure-JavaScript `@noble/ciphers` and `@noble/hashes`.
+
+**Keys.** `secret` is the 32 bytes in the pairing code.
+
+```
+root     = HKDF-Extract(salt = "coldopen-phone-link-v2", ikm = secret)
+kid      = HKDF-Expand(root, "kid", 16)                 public pairing ID, base64url (22 characters)
+k_up     = HKDF-Expand(root, "http phone to mac", 32)
+k_down   = HKDF-Expand(root, "http mac to phone", 32)
+```
+
+The Mac stores `root` for a remembered iPhone and derives the rest. `kid` names the
+pairing on the wire and reveals nothing about the keys.
+
+**HTTP.** Every API call is `POST /link` with a `text/plain` body:
+
+```
+base64url( 0x02 | kid (16) | nonce (24) | XChaCha20-Poly1305(k_up, nonce, aad, plaintext) )
+aad       = "coldopen-link-v2 request" | kid
+plaintext = UTF-8 JSON { "t": <Unix ms, Mac clock>, "e": <run ID>, "m": "GET" | "POST", "p": "/api/inbox", "b": <JSON body> }
+```
+
+The nonce is 24 random bytes. The inner `p`, `m` and `b` are the request the API
+sections below describe; the 24,000-byte limit applies to `b`. The answer is HTTP 200
+with a `text/plain` body:
+
+```
+base64url( nonce' (24) | XChaCha20-Poly1305(k_down, nonce', aad', plaintext') )
+aad'       = "coldopen-link-v2 response" | nonce        the request's nonce
+plaintext' = UTF-8 JSON { "s": <status>, "b": <JSON body>, "now": <Unix ms, Mac clock>, "e": <run ID, with 425> }
+```
+
+`s` is the status the call would have had over HTTPS, and the phone acts on that alone.
+Binding the answer to the request's nonce means a recorded answer never fits a later
+request. A request that names no pairing, fails authentication or repeats a nonce gets
+a bare `403 {"error":"Pairing refused."}` in the clear. The phone treats any answer
+that is not sealed as "not reached": it retries and never ends a pairing on it.
+
+**Replay.** The Mac runs a request once. Each time the Mac starts serving a pairing it
+makes a random 16-byte run ID (`e`, base64url). A request is run only if it names the
+current run ID, carries a nonce not yet seen in this run, and has a `t` within 120
+seconds of the Mac's clock. Anything else that authenticates gets a sealed `425` whose
+`e` and `now` let the phone retry once with the right values; it is never run. So the
+phone's first request to a Mac, and its first after the Mac restarts, costs one extra
+round trip, and phones need no accurate clock. A request recorded in an earlier run
+names the wrong run ID and is never run again, whatever its timestamp: the Mac forgets
+seen nonces when it restarts, and the run ID changes with them. The time window only
+bounds how long a nonce is remembered.
+
+**WebSocket.** The phone opens `ws://<host>/sealed/<kid>`. The room and its key are
+not in the URL.
+
+```
+Mac   → phone   0x02 | serverRandom (32)                       in the clear
+phone → Mac     0x02 | clientRandom (32)                       in the clear
+k_c = HKDF-Expand(root, "ws phone to mac" | clientRandom | serverRandom, 32)
+k_s = HKDF-Expand(root, "ws mac to phone" | clientRandom | serverRandom, 32)
+every later message = XChaCha20-Poly1305(key, nonce = 16 zero bytes | counter (u64 BE), type (1) | payload)
+```
+
+Each direction counts its messages from 0 and the counter is not sent, so a message
+that is replayed, dropped, reordered or taken from another connection fails to open and
+the connection ends. Plaintext types: `0` a relay message (the y-websocket bytes
+above), `1` the phone's first message, JSON `{ "room", "key" }` with the read-only key,
+`2` the Mac's close notice, JSON `{ "code", "reason" }`, sent just before it closes.
+The phone believes a close code only from a sealed notice; any other close is a lost
+connection and it reconnects. A home Wi-Fi listener refuses every WebSocket that is not
+sealed.
+
+**The Safari page.** A page loaded over plain HTTP cannot keep a key from someone who
+can alter the page, so it does not use the sealed link. Over Tailscale it is served
+over HTTPS with the version 1 bearer. On home Wi-Fi it exists only when the writer
+ticks **Also make a Safari link (not encrypted)** for a one-off pairing. It then has its
+own random bearer, separate from `secret`, which may read `/api/snapshot`, post
+`/api/command` and post passage-anchored `/api/inbox` items, and nothing else. `secret`
+is never accepted as a bearer.
 
 ### Suggestions, receipts and retries
 
@@ -352,7 +468,8 @@ Each file is UTF-8 JSON, at most **26,000 bytes** including the envelope:
 JSON.stringify(["inklot-take-v1", deviceId, scriptId, id, kind, text, paragraphId, sourceText])
 ```
 
-The key is the 32 raw bytes of SHA-256 of the pairing token. The Mac already stores
+The key is the 32 raw bytes of SHA-256 of the pairing token (the version 2 `secret`,
+as its 43-character text). The Mac already stores
 that digest as `tokenHash` in private remembered-device state; the phone derives it
 from its Keychain token. The hex spelling is decoded to bytes on the Mac, never used
 as the key text. Neither device writes the key into a take file. The phone implements

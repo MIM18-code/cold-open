@@ -1,11 +1,12 @@
 // Co-writing and folder sync between hidden app instances: one shares, another joins with the invite, both edit,
 // and the scripts match. Every test also checks that no window ever became visible on screen.
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
 
 import { confirmNextPrompt, launch, runCommand } from "./helpers.ts";
+import { encodeHeader, encodeRecords } from "../src/main/sync/folder-log.ts";
 import type { HostInfo } from "../src/shared/channels/sync.ts";
 
 /** Quit without the "Save changes?" sheet: a native sheet on a hidden window would show the window. */
@@ -438,6 +439,54 @@ test("two Macs sync a saved script through a shared folder", async () => {
   } finally {
     await quit(a.electronApp);
     if (b) await quit(b.electronApp);
+  }
+});
+
+test("a planted record and an oversized log in the sync folder do not stop the other Mac's changes", async () => {
+  const dir = mkdtempSync(joinPath(tmpdir(), "screenplay-folder-hostile-"));
+  const path = joinPath(dir, "Shared Draft.screenplay");
+  const syncDir = joinPath(dir, "Shared Draft.screenplay-sync");
+  const a = await launch();
+  let b: Awaited<ReturnType<typeof launch>> | null = null;
+  let c: Awaited<ReturnType<typeof launch>> | null = null;
+  try {
+    await a.page.evaluate(() => {
+      const session = (window as any).__app.session;
+      const id = session.doc.toScript().paragraphs[0].id;
+      session.edit(() => session.doc.insertText(id, 0, "EXT. HARBOR - NIGHT"));
+    });
+    await a.electronApp.evaluate(({ dialog }, filePath) => {
+      dialog.showSaveDialog = (async () => ({ canceled: false, filePath })) as any;
+    }, path);
+    await runCommand(a.page, "file.saveAs");
+    await expect.poll(() => existsSync(path)).toBe(true);
+    await runCommand(a.page, "collab.folderSync");
+    await expect(a.page.locator(".collab-statusbar")).toHaveText("Folder sync on");
+    b = await launch([path]);
+    await expect(b.page.locator(".collab-statusbar")).toHaveText("Folder sync on");
+
+    // Someone who can write the folder adds a log whose record has a valid checksum but is not a Yjs update, and
+    // a sparse file past what can be read into memory at once.
+    writeFileSync(joinPath(syncDir, "planted-device.ylog"), new Uint8Array([...encodeHeader(), ...encodeRecords([new Uint8Array([1, 2, 3])])]));
+    writeFileSync(joinPath(syncDir, "huge-device.ylog"), encodeHeader());
+    truncateSync(joinPath(syncDir, "huge-device.ylog"), 2 ** 31 + 1);
+    await appendParagraph(b.page, "action", "Written beside the planted record.");
+    await expect.poll(async () => (await paragraphs(a.page)).includes("beside the planted record"), { timeout: 15_000 }).toBe(true);
+    await expect(a.page.locator(".collab-statusbar")).toHaveText("Folder sync needs attention");
+
+    // A Mac that opens the script with those files already there still starts syncing and gets every change.
+    c = await launch([path]);
+    await expect(c.page.locator(".collab-statusbar")).toHaveText(/Folder sync (on|needs attention)/);
+    await expect.poll(async () => (await paragraphs(c!.page)).includes("beside the planted record"), { timeout: 15_000 }).toBe(true);
+    await appendParagraph(c.page, "action", "Written on the third Mac.");
+    await expect.poll(async () => (await paragraphs(a.page)).includes("third Mac"), { timeout: 15_000 }).toBe(true);
+    await expectHidden(a.electronApp);
+    await expectHidden(b.electronApp);
+    await expectHidden(c.electronApp);
+  } finally {
+    await quit(a.electronApp);
+    if (b) await quit(b.electronApp);
+    if (c) await quit(c.electronApp);
   }
 });
 

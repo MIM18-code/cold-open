@@ -32,7 +32,9 @@ import { DELETION_NODE, LOCK_OFFSET_ATTR, LOCK_PARAGRAPH_ATTR, OMITTED_NATIVE_AT
 import { newId } from "./ids.ts";
 import type { FdxDocumentExtras, Paragraph, Run, Script, XmlNode } from "./model.ts";
 import type { PageLock, Pagination } from "./pagination.ts";
+import { asParagraph, readOnce, storedFdx } from "./shapes.ts";
 import { sceneBlocks, sceneNumberLockFromFdx, sceneNumbersLocked, lockedSceneNumbersOf, writeSceneNumberLock } from "./structure.ts";
+import { asXmlAttrs, asXmlNode } from "./xml.ts";
 
 export interface RevisionSet {
   /** Final Draft's revision ID: "1", "2"... Text carries it as its RevisionID. */
@@ -64,6 +66,38 @@ export interface RevisionState {
 }
 
 export const NO_REVISIONS: RevisionState = { sets: [], currentSetId: null, tracking: false, showMarks: true };
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const isColor = (value: unknown): value is string => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+
+/** A stored revision set, or undefined when a field export needs has the wrong shape. */
+function asRevisionSet(value: unknown): RevisionSet | undefined {
+  if (!isRecord(value)) return undefined;
+  const { id, name, color, mark, date, style } = value;
+  if (typeof id !== "string" || typeof name !== "string" || !isColor(color) || typeof mark !== "string" || typeof date !== "string" || typeof style !== "string") return undefined;
+  const set: RevisionSet = { id, name, color, mark, date, style };
+  if (isColor(value.textColor)) set.textColor = value.textColor;
+  const fdx = asXmlAttrs(value.fdx);
+  if (fdx) set.fdx = fdx;
+  return set;
+}
+
+/** The stored revision state with its bad sets left out, or undefined when it has no list of sets. */
+function asRevisionState(value: unknown): RevisionState | undefined {
+  if (!isRecord(value) || !Array.isArray(value.sets)) return undefined;
+  const state: RevisionState = {
+    sets: value.sets.map(asRevisionSet).filter((set) => set !== undefined),
+    currentSetId: typeof value.currentSetId === "string" ? value.currentSetId : null,
+    tracking: value.tracking === true,
+    showMarks: value.showMarks !== false,
+  };
+  const fdx = asXmlAttrs(value.fdx);
+  if (fdx) state.fdx = fdx;
+  return state;
+}
+
+const ownStates = new WeakMap<object, RevisionState | undefined>();
+const ownRevisions = (doc: ScreenplayDoc) => readOnce(ownStates, doc.meta.get("revisions"), asRevisionState);
 
 /** The standard (WGA) order of revision colors. White is the original draft. */
 export const REVISION_COLORS: readonly { name: string; value: string }[] = [
@@ -213,6 +247,12 @@ function putFdxNode(extras: FdxDocumentExtras, node: XmlNode): void {
 /** Final Draft's DeletedText element as Clear Revision Marks left it, kept apart from the "fdx" meta value. */
 const DELETED_TEXT_KEY = "fdxDeletedText";
 
+/** The stored DeletedText element. Any other element would replace one of that name in the FDX extras. */
+function deletedText(doc: ScreenplayDoc): XmlNode | undefined {
+  const node = asXmlNode(doc.meta.get(DELETED_TEXT_KEY));
+  return node?.name === "DeletedText" ? node : undefined;
+}
+
 /**
  * The document's FDX extras with Final Draft's Revisions, LockedPages, DeletedText and SceneNumberOptions elements
  * written from the production state, as FDX export needs them (toScript() returns these). The production state keeps
@@ -220,13 +260,13 @@ const DELETED_TEXT_KEY = "fdxDeletedText";
  * write to it from a production setting, which undo does not track, would leave the title page edit nothing to undo.
  */
 export function fdxExtras(doc: ScreenplayDoc): FdxDocumentExtras | undefined {
-  const raw = doc.meta.get("fdx") as FdxDocumentExtras | undefined;
-  const revisions = doc.meta.get("revisions") as RevisionState | undefined;
+  const raw = storedFdx(doc);
+  const revisions = ownRevisions(doc);
   // Where locked pages start now, which writeFdx counts out as Final Draft positions.
-  const locks = doc.meta.has("pageLocks") ? (pageLocks(doc) ?? []) : undefined;
-  const deleted = doc.meta.get(DELETED_TEXT_KEY) as XmlNode | undefined;
+  const locks = storedLocks(doc) !== undefined ? (pageLocks(doc) ?? []) : undefined;
+  const deleted = deletedText(doc);
   // The lock's own meta key wins over the file's, so Unlock Scene Numbers sticks.
-  const sceneLock = doc.meta.has("sceneNumbersLocked") || sceneNumberLockFromFdx(raw) !== undefined;
+  const sceneLock = typeof doc.meta.get("sceneNumbersLocked") === "boolean" || sceneNumberLockFromFdx(raw) !== undefined;
   if (!revisions && !locks && !deleted && !sceneLock) return raw;
   const extras = structuredClone(raw ?? DEFAULT_EXTRAS);
   if (sceneLock) {
@@ -245,9 +285,9 @@ const fdxCache = new WeakMap<object, RevisionState>();
 
 /** The document's revision state: the meta's, else what Final Draft wrote, else none. */
 export function revisionState(doc: ScreenplayDoc): RevisionState {
-  const own = doc.meta.get("revisions") as RevisionState | undefined;
+  const own = ownRevisions(doc);
   if (own) return own;
-  const extras = doc.meta.get("fdx") as FdxDocumentExtras | undefined;
+  const extras = storedFdx(doc);
   if (!extras) return NO_REVISIONS;
   let cached = fdxCache.get(extras);
   if (!cached) fdxCache.set(extras, (cached = revisionsFromFdx(extras) ?? NO_REVISIONS));
@@ -409,7 +449,7 @@ export function clearRevisionMarks(doc: ScreenplayDoc, setId: string | null): nu
       else delete fdx.after;
       doc.setField(paragraph.id, "fdx", Object.keys(fdx).length ? fdx : undefined);
     }
-    const deleted = (doc.meta.get(DELETED_TEXT_KEY) as XmlNode | undefined) ?? topNode(doc.meta.get("fdx") as FdxDocumentExtras | undefined, "DeletedText");
+    const deleted = deletedText(doc) ?? topNode(storedFdx(doc), "DeletedText");
     if (deleted) {
       const kept = deleted.children.filter((child) => typeof child === "string" || !matches(attrOf(child, "RevisionID")));
       if (kept.length !== deleted.children.length) {
@@ -493,6 +533,45 @@ export interface PageLocks {
   pages: StoredPageLock[];
 }
 
+const isClockId = (value: unknown) =>
+  isRecord(value) && Number.isSafeInteger(value.client) && (value.client as number) >= 0 && Number.isSafeInteger(value.clock) && (value.clock as number) >= 0;
+
+/**
+ * A stored anchor as lockPages writes one: a relative position in the body, by character or (at its end) by the
+ * body's name. Yjs throws on an anchor that names neither, and reading one that names another root type creates it.
+ */
+function asAnchor(value: unknown): unknown {
+  if (!isRecord(value)) return undefined;
+  const { item, tname, type, assoc } = value;
+  if (item != null ? !isClockId(item) : tname !== "body") return undefined;
+  if ((tname != null && tname !== "body") || type != null || (assoc != null && !Number.isSafeInteger(assoc))) return undefined;
+  // Only the fields Yjs reads, so nothing else in the stored value is carried along.
+  return { ...(item != null ? { item: { client: (item as Y.ID).client, clock: (item as Y.ID).clock } } : { tname }), ...(assoc != null ? { assoc } : {}) };
+}
+
+function asStoredLock(value: unknown): StoredPageLock | undefined {
+  if (!isRecord(value)) return undefined;
+  const { number, paragraphId, offset } = value;
+  if (typeof number !== "string" || typeof paragraphId !== "string" || !Number.isSafeInteger(offset) || (offset as number) < 0) return undefined;
+  const lock: StoredPageLock = { number, paragraphId, offset: offset as number };
+  if (Array.isArray(value.paragraphIds)) lock.paragraphIds = value.paragraphIds.filter((id): id is string => typeof id === "string");
+  if (Number.isSafeInteger(value.level) && (value.level as number) >= 0) lock.level = value.level as number;
+  const anchor = asAnchor(value.anchor);
+  if (anchor !== undefined) lock.anchor = anchor;
+  return lock;
+}
+
+/** Null when pages were unlocked; undefined when the value is not a list of pages, which reads as never locked. */
+function asPageLocks(value: unknown): PageLocks | null | undefined {
+  if (value === null) return null;
+  if (!isRecord(value) || !Array.isArray(value.pages)) return undefined;
+  return { pages: value.pages.map(asStoredLock).filter((lock) => lock !== undefined) };
+}
+
+const storedLockCache = new WeakMap<object, PageLocks | null | undefined>();
+/** The stored locked pages (see asPageLocks). */
+const storedLocks = (doc: ScreenplayDoc) => readOnce(storedLockCache, doc.meta.get("pageLocks"), asPageLocks);
+
 /** Locked pages as Final Draft wrote them, tied to paragraphs by parseFdx. Null when the file has none. */
 export function locksFromFdx(script: Pick<Script, "paragraphs" | "fdx">): PageLock[] | null {
   const node = topNode(script.fdx, "LockedPages");
@@ -542,9 +621,10 @@ function anchorMoves(doc: ScreenplayDoc): number {
 function movedAnchor(doc: ScreenplayDoc, position: Y.RelativePosition): Y.RelativePosition {
   let id = position.item;
   for (let guard = 0; id && guard < 1000; guard++) {
-    const next = doc.meta.get(moveKey(id)) as { client?: unknown; clock?: unknown } | undefined;
-    if (typeof next?.client !== "number" || typeof next.clock !== "number") break;
-    id = Y.createID(next.client, next.clock);
+    const next = doc.meta.get(moveKey(id));
+    if (!isClockId(next)) break;
+    const { client, clock } = next as { client: number; clock: number };
+    id = Y.createID(client, clock);
   }
   if (!id || id === position.item) return position;
   return Y.createRelativePositionFromJSON({ ...(Y.relativePositionToJSON(position) as object), item: { client: id.client, clock: id.clock } });
@@ -598,10 +678,8 @@ const resolved = new WeakMap<object, { paragraphs: readonly Paragraph[]; moves: 
 
 /** The document's locked pages where they start now, or null when pages are not locked. */
 export function pageLocks(doc: ScreenplayDoc): PageLock[] | null {
-  if (!doc.meta.has("pageLocks")) {
-    return locksFromFdx({ paragraphs: doc.paragraphs() as Paragraph[], fdx: doc.meta.get("fdx") as FdxDocumentExtras | undefined });
-  }
-  const stored = doc.meta.get("pageLocks") as PageLocks | null;
+  const stored = storedLocks(doc);
+  if (stored === undefined) return locksFromFdx({ paragraphs: doc.paragraphs() as Paragraph[], fdx: storedFdx(doc) });
   if (!stored) return null;
   // Read once per document version: the editor, the status bar and the menus all ask.
   const paragraphs = doc.paragraphs(), moves = anchorMoves(doc);
@@ -679,8 +757,8 @@ const midParagraph = new WeakMap<object, boolean>();
  * and saved to FDX; Final Draft's own start at paragraph starts). Those need anchoring to follow their text.
  */
 export function fdxLocksNeedAnchors(doc: ScreenplayDoc): boolean {
-  if (doc.meta.has("pageLocks")) return false;
-  const extras = doc.meta.get("fdx") as FdxDocumentExtras | undefined;
+  if (storedLocks(doc) !== undefined) return false;
+  const extras = storedFdx(doc);
   if (!extras) return false;
   let found = midParagraph.get(extras);
   if (found === undefined) {
@@ -701,7 +779,7 @@ export function anchorFdxLocks(
   doc: ScreenplayDoc, before: readonly Paragraph[], index: (offset: number) => number, deleted: (offset: number) => boolean = () => false,
 ): boolean {
   if (!fdxLocksNeedAnchors(doc)) return false;
-  const locks = locksFromFdx({ paragraphs: before as Paragraph[], fdx: doc.meta.get("fdx") as FdxDocumentExtras | undefined });
+  const locks = locksFromFdx({ paragraphs: before as Paragraph[], fdx: storedFdx(doc) });
   if (!locks) return false;
   const starts = new Map<string, number>();
   let at = 0;
@@ -735,7 +813,7 @@ export function anchorFdxLocks(
  * does not track. Returns whether an anchor moved.
  */
 export function reanchorPageLocks(doc: ScreenplayDoc): boolean {
-  const stored = doc.meta.get("pageLocks") as PageLocks | null | undefined;
+  const stored = storedLocks(doc);
   if (!stored?.pages.some((page) => page.anchor !== undefined)) return false;
   const store = doc.ydoc.store;
   let moved = false;
@@ -797,7 +875,8 @@ export function omittedParagraphs(heading: Paragraph): Paragraph[] {
   if (native !== undefined) {
     try {
       const paragraphs = JSON.parse(native) as unknown;
-      if (Array.isArray(paragraphs)) return paragraphs as Paragraph[];
+      // The attribute syncs like any other, so its paragraphs can have any shape.
+      if (Array.isArray(paragraphs)) return paragraphs.map(asParagraph).filter((paragraph) => paragraph !== undefined);
     } catch {
       // Not ours after all: read the Final Draft paragraphs below.
     }

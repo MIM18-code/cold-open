@@ -53,12 +53,14 @@ export function productionSnapshot(script: Script, pagination?: Pagination): Pro
 /** Metadata and IPC snapshots are untrusted, including native documents from collaborators. */
 export function isProductionSnapshot(value: unknown): value is ProductionSnapshot {
   const v = value as ProductionSnapshot | undefined;
+  // Through Array.from, because every() skips holes: a list of holes would pass and break backlotChanges.
+  const all = <T,>(list: readonly T[], test: (item: T) => unknown) => Array.from(list).every(test);
   return !!v && v.version === 1 && Array.isArray(v.scenes) && v.scenes.length <= 10000 &&
-    new Set(v.scenes.map(s => s?.sceneId)).size === v.scenes.length && v.scenes.every(s => s &&
+    new Set(Array.from(v.scenes, s => s?.sceneId)).size === v.scenes.length && all(v.scenes, s => s &&
       [s.sceneId, s.headingId, s.heading].every(t => typeof t === "string" && t.length <= 20000) &&
       (s.number === undefined || typeof s.number === "string") && typeof s.omitted === "boolean" &&
-      Number.isSafeInteger(s.eighths) && s.eighths >= 0 && Array.isArray(s.characters) && s.characters.every(c => typeof c === "string") &&
-      Array.isArray(s.tags) && s.tags.every(t => t && [t.id, t.category, t.label].every(x => typeof x === "string")));
+      Number.isSafeInteger(s.eighths) && s.eighths >= 0 && Array.isArray(s.characters) && all(s.characters, c => typeof c === "string") &&
+      Array.isArray(s.tags) && all(s.tags, t => t && [t.id, t.category, t.label].every(x => typeof x === "string")));
 }
 export function backlotBaseline(value: unknown): BacklotBaseline | null {
   const v = value as BacklotBaseline;

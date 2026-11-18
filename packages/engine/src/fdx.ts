@@ -16,6 +16,7 @@ import {
   NON_PRINTING, type ElementType, type FdxParagraphExtras, type Paragraph, type Run, type Script, type TitleField,
   type XmlNode, normalizeRuns, plainText,
 } from "./model.ts";
+import { asParagraph } from "./shapes.ts";
 import { XmlError, attr, cloneNode, disallowedCharacters, parseXml, serializeXml, textOf } from "./xml.ts";
 import { templatePageBreaks } from "./template-rules.ts";
 
@@ -710,7 +711,8 @@ function omittedSceneNode(node: XmlNode, context: WriteContext): XmlNode {
   let paragraphs: Paragraph[] = [];
   try {
     const parsed = JSON.parse(attr(node, OMITTED_NATIVE_ATTR)!) as unknown;
-    if (Array.isArray(parsed)) paragraphs = parsed as Paragraph[];
+    // The attribute syncs like any other, so its paragraphs can have any shape.
+    if (Array.isArray(parsed)) paragraphs = parsed.map(asParagraph).filter((paragraph) => paragraph !== undefined);
   } catch {
     context.options.warnings?.push("An omitted scene's text could not be read; it was written without it.");
   }

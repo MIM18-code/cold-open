@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ScreenplayDoc, plainText } from "@screenplay/engine";
-import { decodeNative, encodeNative, mergeNativeFromDisk, metaAfterMerge } from "../src/renderer/core/fileformat.ts";
+import { decodeNative, encodeNative, mergeNativeFromDisk } from "../src/renderer/core/fileformat.ts";
 
 const ORIGIN = Symbol("test-disk-merge");
 const text = (doc: ScreenplayDoc) => doc.toScript().paragraphs.map((p) => plainText(p.runs)).join("\n");
@@ -56,15 +56,12 @@ test("a different script saved at the same path is never merged", () => {
   assert.equal(text(mine), before);
 });
 
-test("the history ID a merge will keep is known before merging", () => {
-  // Both copies wrote their own history ID on their first save; only one survives the merge.
+test("a merge may change the history ID in the document, and the file this window saves still carries its own", () => {
+  // Both copies wrote their own history ID on their first save; only one survives the merge in the document.
   const mine = script();
   const theirs = decodeNative(encodeNative(mine)).doc;
   mine.meta.set("history.documentId", "mine-history-id-000");
   theirs.meta.set("history.documentId", "their-history-id-000");
-  const theirFile = encodeNative(theirs);
-  const predicted = metaAfterMerge(mine, theirFile, "history.documentId");
-  assert.equal(mine.meta.get("history.documentId"), "mine-history-id-000");
-  mergeNativeFromDisk(mine, theirFile, ORIGIN);
-  assert.equal(mine.meta.get("history.documentId"), predicted);
+  mergeNativeFromDisk(mine, encodeNative(theirs), ORIGIN);
+  assert.equal(decodeNative(encodeNative(mine, "Draft", "mine-history-id-000")).historyId, "mine-history-id-000");
 });

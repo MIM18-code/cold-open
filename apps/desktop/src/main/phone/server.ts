@@ -6,7 +6,9 @@ import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { networkInterfaces } from "node:os";
 import { createRelay, type Relay } from "@screenplay/relay";
 import { formatInvite, type Invite } from "@screenplay/relay/protocol";
+import { ReplayGuard, fromBase64url, linkKeys, linkRoot } from "@screenplay/relay/sealed";
 import { digest, matchesToken } from "./devices.ts";
+import { serveLink, type PhoneLink, type PhoneReply } from "./link.ts";
 import type { RememberedPhone } from "./devices.ts";
 import type { PhoneHost } from "./host.ts";
 import { phonePage } from "./web.ts";
@@ -49,6 +51,10 @@ export class PhoneServer {
     private reportDevice?: (name?: string) => Promise<void>;
     private readDecisions?: () => Record<string, unknown>;
     private origin = "";
+    /** Home Wi-Fi: every request and relay message is sealed under keys from the pairing secret, which is never sent. */
+    private link?: PhoneLink;
+    /** Home Wi-Fi, only when the writer asked for a Safari link: a separate bearer for the unencrypted browser page. */
+    private browserToken = "";
     private expiry: ReturnType<typeof setTimeout> | undefined;
     private readonly deliveries = new Map<string, {
         signature: string; contentHash: string; promise: Promise<PhoneInbox>;
@@ -64,16 +70,22 @@ export class PhoneServer {
     }>();
     private closed = false;
     constructor(snapshot: PhoneSnapshot, onCommand: (command: RemoteCommand) => void = () => { }, onInbox: (item: PhoneInbox) => void | Promise<void> = () => { }) { this.snapshot = validateSnapshot(snapshot); this.onCommand = onCommand; this.onInbox = onInbox; }
-    async start(address: string, tls?: PhoneTls, onClose?: () => void, lifetimeMs = 2 * 60 * 60 * 1000, hostname = address): Promise<{
+    async start(address: string, tls?: PhoneTls, onClose?: () => void, lifetimeMs = 2 * 60 * 60 * 1000, hostname = address,
+        browser = false): Promise<{
+        /** The Safari page's link, or "" when this pairing has none. */
         url: string;
         pairing: string;
         publisher: Invite;
         address: string;
+        /** Whether the Safari link is encrypted. The link to the iPhone app always is. */
         encrypted: boolean;
         expiresAt: number;
     }> {
         if (this.server || this.closed)
             throw new Error("This phone session cannot be started again.");
+        if (!tls) this.link = { keys: linkKeys(linkRoot(this.token)), guard: new ReplayGuard(),
+            handle: request => this.handle(request.m, request.p, request.b) };
+        if (!tls && browser) this.browserToken = randomBytes(32).toString("base64url");
         const nonce = randomBytes(18).toString("base64url"), html = phonePage(nonce, !!tls);
         const handler = (req: IncomingMessage, res: ServerResponse) => { void this.route(req, res, html, nonce).catch(() => { if (!res.headersSent)
             this.json(res, 400, { error: "Invalid phone request." });
@@ -93,7 +105,9 @@ export class PhoneServer {
         this.host = `${hostname}:${info.port}`;
         this.origin = `${tls ? "https" : "http"}://${this.host}`;
         const expiresAt = Date.now() + Math.max(1, Math.min(lifetimeMs, 2 * 60 * 60 * 1000));
-        this.relay = await createRelay({ readerServer: this.server });
+        const link = this.link;
+        this.relay = await createRelay({ readerServer: this.server,
+            ...(link ? { readerSealed: (id: string) => id === link.keys.id ? link.keys : undefined } : {}) });
         const keys = this.relay.createRoom();
         this.room = keys.room;
         const publisher = {
@@ -102,14 +116,15 @@ export class PhoneServer {
         const invite = formatInvite({
             relay: this.origin.replace(/^http/, "ws"), room: keys.room, key: keys.readKey, readOnly: true,
         });
-        const url = `${this.origin}/#${this.token}`;
-        const pairing = JSON.stringify({ v: 1, url, invite, expiresAt });
+        const url = tls ? `${this.origin}/#${this.token}` : this.browserToken ? `${this.origin}/#${this.browserToken}` : "";
+        const pairing = JSON.stringify(tls ? { v: 1, url, invite, expiresAt }
+            : { v: 2, host: this.host, secret: this.token, invite, expiresAt });
         this.expiry = setTimeout(() => { void this.stop(); }, expiresAt - Date.now());
         this.expiry.unref();
         return { url, publisher, pairing, address, encrypted: !!tls, expiresAt };
     }
     attach(host: PhoneHost, device: RememberedPhone, token: string | undefined,
-        report: (name?: string) => Promise<void>, decisions: () => Record<string, unknown>) {
+        report: (name?: string) => Promise<void>, decisions: () => Record<string, unknown>, guard = new ReplayGuard()) {
         this.shared = host;
         this.deviceId = device.id;
         this.scriptId = device.scriptId;
@@ -121,15 +136,22 @@ export class PhoneServer {
         this.relay = host.relay;
         const keys = this.relay.createRoom(device.writerKey);
         this.room = keys.room;
-        host.routes.set(device.tokenHash, (req, res) => this.route(req, res, "", ""));
+        if (device.link) {
+            this.link = { keys: linkKeys(fromBase64url(device.link)), guard, handle: (request, remote) =>
+                this.limited(remote) ? Promise.resolve({ status: 429, body: { error: "Too many requests." } })
+                    : this.handle(request.m, request.p, request.b) };
+            host.links.set(this.link.keys.id, this.link);
+        } else host.routes.set(device.tokenHash, (req, res) => this.route(req, res, "", ""));
         const publisher: Invite = { relay: `ws://127.0.0.1:${host.relay.port}`,
             room: keys.room, key: keys.key, readOnly: false };
-        const url = token ? `${host.origin}/#${token}` : "";
-        const pairing = token ? JSON.stringify({ v: 1, url, expiresAt: null, remembered: true,
-            deviceId: device.id, scriptId: device.scriptId,
-            invite: formatInvite({ relay: host.origin.replace(/^http/, "ws"), room: keys.room,
-                key: keys.readKey, readOnly: true }) }) : "";
-        return { publisher, url, pairing, address: device.address, encrypted: device.encrypted, expiresAt: null };
+        const invite = formatInvite({ relay: host.origin.replace(/^http/, "ws"), room: keys.room,
+            key: keys.readKey, readOnly: true });
+        const identity = { expiresAt: null, remembered: true, deviceId: device.id, scriptId: device.scriptId, invite };
+        // A home Wi-Fi pairing has no Safari page: its secret must never be sent, and a bearer is nothing else.
+        const url = token && !device.link ? `${host.origin}/#${token}` : "";
+        const pairing = !token ? "" : JSON.stringify(device.link ? { v: 2, host: this.host, secret: token, ...identity }
+            : { v: 1, url, ...identity });
+        return { publisher, url, pairing, address: device.address, encrypted: !device.link, expiresAt: null };
     }
     publish(snapshot: PhoneSnapshot): void { if (this.closed)
         throw new Error("Phone link is closed."); this.snapshot = validateSnapshot(snapshot); }
@@ -146,6 +168,7 @@ export class PhoneServer {
         clearTimeout(this.expiry);
         if (this.room) this.relay?.closeRoom(this.room, this.shared ? revoked ? 4401 : 4425 : 4404);
         if (this.shared && this.tokenHash) this.shared.routes.delete(this.tokenHash);
+        if (this.shared && this.link && this.shared.links.get(this.link.keys.id) === this.link) this.shared.links.delete(this.link.keys.id);
         if (!this.shared) await this.relay?.close();
         this.relay = undefined;
         this.deliveries.clear();
@@ -162,9 +185,24 @@ export class PhoneServer {
         }
     }
     private json(res: ServerResponse, status: number, value: unknown): void { res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }); res.end(JSON.stringify(value)); }
-    private authenticated(req: IncomingMessage): boolean { const value = req.headers.authorization; if (typeof value !== "string" || !value.startsWith("Bearer "))
-        return false; if (this.tokenHash) return matchesToken(value.slice(7), this.tokenHash);
-        const a = Buffer.from(value.slice(7)), b = Buffer.from(this.token); return a.length === b.length && timingSafeEqual(a, b); }
+    /** Who a bearer speaks for: the paired app or page over HTTPS, the opted-in Safari page on home Wi-Fi, or nobody. */
+    private authenticated(req: IncomingMessage): "paired" | "browser" | null {
+        const value = req.headers.authorization;
+        if (typeof value !== "string" || !value.startsWith("Bearer ")) return null;
+        const same = (expected: string) => { const a = Buffer.from(value.slice(7)), b = Buffer.from(expected); return a.length === b.length && timingSafeEqual(a, b); };
+        // On home Wi-Fi the pairing secret is a key, never a bearer: presenting it in the clear proves nothing.
+        if (this.link) return this.browserToken && same(this.browserToken) ? "browser" : null;
+        if (this.tokenHash) return matchesToken(value.slice(7), this.tokenHash) ? "paired" : null;
+        return same(this.token) ? "paired" : null;
+    }
+    private limited(remote: string): boolean {
+        const now = Date.now(), previous = this.rates.get(remote), rate = previous && now - previous.at < 1000 ? previous : { at: now, count: 0 };
+        rate.count++;
+        if (this.rates.size >= 64 && !this.rates.has(remote))
+            this.rates.clear();
+        this.rates.set(remote, rate);
+        return rate.count > 20;
+    }
     private async body(req: IncomingMessage): Promise<any> {
         if (!req.headers["content-type"]?.startsWith("application/json"))
             throw new Error("JSON required.");
@@ -181,6 +219,7 @@ export class PhoneServer {
         }
         return JSON.parse(Buffer.concat(chunks).toString("utf8"));
     }
+    /** The listener's front door. Home Wi-Fi takes sealed requests at /link; HTTPS, and an opted-in Safari page, take a bearer. */
     private async route(req: IncomingMessage, res: ServerResponse, html: string, nonce: string): Promise<void> {
         if (this.closed)
             return this.json(res, 410, { error: "Pairing ended." });
@@ -189,63 +228,80 @@ export class PhoneServer {
         const origin = req.headers.origin;
         if (origin && origin !== this.origin)
             return this.json(res, 403, { error: "Origin refused." });
-        const remote = req.socket.remoteAddress ?? "", now = Date.now(), previous = this.rates.get(remote), rate = previous && now - previous.at < 1000 ? previous : { at: now, count: 0 };
-        rate.count++;
-        if (this.rates.size >= 64 && !this.rates.has(remote))
-            this.rates.clear();
-        this.rates.set(remote, rate);
-        if (rate.count > 20)
+        if (this.limited(req.socket.remoteAddress ?? ""))
             return this.json(res, 429, { error: "Too many requests." });
+        if (this.link && req.method === "POST" && req.url === "/link")
+            return serveLink(req, res, id => id === this.link!.keys.id ? this.link : undefined);
+        if (this.link && !this.browserToken)
+            return this.json(res, 404, { error: "Not found." });
         if (req.method === "GET" && req.url === "/") {
             res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, "permissions-policy": "camera=(), microphone=(), geolocation=()" });
             res.end(html);
             return;
         }
-        if (!this.authenticated(req))
+        const who = this.authenticated(req);
+        if (!who)
             return this.json(res, 401, { error: "Reopen the pairing link from Cold Open." });
+        const reply = await this.handle(req.method ?? "", req.url ?? "", req.method === "POST" ? await this.body(req) : undefined, who === "browser");
+        this.json(res, reply.status, reply.body);
+    }
+    /**
+     * One authenticated request, whichever way it arrived. `browser` marks the unencrypted Safari page on home
+     * Wi-Fi, which may read the table read, control it and leave notes on its passages, and nothing else.
+     */
+    private async handle(method: string, path: string, body: any, browser = false): Promise<PhoneReply> {
+        try { return await this.answer(method, path, body, browser); }
+        catch { return { status: 400, body: { error: "Invalid phone request." } }; }
+    }
+    private async answer(method: string, path: string, body: any, browser: boolean): Promise<PhoneReply> {
+        const reply = (status: number, value: unknown): PhoneReply => ({ status, body: value });
+        if (this.closed)
+            return reply(410, { error: "Pairing ended." });
+        if (body !== undefined && Buffer.byteLength(JSON.stringify(body)) > 24000)
+            return reply(400, { error: "Invalid phone request." });
         if (this.reportDevice) {
             try { await this.reportDevice(); }
-            catch { return this.json(res, 503, { error: "The Mac could not save pairing activity. Keep this text and retry." }); }
+            catch { return reply(503, { error: "The Mac could not save pairing activity. Keep this text and retry." }); }
         }
-        if (req.url === "/api/device") {
-            if (req.method === "POST") {
-                const device = await this.body(req);
-                if (typeof device?.name !== "string" || !device.name.trim() || device.name.length > 100)
-                    return this.json(res, 400, { error: "Invalid iPhone name." });
-                try { await this.reportDevice?.(device.name); }
-                catch { return this.json(res, 503, { error: "The Mac could not save the iPhone name. Retry shortly." }); }
+        if (browser && (path === "/api/device" || path === "/api/receipts" || body?.paragraphId !== undefined))
+            return reply(404, { error: "Not found." });
+        if (path === "/api/device") {
+            if (method === "POST") {
+                if (typeof body?.name !== "string" || !body.name.trim() || body.name.length > 100)
+                    return reply(400, { error: "Invalid iPhone name." });
+                try { await this.reportDevice?.(body.name); }
+                catch { return reply(503, { error: "The Mac could not save the iPhone name. Retry shortly." }); }
             }
-            return this.json(res, 200, { open: true });
+            return reply(200, { open: true });
         }
-        if (req.method === "GET" && req.url === "/api/snapshot")
-            return this.json(res, 200, this.snapshot);
-        if (req.method === "GET" && req.url === "/api/receipts") {
-            return this.json(res, 200, this.readDecisions?.() ?? Object.fromEntries(this.outcomes));
+        if (method === "GET" && path === "/api/snapshot")
+            return reply(200, this.snapshot);
+        if (method === "GET" && path === "/api/receipts") {
+            return reply(200, this.readDecisions?.() ?? Object.fromEntries(this.outcomes));
         }
-        if (req.method !== "POST")
-            return this.json(res, 404, { error: "Not found." });
-        const body = await this.body(req);
-        const anchored = req.url === "/api/inbox" && body?.paragraphId !== undefined;
+        if (method !== "POST")
+            return reply(404, { error: "Not found." });
+        const anchored = path === "/api/inbox" && body?.paragraphId !== undefined;
         // A note may be loose: written on the phone without choosing a passage.
         if (anchored && (typeof body.paragraphId !== "string" || !body.paragraphId.trim() && body.kind !== "note"
             || body.paragraphId.length > 160 || typeof body.sourceText !== "string"
             || body.sourceText.length > 1500 || !["scene-after", "scene-end", "draft", "note", "dictation"].includes(body.kind))) {
-            return this.json(res, 400, { error: "Invalid paragraph anchor." });
+            return reply(400, { error: "Invalid paragraph anchor." });
         }
         if (!anchored && body.revision !== this.snapshot.revision)
-            return this.json(res, 409, { error: "The shared reading changed. Reload it before sending this item." });
-        if (req.url === "/api/command") {
+            return reply(409, { error: "The shared reading changed. Reload it before sending this item." });
+        if (path === "/api/command") {
             if (!["pause", "resume", "previous", "next", "stop"].includes(body.command))
-                return this.json(res, 400, { error: "Unknown playback control." });
+                return reply(400, { error: "Unknown playback control." });
             this.onCommand(body.command);
-            return this.json(res, 200, { ok: true });
+            return reply(200, { ok: true });
         }
-        if (req.url === "/api/inbox") {
+        if (path === "/api/inbox") {
             if (!body || !["scene-after", "scene-end", "draft", "note", "dictation", "bookmark"].includes(body.kind)
                 || typeof body.text !== "string" || !body.text.trim() || body.text.length > 20000
                 || (!anchored && typeof body.cueId !== "string") || typeof body.id !== "string"
                 || !/^[-\w]{12,80}$/.test(body.id)) {
-                return this.json(res, 400, { error: "Invalid note or transcript." });
+                return reply(400, { error: "Invalid note or transcript." });
             }
             if (body.kind.startsWith("scene-")) {
                 const message = JSON.stringify(["inklot-take-v1", this.shared ? this.deviceId : "", this.scriptId,
@@ -254,7 +310,7 @@ export class PhoneServer {
                 const supplied = typeof body.sig === "string" ? Buffer.from(body.sig, "base64url") : Buffer.alloc(0);
                 if (!anchored || body.v !== 2 || supplied.toString("base64url") !== body.sig
                     || supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
-                    return this.json(res, 403, { error: "Invalid scene suggestion signature." });
+                    return reply(403, { error: "Invalid scene suggestion signature." });
             }
             // A retry shares the same disk-write promise. Never acknowledge an in-flight write as saved.
             // Retain the receipt after desktop acknowledgement so a delayed retry cannot re-deliver it.
@@ -262,14 +318,14 @@ export class PhoneServer {
             const signature = JSON.stringify([body.kind, body.text, anchor]);
             let delivery = this.deliveries.get(body.id);
             if (delivery && delivery.signature !== signature)
-                return this.json(res, 409, { error: "That receipt ID was already used for different content." });
+                return reply(409, { error: "That receipt ID was already used for different content." });
             if (!delivery) {
                 if (!this.shared && (this.inbox.length + this.inFlight >= 100 || this.deliveries.size >= 1000))
-                    return this.json(res, 409, { error: "The desktop inbox or pairing receipt limit is full. Review it and pair again." });
+                    return reply(409, { error: "The desktop inbox or pairing receipt limit is full. Review it and pair again." });
                 const cue = anchored
                     ? { id: "", paragraphId: body.paragraphId, text: body.sourceText }
                     : this.snapshot.cues.find((cue) => cue.id === body.cueId);
-                if (!cue) return this.json(res, 409, { error: "Select a current reading passage first." });
+                if (!cue) return reply(409, { error: "Select a current reading passage first." });
                 const item: PhoneInbox = {
                     id: body.id, deviceId: this.deviceId, kind: body.kind, text: body.text,
                     cueId: cue.id, paragraphId: cue.paragraphId, revision: this.snapshot.revision,
@@ -287,14 +343,14 @@ export class PhoneServer {
             try {
                 const saved = await delivery.promise;
                 if (this.shared) this.deliveries.delete(body.id);
-                return this.json(res, 200, { id: saved.id });
+                return reply(200, { id: saved.id });
             } catch (e) {
                 if (this.deliveries.get(body.id) === delivery) this.deliveries.delete(body.id);
                 if (e instanceof Error && e.message.includes("already used"))
-                    return this.json(res, 409, { error: e.message });
-                return this.json(res, 503, { error: "The desktop inbox could not be saved. Keep this text and retry." });
+                    return reply(409, { error: e.message });
+                return reply(503, { error: "The desktop inbox could not be saved. Keep this text and retry." });
             }
         }
-        this.json(res, 404, { error: "Not found." });
+        return reply(404, { error: "Not found." });
     }
 }
