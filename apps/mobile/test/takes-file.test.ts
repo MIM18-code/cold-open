@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { formatInvite } from "@screenplay/relay/protocol";
 import { decodePairing } from "../src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { isTailnet, reachStatus } from "../src/reach.ts";
 import { takesFile, takesFileName, waitingTakes } from "../src/takes-file.ts";
 import type { Take } from "../src/outbox.ts";
@@ -14,11 +15,11 @@ function payload(host: string, remembered = true) {
     ...(remembered ? { remembered: true, deviceId: "device-123456789", scriptId: "a".repeat(64), expiresAt: null }
       : { expiresAt: now + 7200000 }) };
 }
-const pair = decodePairing(JSON.stringify(payload("mac.tail123.ts.net")));
-const lanPair = decodePairing(JSON.stringify({ v: 2, host: "192.168.1.20:4456", secret: "t".repeat(43),
+const pair = decodePairing(JSON.stringify(payload("mac.tail123.ts.net")), nodeLinkCrypto);
+const lanPair = decodePairing(JSON.stringify({ v: 3, host: "192.168.1.20:4456", secret: "t".repeat(43),
   invite: formatInvite({ relay: "ws://192.168.1.20:4456", key: "k".repeat(22), room: "r".repeat(22), readOnly: true }),
-  remembered: true, deviceId: "device-123456789", scriptId: "a".repeat(64), expiresAt: null }));
-const oneOff = decodePairing(JSON.stringify(payload("mac.tail123.ts.net", false)));
+  remembered: true, deviceId: "device-123456789", scriptId: "a".repeat(64), expiresAt: null }), nodeLinkCrypto);
+const oneOff = decodePairing(JSON.stringify(payload("mac.tail123.ts.net", false)), nodeLinkCrypto);
 const take = (id: string, outcome: Take["outcome"], room = pair.invite.room): Take => ({
   id, room, kind: "note", text: "Check this prop.", paragraphId: "p",
   sourceText: "The captured passage.", scene: "Scene 1", created: now, outcome,

@@ -2,18 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { formatInvite, parseInvite } from "@screenplay/relay/protocol";
 import { decodePairing } from "../src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { contentHash } from "../src/signing.ts";
 import { outcomes, syncReceipts, deliver, type Take } from "../src/outbox.ts";
 import { readPresence } from "../src/live.ts";
+import { takesFile } from "../src/takes-file.ts";
 
 const now = Date.now();
 const payload = {
   v: 1, url: "https://mac.tail123.ts.net:444/#" + "t".repeat(43), expiresAt: now + 3600000,
   invite: formatInvite({ relay: "wss://mac.tail123.ts.net:444", room: "r".repeat(22), key: "k".repeat(22), readOnly: true }),
 };
-const pair = decodePairing(JSON.stringify(payload), now);
+const pair = decodePairing(JSON.stringify(payload), nodeLinkCrypto, now);
 const wifi = {
-  v: 2, host: "192.168.1.20:52144", secret: "s".repeat(43), expiresAt: now + 3600000,
+  v: 3, host: "192.168.1.20:52144", secret: "s".repeat(43), expiresAt: now + 3600000,
   invite: formatInvite({ relay: "ws://192.168.1.20:52144", room: "r".repeat(22), key: "k".repeat(22), readOnly: true }),
 };
 test("QR parser accepts same-Mac HTTPS and rejects mixed endpoints, public hosts, and write invites", () => {
@@ -21,10 +23,10 @@ test("QR parser accepts same-Mac HTTPS and rejects mixed endpoints, public hosts
   for (const changes of [{ url: payload.url.replace("mac.tail123.ts.net", "8.8.8.8") },
     { url: payload.url.replace("444", "999") }, { url: payload.url.replace("https", "http") },
     { invite: formatInvite({ ...parseInvite(payload.invite), readOnly: false }) },
-    { url: payload.url.slice(0, -1) }, { expiresAt: now }, { expiresAt: now + 12 * 3600000 }, { v: 2 }]) {
-    assert.throws(() => decodePairing(JSON.stringify({ ...payload, ...changes }), now));
+    { url: payload.url.slice(0, -1) }, { expiresAt: now }, { expiresAt: now + 12 * 3600000 }, { v: 2 }, { v: 3 }]) {
+    assert.throws(() => decodePairing(JSON.stringify({ ...payload, ...changes }), nodeLinkCrypto, now));
   }
-  assert.equal(decodePairing(JSON.stringify(payload), now + 7200000, true).expiresAt, payload.expiresAt);
+  assert.equal(decodePairing(JSON.stringify(payload), nodeLinkCrypto, now + 7200000, true).expiresAt, payload.expiresAt);
 });
 
 test("only valid reviewed receipts and the host's cursor are parsed", () => {
@@ -57,11 +59,11 @@ test("retry after a lost reply keeps the exact ID and anchor; a mismatched recei
 test("a pairing code that picked up iOS smart quotes still decodes", async () => {
   const { decodePairing } = await import("../src/pairing.ts");
   const now = Date.now();
-  const code = JSON.stringify({ v: 2, host: "192.168.1.20:52144", secret: "a".repeat(43),
+  const code = JSON.stringify({ v: 3, host: "192.168.1.20:52144", secret: "a".repeat(43),
     invite: "screenplay://join?host=192.168.1.20%3A52144&room=um8OOAbFcZTZZl0HN4-NhQ&key=Lz-2iJbSc7fNjCH9HS4Akw&access=read",
     expiresAt: now + 60_000 });
   const curly = code.replace(/"([^"]*)"/g, "“$1”");
-  assert.equal(decodePairing(curly, now).origin, "http://192.168.1.20:52144");
+  assert.equal(decodePairing(curly, nodeLinkCrypto, now).origin, "http://192.168.1.20:52144");
 });
 
 for (const outcome of ["accepted", "ignored"] as const) {
@@ -90,15 +92,15 @@ for (const outcome of ["accepted", "ignored"] as const) {
 }
 
 test("a Wi-Fi code carries a secret that becomes keys, never a bearer", async t => {
-  const sealed = decodePairing(JSON.stringify(wifi), now);
+  const sealed = decodePairing(JSON.stringify(wifi), nodeLinkCrypto, now);
   assert.equal(sealed.origin, "http://192.168.1.20:52144");
   assert.equal(sealed.legacy, false);
   assert.equal(sealed.link?.id.length, 22);
-  assert.notEqual(sealed.link?.id, decodePairing(JSON.stringify({ ...wifi, secret: "z".repeat(43) }), now).link?.id);
+  assert.notEqual(sealed.link?.id, decodePairing(JSON.stringify({ ...wifi, secret: "z".repeat(43) }), nodeLinkCrypto, now).link?.id);
   for (const changes of [{ host: "8.8.8.8:52144" }, { host: "mac.tail123.ts.net:52144" }, { host: "192.168.1.20" },
     { host: "192.168.1.21:52144" }, { secret: "short" }, { secret: undefined }, { invite: formatInvite({ ...parseInvite(wifi.invite), readOnly: false }) },
     { expiresAt: now }]) {
-    assert.throws(() => decodePairing(JSON.stringify({ ...wifi, ...changes }), now), JSON.stringify(changes));
+    assert.throws(() => decodePairing(JSON.stringify({ ...wifi, ...changes }), nodeLinkCrypto, now), JSON.stringify(changes));
   }
   // Whatever the Mac answers, the request on the wire holds neither the secret nor the take.
   const sent: { url: string; body: string; headers: Record<string, string> }[] = [];
@@ -117,19 +119,43 @@ test("a Wi-Fi code carries a secret that becomes keys, never a bearer", async t 
 });
 
 test("codes from another version say which app to update", () => {
-  assert.throws(() => decodePairing(JSON.stringify({ ...wifi, v: 3 }), now), /Update Cold Open on this iPhone/);
-  // A Mac that predates encrypted Wi-Fi links makes version 1 codes for a Wi-Fi address.
+  assert.throws(() => decodePairing(JSON.stringify({ ...wifi, v: 4 }), nodeLinkCrypto, now),
+    { message: "Update Cold Open on this iPhone to use this pairing code." });
+  // A Mac that predates encrypted Wi-Fi links makes version 1 codes for a Wi-Fi address, and Mac beta 13 makes
+  // version 2 codes, whose link this iPhone no longer speaks.
   const old = { v: 1, url: "http://192.168.1.20:52144/#" + "t".repeat(43), expiresAt: now + 3600000, invite: wifi.invite };
-  assert.throws(() => decodePairing(JSON.stringify(old), now), /Update Cold Open on your Mac/);
-  // One this iPhone saved earlier still loads, marked so it is never used on the network.
-  const saved = decodePairing(JSON.stringify(old), now, true);
+  const beta13 = { ...wifi, v: 2 };
+  for (const code of [old, beta13]) {
+    assert.throws(() => decodePairing(JSON.stringify(code), nodeLinkCrypto, now), { message: "Update Cold Open on your Mac, then pair again." });
+    // One this iPhone saved earlier still loads, marked so it is never used on the network.
+    const saved = decodePairing(JSON.stringify(code), nodeLinkCrypto, now, true);
+    assert.equal(saved.legacy, true, `version ${code.v}`);
+    assert.equal(saved.link, undefined, `version ${code.v}`);
+  }
+});
+
+test("a version 2 pairing saved by build 4 never connects, and its takes can still go by AirDrop", async t => {
+  const saved = decodePairing(JSON.stringify({ ...wifi, v: 2, remembered: true, deviceId: "device-123456789",
+    scriptId: "a".repeat(64), expiresAt: null }), nodeLinkCrypto, now, true);
   assert.equal(saved.legacy, true);
   assert.equal(saved.link, undefined);
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => { calls++; return Response.json({}); });
+  await assert.rejects(syncReceipts(saved, new AbortController().signal, []), /Pair again/);
+  const item: Take = { id: "test-receipt-123", room: saved.invite.room, kind: "note", text: "Keep this.",
+    paragraphId: "p", sourceText: "The door.", scene: "Scene 1", created: now, outcome: "pending" };
+  await assert.rejects(deliver(saved, item, new AbortController().signal), /Pair again/);
+  const { connect } = await import("../src/live.ts");
+  assert.throws(() => connect(saved, () => {}, () => {}, () => {}), /not encrypted/);
+  assert.equal(calls, 0);
+  const file = JSON.parse(await takesFile(saved, [item]));
+  assert.equal(file.deviceId, "device-123456789");
+  assert.equal(file.takes[0].id, "test-receipt-123");
 });
 
 test("a pairing saved before Wi-Fi links were encrypted never sends its token", async t => {
   const old = decodePairing(JSON.stringify({ v: 1, url: "http://192.168.1.20:52144/#" + "t".repeat(43), remembered: true,
-    deviceId: "device-123456789", scriptId: "a".repeat(64), expiresAt: null, invite: wifi.invite }), now, true);
+    deviceId: "device-123456789", scriptId: "a".repeat(64), expiresAt: null, invite: wifi.invite }), nodeLinkCrypto, now, true);
   let calls = 0;
   t.mock.method(globalThis, "fetch", async () => { calls++; return Response.json({}); });
   await assert.rejects(syncReceipts(old, new AbortController().signal, []), /Pair again/);

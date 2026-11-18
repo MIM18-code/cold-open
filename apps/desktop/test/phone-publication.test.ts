@@ -14,6 +14,7 @@ import { lanAddresses, PhoneServer } from "../src/main/phone/server.ts";
 import { phonePathKey } from "../src/main/phone/identity.ts";
 import { Settings } from "../src/main/settings-store.ts";
 import { fromBase64url, linkKeys } from "@screenplay/relay/sealed";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 
 const snapshot = (title: string) => ({ title, revision: title, cues: [] });
 async function fixture(t: TestContext, paired = true) {
@@ -46,7 +47,7 @@ async function fixture(t: TestContext, paired = true) {
   t.after(async () => { await quit(); await rm(root, { recursive: true, force: true }); });
   for (const path of paths) await call("phone:path-key", path);
   const read = async (entry: typeof entries[number]) => {
-    const link = hosts[0]!.links.get(linkKeys(fromBase64url(entry.device.link!)).id)!;
+    const link = hosts[0]!.links.get(linkKeys(nodeLinkCrypto, fromBase64url(entry.device.root!)).id)!;
     const reply = await link.handle({ t: Date.now(), m: "GET", p: "/api/snapshot" }, "127.0.0.1");
     assert.equal(reply.status, 200);
     return reply.body as { title: string };

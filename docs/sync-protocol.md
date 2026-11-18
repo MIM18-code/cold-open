@@ -237,36 +237,40 @@ The QR code is JSON, in one of two versions. Tailscale codes are version 1:
 | `invite` | Same-origin `screenplay://join` read-only invite. |
 | `expiresAt` | Expiry in Unix milliseconds, at most two hours after creation. |
 
-Home Wi-Fi codes are version 2:
+Home Wi-Fi codes are version 3:
 
 | Field | Value |
 | --- | --- |
-| `v` | `2`. |
+| `v` | `3`. |
 | `host` | The Mac's private IPv4 address and port, `192.168.1.20:4456`. |
 | `secret` | 32 random bytes, base64url (43 characters). The root of the sealed link's keys. Never sent. |
 | `invite` | Same-origin `screenplay://join` read-only invite (`ws://`). Its key travels only inside the sealed tunnel. |
 | `expiresAt` | As above. |
 
-An iPhone build that knows only version 1 refuses a version 2 code at the scan, with
+Version 2 had the same fields and an earlier sealed link (XChaCha20-Poly1305); only Mac
+beta 13 made those codes, and only iPhone build 4, never given to testers, read them.
+An iPhone build that knows only version 1 refuses a version 3 code at the scan, with
 its general "Scan the code in the Mac’s Phone panel" message. A build that knows
-version 2 answers a higher version with **Update Cold Open on this iPhone**, and a
-version 1 code for a LAN address (an older Mac) with **Update Cold Open on your Mac**.
-A version 1 LAN pairing already in the Keychain loads as unusable: it never connects
-and never sends its token, the status reads **Pair again to encrypt this link**, and
-its waiting takes can still leave by AirDrop or the iCloud folder.
+version 3 answers a higher version with **Update Cold Open on this iPhone**, and a
+version 2 code or a version 1 code for a LAN address (an older Mac) with **Update Cold
+Open on your Mac, then pair again.** A version 1 LAN pairing or a version 2 pairing
+already in the Keychain loads as unusable: it never connects and never sends its token,
+the status reads **Pair again to encrypt this link**, and its waiting takes can still
+leave by AirDrop or the iCloud folder.
 
 When **Remember this iPhone** is selected, the script must already be saved. The code
 adds `remembered: true`, `deviceId` (a UUID), and `scriptId` (the saved script's 64-character
 path hash); `expiresAt` is `null`. The phone keeps the code in its device-only Keychain.
 The Mac persists device ID, phone-reported name, token SHA-256 hash, script identity,
 created/last-seen times, transport, a separate room writer key and, for a home Wi-Fi
-pairing, the sealed link's root key (`link`) in main-only
+pairing, the sealed link's version 3 root key (`root`) in main-only
 `userData/phone-devices.json` (mode 0600). The file is outside renderer file grants and
 settings. Only the initial QR code contains the raw token or secret; it cannot be
 reconstructed from saved state. A device saved by an earlier version with neither a
-Tailscale hostname nor a `link` was paired over an unencrypted LAN listener: the Mac
-starts no listener for it, lists it as needing to be paired again, and still imports its
-signed takes from the iCloud folder or an AirDrop file until the writer revokes it. Status IPC returns device names and times, never hashes
+Tailscale hostname nor a `root` was paired over an unencrypted LAN listener, or by Mac
+beta 13, which stored a version 2 root as `link` that no version 3 key can be made from.
+The Mac starts no listener for it, lists it as needing to be paired again, and still
+imports its signed takes from the iCloud folder or an AirDrop file until the writer revokes it. Status IPC returns device names and times, never hashes
 or room writer keys. `POST /api/device { name }` reports the phone's name;
 `GET /api/device` returns `{ open: boolean }`.
 
@@ -303,17 +307,21 @@ One-off links still expire after two hours or end on Stop/document change/window
 
 ### Sealed link (home Wi-Fi)
 
-The reference code is `packages/relay/src/sealed.ts` (MIT, no Node APIs), run unchanged
-by the Mac and the iPhone. The cipher is XChaCha20-Poly1305 and the key derivation
-HKDF-SHA256, both from the audited pure-JavaScript `@noble/ciphers` and `@noble/hashes`.
+The reference code is `packages/relay/src/sealed.ts` (MIT), run unchanged by the Mac and
+the iPhone. It imports no crypto library: each end supplies the primitives, HKDF-SHA256
+(RFC 5869, extract and expand in one call), AES-256-GCM (32-byte key, 12-byte nonce,
+16-byte tag, output ciphertext followed by the tag) and random bytes from the operating
+system. The Mac uses the app's built-in crypto, `node:crypto` in Electron
+(`packages/relay/src/sealed-node.ts`); the iPhone uses Apple's CryptoKit
+(`apps/mobile/modules/link-crypto`).
 
-**Keys.** `secret` is the 32 bytes in the pairing code.
+**Keys.** `secret` is the 32 bytes in the pairing code. `hkdf(ikm, salt, info, length)`.
 
 ```
-root     = HKDF-Extract(salt = "coldopen-phone-link-v2", ikm = secret)
-kid      = HKDF-Expand(root, "kid", 16)                 public pairing ID, base64url (22 characters)
-k_up     = HKDF-Expand(root, "http phone to mac", 32)
-k_down   = HKDF-Expand(root, "http mac to phone", 32)
+root     = hkdf(secret, "coldopen-phone-link-v3", "root", 32)
+kid      = hkdf(root, "", "kid", 16)                    public pairing ID, base64url (22 characters)
+k_up     = hkdf(root, "", "http phone to mac", 32)
+k_down   = hkdf(root, "", "http mac to phone", 32)
 ```
 
 The Mac stores `root` for a remembered iPhone and derives the rest. `kid` names the
@@ -322,47 +330,53 @@ pairing on the wire and reveals nothing about the keys.
 **HTTP.** Every API call is `POST /link` with a `text/plain` body:
 
 ```
-base64url( 0x02 | kid (16) | nonce (24) | XChaCha20-Poly1305(k_up, nonce, aad, plaintext) )
-aad       = "coldopen-link-v2 request" | kid
+base64url( 0x03 | kid (16) | rid (24) | AES-256-GCM(key, 12 zero bytes, aad, plaintext) )
+key       = hkdf(k_up, rid, "request", 32)
+aad       = "coldopen-link-v3 request" | kid
 plaintext = UTF-8 JSON { "t": <Unix ms, Mac clock>, "e": <run ID>, "m": "GET" | "POST", "p": "/api/inbox", "b": <JSON body> }
 ```
 
-The nonce is 24 random bytes. The inner `p`, `m` and `b` are the request the API
-sections below describe; the 24,000-byte limit applies to `b`. The answer is HTTP 200
-with a `text/plain` body:
+`rid` is 24 random bytes that name the request. Each request has its own key, which seals
+that one message, so the nonce is fixed at zero. GCM must never see one nonce twice
+under one key, and this schedule guarantees it: every HTTP key seals one message, and
+every WebSocket key belongs to one direction of one connection, whose counter only goes up. The inner `p`, `m` and `b` are the
+request the API sections below describe; the 24,000-byte limit applies to `b`. The
+answer is HTTP 200 with a `text/plain` body:
 
 ```
-base64url( nonce' (24) | XChaCha20-Poly1305(k_down, nonce', aad', plaintext') )
-aad'       = "coldopen-link-v2 response" | nonce        the request's nonce
+base64url( sid (24) | AES-256-GCM(key', 12 zero bytes, aad', plaintext') )
+key'       = hkdf(k_down, rid | sid, "response", 32)    rid is the request's
+aad'       = "coldopen-link-v3 response" | rid
 plaintext' = UTF-8 JSON { "s": <status>, "b": <JSON body>, "now": <Unix ms, Mac clock>, "e": <run ID, with 425> }
 ```
 
-`s` is the status the call would have had over HTTPS, and the phone acts on that alone.
-Binding the answer to the request's nonce means a recorded answer never fits a later
-request. A request that names no pairing, fails authentication or repeats a nonce gets
-a bare `403 {"error":"Pairing refused."}` in the clear. The phone treats any answer
-that is not sealed as "not reached": it retries and never ends a pairing on it.
+`sid` is 24 random bytes. `s` is the status the call would have had over HTTPS, and the
+phone acts on that alone. Binding the answer to the request's `rid` means a recorded
+answer never fits a later request. A request that names no pairing, fails
+authentication or repeats a `rid` gets a bare `403 {"error":"Pairing refused."}` in the
+clear. The phone treats any answer that is not sealed as "not reached": it retries and
+never ends a pairing on it.
 
 **Replay.** The Mac runs a request once. Each time the Mac starts serving a pairing it
 makes a random 16-byte run ID (`e`, base64url). A request is run only if it names the
-current run ID, carries a nonce not yet seen in this run, and has a `t` within 120
+current run ID, carries a `rid` not yet seen in this run, and has a `t` within 120
 seconds of the Mac's clock. Anything else that authenticates gets a sealed `425` whose
 `e` and `now` let the phone retry once with the right values; it is never run. So the
 phone's first request to a Mac, and its first after the Mac restarts, costs one extra
 round trip, and phones need no accurate clock. A request recorded in an earlier run
 names the wrong run ID and is never run again, whatever its timestamp: the Mac forgets
-seen nonces when it restarts, and the run ID changes with them. The time window only
-bounds how long a nonce is remembered.
+seen request IDs when it restarts, and the run ID changes with them. The time window
+only bounds how long a `rid` is remembered.
 
 **WebSocket.** The phone opens `ws://<host>/sealed/<kid>`. The room and its key are
 not in the URL.
 
 ```
-Mac   → phone   0x02 | serverRandom (32)                       in the clear
-phone → Mac     0x02 | clientRandom (32)                       in the clear
-k_c = HKDF-Expand(root, "ws phone to mac" | clientRandom | serverRandom, 32)
-k_s = HKDF-Expand(root, "ws mac to phone" | clientRandom | serverRandom, 32)
-every later message = XChaCha20-Poly1305(key, nonce = 16 zero bytes | counter (u64 BE), type (1) | payload)
+Mac   → phone   0x03 | serverRandom (32)                       in the clear
+phone → Mac     0x03 | clientRandom (32)                       in the clear
+k_c = hkdf(root, clientRandom | serverRandom, "ws phone to mac", 32)
+k_s = hkdf(root, clientRandom | serverRandom, "ws mac to phone", 32)
+every later message = AES-256-GCM(key, nonce = 4 zero bytes | counter (u64 BE), aad = empty, type (1) | payload)
 ```
 
 Each direction counts its messages from 0 and the counter is not sent, so a message
@@ -468,7 +482,7 @@ Each file is UTF-8 JSON, at most **26,000 bytes** including the envelope:
 JSON.stringify(["inklot-take-v1", deviceId, scriptId, id, kind, text, paragraphId, sourceText])
 ```
 
-The key is the 32 raw bytes of SHA-256 of the pairing token (the version 2 `secret`,
+The key is the 32 raw bytes of SHA-256 of the pairing token (the version 3 `secret`,
 as its 43-character text). The Mac already stores
 that digest as `tokenHash` in private remembered-device state; the phone derives it
 from its Keychain token. The hex spelling is decoded to bytes on the Mac, never used

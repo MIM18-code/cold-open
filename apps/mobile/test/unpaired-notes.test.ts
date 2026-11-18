@@ -10,6 +10,7 @@ import { DocumentSession } from "../../desktop/src/renderer/core/session.ts";
 import { filePhoneNotes } from "../../desktop/src/renderer/features/phone/receipts.ts";
 import { records } from "../../desktop/src/renderer/features/rewrite/records.ts";
 import { decodePairing } from "../src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { sendPending, type Take } from "../src/outbox.ts";
 
 // The phone's real SQLite outbox, with expo-sqlite backed by node:sqlite.
@@ -52,7 +53,7 @@ test("a note written before pairing waits, joins the first pairing, and lands in
   const dir = await mkdtemp(join(tmpdir(), "cold-open-notes-"));
   const inbox = new PhoneInboxStore(dir), key = "test-document-key";
   const server = new PhoneServer({ title: "Ferry", revision: "v1", cues: [] }, () => {}, item => inbox.append(key, item));
-  const pair = decodePairing((await server.start("127.0.0.1")).pairing);
+  const pair = decodePairing((await server.start("127.0.0.1")).pairing, nodeLinkCrypto);
   const session = DocumentSession.untitled();
   try {
     const signal = new AbortController().signal;

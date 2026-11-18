@@ -12,6 +12,7 @@ import * as Y from "yjs";
 import { RelayClient } from "../src/client.ts";
 import { createRelay, type Relay } from "../src/relay.ts";
 import { hello, linkKeys, linkRoot, sealedPath, sealedWebSocket, type LinkKeys } from "../src/sealed.ts";
+import { nodeLinkCrypto } from "../src/sealed-node.ts";
 
 const closers: (() => Promise<void> | void)[] = [];
 after(async () => { for (const close of closers.reverse()) await close(); });
@@ -39,7 +40,7 @@ function tap(server: Server) {
 }
 
 async function sealedListener(extra: { wait?: boolean; limits?: Partial<Parameters<typeof createRelay>[0]> } = {}) {
-  const keys = linkKeys(linkRoot(randomBytes(32).toString("base64url")));
+  const keys = linkKeys(nodeLinkCrypto, linkRoot(nodeLinkCrypto, randomBytes(32).toString("base64url")));
   const server = createServer((_request, response) => response.writeHead(404).end());
   const wire = tap(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -113,7 +114,7 @@ test("a sealed listener refuses plain readers and other pairings", async () => {
   assert.equal(plain.doc.getText("body").toString(), "");
 
   // A phone paired with another Mac: its ID is unknown here, and it never sees a sealed answer.
-  const stranger = linkKeys(linkRoot(randomBytes(32).toString("base64url")));
+  const stranger = linkKeys(nodeLinkCrypto, linkRoot(nodeLinkCrypto, randomBytes(32).toString("base64url")));
   const other = reader(url, room, readKey, stranger);
   // Someone who copied this pairing's public ID off the network but has no key.
   const copied = reader(url, room, readKey, { ...stranger, id: keys.id, kid: keys.kid });

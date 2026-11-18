@@ -9,6 +9,7 @@ import { PhoneServer } from "../../desktop/src/main/phone/server.ts";
 import { PhoneInboxStore } from "../../desktop/src/main/phone/inbox.ts";
 import { publishToPhone } from "../../desktop/src/renderer/features/phone/publisher.ts";
 import { decodePairing } from "../src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { connect, type Row, type Presence } from "../src/live.ts";
 import { deliver, syncReceipts, type Take } from "../src/outbox.ts";
 
@@ -21,7 +22,7 @@ test("live edits and awareness reach the reader; retries survive desktop review 
   const store = new PhoneInboxStore(dir), key = "test-document-key";
   const server = new PhoneServer({ title: "Ferry", revision: "v1", cues: [] },
     () => {}, item => store.append(key, item));
-  const info = await server.start("127.0.0.1"), pair = decodePairing(info.pairing);
+  const info = await server.start("127.0.0.1"), pair = decodePairing(info.pairing, nodeLinkCrypto);
   const doc = ScreenplayDoc.fromScript(parseFountain("INT. FERRY - DAY\n\nA rope."));
   const id = doc.paragraphs()[1]!.id, point = { paragraphId: id, offset: 1 };
   const host = publishToPhone(info.publisher, doc, () => ({

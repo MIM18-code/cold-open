@@ -7,7 +7,7 @@ The release includes a `licenses/` directory with the full upstream license and 
 `licenses/components.json` records each bundled package's name, version, license and upstream repository:
 
 - JavaScript packages bundled into the app (React, ProseMirror, Yjs, y-protocols, lib0, ws, pdf-lib, saxes,
-  qrcode.react, noble-ciphers, noble-hashes, Atlassian's pragmatic drag-and-drop and their dependencies).
+  qrcode.react, Atlassian's pragmatic drag-and-drop and their dependencies).
 - Swift packages compiled into the voice and speech helpers (FluidAudio, MLX Swift, mlx-audio-swift,
   swift-transformers, swift-huggingface, swift-jinja, swift-crypto, swift-asn1, swift-collections,
   swift-numerics, EventSource, yyjson, zstd), including the components they compile in themselves, such as MLX,

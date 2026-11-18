@@ -362,7 +362,7 @@ function PhonePanel() {
     {status?.remembered.filter(d => d.scriptId === documentId).map(device => <article key={device.id}>
       <strong>{device.name}</strong>
       <p>Paired {new Date(device.created).toLocaleDateString()}. {device.pairAgain
-        ? "Paired before Wi-Fi links were encrypted, so it no longer connects. Pair this iPhone again, then revoke this entry."
+        ? "Paired with an earlier version, so it no longer connects. Pair this iPhone again, then revoke this entry."
         : device.lastSeen ? `Last seen ${new Date(device.lastSeen).toLocaleString()}.` : "Waiting for the iPhone."}</p>
       <button className="button" disabled={busy} onClick={() => void revoke(device)}>Revoke {device.name}</button>
     </article>)}

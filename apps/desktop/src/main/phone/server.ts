@@ -7,6 +7,7 @@ import { networkInterfaces } from "node:os";
 import { createRelay, type Relay } from "@screenplay/relay";
 import { formatInvite, type Invite } from "@screenplay/relay/protocol";
 import { ReplayGuard, fromBase64url, linkKeys, linkRoot } from "@screenplay/relay/sealed";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { digest, matchesToken } from "./devices.ts";
 import { serveLink, type PhoneLink, type PhoneReply } from "./link.ts";
 import type { RememberedPhone } from "./devices.ts";
@@ -83,7 +84,7 @@ export class PhoneServer {
     }> {
         if (this.server || this.closed)
             throw new Error("This phone session cannot be started again.");
-        if (!tls) this.link = { keys: linkKeys(linkRoot(this.token)), guard: new ReplayGuard(),
+        if (!tls) this.link = { keys: linkKeys(nodeLinkCrypto, linkRoot(nodeLinkCrypto, this.token)), guard: new ReplayGuard(nodeLinkCrypto),
             handle: request => this.handle(request.m, request.p, request.b) };
         if (!tls && browser) this.browserToken = randomBytes(32).toString("base64url");
         const nonce = randomBytes(18).toString("base64url"), html = phonePage(nonce, !!tls);
@@ -118,13 +119,13 @@ export class PhoneServer {
         });
         const url = tls ? `${this.origin}/#${this.token}` : this.browserToken ? `${this.origin}/#${this.browserToken}` : "";
         const pairing = JSON.stringify(tls ? { v: 1, url, invite, expiresAt }
-            : { v: 2, host: this.host, secret: this.token, invite, expiresAt });
+            : { v: 3, host: this.host, secret: this.token, invite, expiresAt });
         this.expiry = setTimeout(() => { void this.stop(); }, expiresAt - Date.now());
         this.expiry.unref();
         return { url, publisher, pairing, address, encrypted: !!tls, expiresAt };
     }
     attach(host: PhoneHost, device: RememberedPhone, token: string | undefined,
-        report: (name?: string) => Promise<void>, decisions: () => Record<string, unknown>, guard = new ReplayGuard()) {
+        report: (name?: string) => Promise<void>, decisions: () => Record<string, unknown>, guard = new ReplayGuard(nodeLinkCrypto)) {
         this.shared = host;
         this.deviceId = device.id;
         this.scriptId = device.scriptId;
@@ -136,8 +137,8 @@ export class PhoneServer {
         this.relay = host.relay;
         const keys = this.relay.createRoom(device.writerKey);
         this.room = keys.room;
-        if (device.link) {
-            this.link = { keys: linkKeys(fromBase64url(device.link)), guard, handle: (request, remote) =>
+        if (device.root) {
+            this.link = { keys: linkKeys(nodeLinkCrypto, fromBase64url(device.root)), guard, handle: (request, remote) =>
                 this.limited(remote) ? Promise.resolve({ status: 429, body: { error: "Too many requests." } })
                     : this.handle(request.m, request.p, request.b) };
             host.links.set(this.link.keys.id, this.link);
@@ -148,10 +149,10 @@ export class PhoneServer {
             key: keys.readKey, readOnly: true });
         const identity = { expiresAt: null, remembered: true, deviceId: device.id, scriptId: device.scriptId, invite };
         // A home Wi-Fi pairing has no Safari page: its secret must never be sent, and a bearer is nothing else.
-        const url = token && !device.link ? `${host.origin}/#${token}` : "";
-        const pairing = !token ? "" : JSON.stringify(device.link ? { v: 2, host: this.host, secret: token, ...identity }
+        const url = token && !device.root ? `${host.origin}/#${token}` : "";
+        const pairing = !token ? "" : JSON.stringify(device.root ? { v: 3, host: this.host, secret: token, ...identity }
             : { v: 1, url, ...identity });
-        return { publisher, url, pairing, address: device.address, encrypted: !device.link, expiresAt: null };
+        return { publisher, url, pairing, address: device.address, encrypted: !device.root, expiresAt: null };
     }
     publish(snapshot: PhoneSnapshot): void { if (this.closed)
         throw new Error("Phone link is closed."); this.snapshot = validateSnapshot(snapshot); }

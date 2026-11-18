@@ -41,7 +41,7 @@ class SealedPeer extends EventEmitter {
  */
 export function acceptSealed(raw: WebSocket, keys: LinkKeys, joined: (socket: WebSocket, room: string, key: string) => void,
     timeout = 10_000): void {
-  const serverRandom = crypto.getRandomValues(new Uint8Array(32));
+  const serverRandom = keys.crypto.random(32);
   let peer: SealedPeer | undefined, open = false;
   const timer = setTimeout(() => raw.terminate(), timeout);
   timer.unref?.();
@@ -49,7 +49,7 @@ export function acceptSealed(raw: WebSocket, keys: LinkKeys, joined: (socket: We
     try {
       const frame = bytes(data);
       if (!peer) {
-        peer = new SealedPeer(raw, new Tunnel(keys.root, readHello(frame), serverRandom, "mac"));
+        peer = new SealedPeer(raw, new Tunnel(keys, readHello(frame), serverRandom, "mac"));
         return;
       }
       const { type, payload } = peer.receive(frame);

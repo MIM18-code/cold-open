@@ -16,6 +16,7 @@ import { PhoneInboxStore } from "../src/main/phone/inbox.ts";
 import { PhoneServer } from "../src/main/phone/server.ts";
 import { publishToPhone } from "../src/renderer/features/phone/publisher.ts";
 import { decodePairing } from "../../mobile/src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { connect, type Row } from "../../mobile/src/live.ts";
 import { deliver, deviceStatus, syncReceipts, type Take } from "../../mobile/src/outbox.ts";
 import { openRequest, openResponse } from "@screenplay/relay/sealed";
@@ -56,7 +57,7 @@ function leaks(wire: Buffer, secrets: string[]) {
 
 async function session(listener: Server, pairing: string, publisher: Parameters<typeof publishToPhone>[0], kind: "one-off" | "remembered") {
   const wire = tap(listener);
-  const pair = decodePairing(pairing), signal = new AbortController().signal;
+  const pair = decodePairing(pairing, nodeLinkCrypto), signal = new AbortController().signal;
   const doc = ScreenplayDoc.fromScript(parseFountain(SCRIPT));
   const host = publishToPhone(publisher, doc, () => ({ title: "The Wreck of the Calliope", name: "Josephine Writer", writers: [], cursor: null }));
   let rows: Row[] = [], state = "";
@@ -81,6 +82,10 @@ async function session(listener: Server, pairing: string, publisher: Parameters<
       ...(kind === "remembered" ? [code.deviceId, code.scriptId] : [])];
     assert.deepEqual(leaks(up, secrets), [], "iPhone to Mac");
     assert.deepEqual(leaks(down, secrets), [], "Mac to iPhone");
+    // Nor the link's own keys, raw or encoded.
+    const keys = [pair.link!.root, pair.link!.request, pair.link!.response];
+    for (const key of keys) assert.ok(!up.includes(Buffer.from(key)) && !down.includes(Buffer.from(key)), "a link key in raw bytes");
+    assert.deepEqual(leaks(Buffer.concat([up, down]), keys.map(key => Buffer.from(key).toString("base64url"))), []);
     assert.ok(!up.includes("Bearer") && !up.toString("latin1").toLowerCase().includes("authorization"), "no bearer is sent");
     return { up, pair, take };
   } finally { leave(); host.stop(); doc.ydoc.destroy(); }
@@ -110,7 +115,7 @@ test("a one-off home pairing shows the network neither the secret nor the script
       assert.ok(up.includes(body), "the capture holds this request");
       const replayed = await fetch(origin + "/link", { method: "POST", headers: { "content-type": "text/plain" }, body });
       if (replayed.status === 403) assert.deepEqual(await replayed.json(), { error: "Pairing refused." });
-      else assert.equal(openResponse(keys, openRequest(keys, body).nonce, await replayed.text()).s, 425);
+      else assert.equal(openResponse(keys, openRequest(keys, body).rid, await replayed.text()).s, 425);
       answers.push(replayed.status);
     }
     assert.deepEqual(answers, [200, ...captured.slice(1).map(() => 403)]);
@@ -143,7 +148,7 @@ test("a remembered home pairing shows the network neither the secret nor the scr
     assert.ok(!stored.includes(JSON.parse(info.pairing).secret));
     // A second iPhone's key opens nothing of the first's.
     const stranger = await devices.create("d".repeat(64), "127.0.0.1");
-    const other = decodePairing(JSON.stringify({ ...JSON.parse(info.pairing), secret: stranger.token }));
+    const other = decodePairing(JSON.stringify({ ...JSON.parse(info.pairing), secret: stranger.token }), nodeLinkCrypto);
     await assert.rejects(deliver(other, take, new AbortController().signal),
       (e: unknown) => e instanceof Error && "status" in e && e.status === 502);
     await deliver(pair, take, new AbortController().signal);

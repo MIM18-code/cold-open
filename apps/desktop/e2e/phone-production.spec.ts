@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { close, confirmNextPrompt, launch, runCommand } from "./helpers.ts";
 import { decodePairing } from "../../mobile/src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { connect, type Presence, type Row } from "../../mobile/src/live.ts";
 import { deliver, syncReceipts, type Take } from "../../mobile/src/outbox.ts";
 
@@ -33,7 +34,7 @@ test("phone production changes follow the Mac and scene suggestions require a de
     test.skip(!lan, "Requires a private LAN interface.");
     await page.getByLabel("Phone network address").selectOption(lan.address);
     await page.getByRole("button", { name: "Start phone pairing…" }).click();
-    const pair = decodePairing(await page.evaluate(async () => (await (window as any).desktop.invoke("phone:status")).pairing));
+    const pair = decodePairing(await page.evaluate(async () => (await (window as any).desktop.invoke("phone:status")).pairing), nodeLinkCrypto);
     let rows: Row[] = [], presence: Presence | null = null;
     leave = connect(pair, r => { rows = r; }, p => { presence = p; }, () => {});
     await expect.poll(() => presence?.production?.active?.name).toBe("Blue");

@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Action, c, Caption, Heading, Label, NavBar, Symbol } from "./ui";
 import { decodePairing } from "./pairing";
+import { linkCrypto } from "./link-crypto";
 
 export function Pair({ scan, initialError, back }: { scan(raw: string): Promise<void>; initialError: string; back?(): void }) {
   const insets = useSafeAreaInsets();
@@ -22,7 +23,7 @@ export function Pair({ scan, initialError, back }: { scan(raw: string): Promise<
     if (locked.current) return;
     locked.current = true;
     try {
-      decodePairing(value);
+      decodePairing(value, linkCrypto);
       showCamera(false);
       await scan(value);
     } catch (e) { setError(e instanceof SyntaxError || e instanceof TypeError ? "Use the QR code or Copy app pairing code in the Mac’s Phone Companion." : e instanceof Error ? e.message : "Couldn’t pair. Start pairing again on the Mac."); }

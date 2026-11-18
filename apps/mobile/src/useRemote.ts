@@ -4,6 +4,7 @@ import * as Keychain from "expo-secure-store";
 import { randomUUID } from "expo-crypto";
 import { sha256 } from "./crypto";
 import { decodePairing, PAIR_AGAIN, type Pairing } from "./pairing";
+import { linkCrypto } from "./link-crypto";
 import { folderProduction } from "./production.ts";
 import { readScript, connect, type Presence, type Row } from "./live";
 import { sendPending, deviceStatus, permanentFailure, validateTakeSize, DeliveryError, syncReceipts, type Take } from "./outbox";
@@ -26,7 +27,7 @@ export function useRemote() {
   const [error, setError] = useState("");
   const wake = useRef<() => void>(() => {});
   useEffect(() => {
-    Keychain.getItemAsync(key).then(raw => { if (raw) setPair(decodePairing(raw, Date.now(), true)); })
+    Keychain.getItemAsync(key).then(raw => { if (raw) setPair(decodePairing(raw, linkCrypto, Date.now(), true)); })
       .catch(() => setError("Could not restore the pairing. Scan the Mac again.")).finally(() => setReady(true));
   }, []);
   useEffect(() => {
@@ -134,7 +135,7 @@ export function useRemote() {
   }, [pair]);
 
   async function scan(raw: string) {
-    const next = decodePairing(raw);
+    const next = decodePairing(raw, linkCrypto);
     await Keychain.setItemAsync(key, raw, { keychainAccessible: Keychain.WHEN_UNLOCKED_THIS_DEVICE_ONLY });
     setPair(next); setError("");
   }

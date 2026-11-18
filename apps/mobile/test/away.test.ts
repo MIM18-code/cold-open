@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { formatInvite } from "@screenplay/relay/protocol";
 import { decodePairing } from "../src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { sendPending, folderItem, validateTakeSize, type Take, type Outcome } from "../src/outbox.ts";
 import { readerAnchor } from "../src/reader-anchor.ts";
 const now = Date.now();
@@ -12,23 +13,23 @@ function payload(host: string, secure = true, remembered = true) {
     ...(remembered ? { remembered: true, deviceId: "device-123456789", scriptId: "a".repeat(64), expiresAt: null }
       : { expiresAt: now + 7200000 }) };
 }
-const pair = decodePairing(JSON.stringify(payload("mac.tail123.ts.net")));
+const pair = decodePairing(JSON.stringify(payload("mac.tail123.ts.net")), nodeLinkCrypto);
 const take: Take = { id: "receipt-123456789", room: pair.invite.room, kind: "note", text: "A note.",
   paragraphId: "p", sourceText: "A quote.", scene: "Scene 1", created: now, outcome: "pending" };
 
 test("only HTTPS Tailscale DNS and CGNAT can pair, and remembered QR codes survive years", () => {
   for (const host of ["mac.tail123.ts.net", "100.64.0.1", "100.127.255.255"]) {
     const raw = JSON.stringify(payload(host));
-    assert.ok(decodePairing(raw, now + 10 * 365 * 86400000).remembered);
-    assert.throws(() => decodePairing(JSON.stringify(payload(host, false))));
+    assert.ok(decodePairing(raw, nodeLinkCrypto, now + 10 * 365 * 86400000).remembered);
+    assert.throws(() => decodePairing(JSON.stringify(payload(host, false)), nodeLinkCrypto));
   }
   for (const host of ["100.63.255.255", "100.128.0.0", "mac.ts.net.evil.com", "example.com", "-mac.ts.net"])
-    assert.throws(() => decodePairing(JSON.stringify(payload(host))));
+    assert.throws(() => decodePairing(JSON.stringify(payload(host)), nodeLinkCrypto));
   for (const change of [{ scriptId: "bad" }, { deviceId: "../../bad" }, { expiresAt: now + 1 }])
-    assert.throws(() => decodePairing(JSON.stringify({ ...payload("mac.ts.net"), ...change })));
+    assert.throws(() => decodePairing(JSON.stringify({ ...payload("mac.ts.net"), ...change }), nodeLinkCrypto));
   assert.throws(() => decodePairing(JSON.stringify({ ...payload("mac.ts.net"),
-    invite: payload("other.ts.net").invite })));
-  assert.throws(() => decodePairing(JSON.stringify(payload("192.168.1.2", false, false)), now + 7200001));
+    invite: payload("other.ts.net").invite }), nodeLinkCrypto));
+  assert.throws(() => decodePairing(JSON.stringify(payload("192.168.1.2", false, false)), nodeLinkCrypto, now + 7200001));
 });
 
 test("rejected items are terminal and cannot starve later batches; transient capacity failures stay queued", async t => {

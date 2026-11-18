@@ -8,6 +8,7 @@ import { PhoneDevices } from "../../desktop/src/main/phone/devices.ts";
 import { validateFolderItem, PhoneFolder } from "../../desktop/src/main/phone/folder.ts";
 import { PhoneInboxStore } from "../../desktop/src/main/phone/inbox.ts";
 import { decodePairing } from "../src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { deliver, folderItem, inboxBody, syncReceipts, type Take } from "../src/outbox.ts";
 import { folderProduction } from "../src/production.ts";
 import { signTake, contentHash } from "../src/signing.ts";
@@ -24,7 +25,7 @@ test("live scene suggestions require HMAC, bind destination and preserve receipt
     let info;
     try { info = await server.start("127.0.0.1"); }
     catch (e) { if ((e as NodeJS.ErrnoException).code === "EPERM") { t.skip("Sandbox forbids listening on localhost"); return; } throw e; }
-    const pair = decodePairing(info.pairing);
+    const pair = decodePairing(info.pairing, nodeLinkCrypto);
     const item = take(pair.invite.room), signal = new AbortController().signal;
     assert.equal((await phoneLink(info.pairing).post("/api/inbox", inboxBody(item))).status, 403);
     await deliver(pair, item, signal);
@@ -46,7 +47,7 @@ test("offline scene suggestions preserve signatures and production snapshots are
     const scriptId = "a".repeat(64);
     const { device, token } = await devices.create(scriptId, "127.0.0.1");
     const pair = { ...decodePairing(JSON.stringify({ v: 1, url: "https://mac.tail123.ts.net:4455/#" + "t".repeat(43), expiresAt: Date.now() + 3600000,
-      invite: "screenplay://join?relay=wss%3A%2F%2Fmac.tail123.ts.net%3A4455&room=" + "r".repeat(22) + "&key=" + "k".repeat(22) + "&access=read" })), remembered: true, deviceId: device.id, scriptId, token };
+      invite: "screenplay://join?relay=wss%3A%2F%2Fmac.tail123.ts.net%3A4455&room=" + "r".repeat(22) + "&key=" + "k".repeat(22) + "&access=read" }), nodeLinkCrypto), remembered: true, deviceId: device.id, scriptId, token };
     const item = take(pair.invite.room), raw = await folderItem(pair, item);
     const signed = JSON.parse(raw);
     assert.equal(validateFolderItem(signed, device.id, scriptId, devices.verifyTake.bind(devices)).kind, "scene-after");
@@ -65,7 +66,7 @@ test("offline scene suggestions preserve signatures and production snapshots are
 
 test("HTTP scene envelopes use v2 and sign both destinations with the existing HMAC fields", async t => {
   const pair = decodePairing(JSON.stringify({ v: 1, url: "https://mac.tail123.ts.net:4455/#" + "t".repeat(43), expiresAt: Date.now() + 3600000,
-    invite: "screenplay://join?relay=wss%3A%2F%2Fmac.tail123.ts.net%3A4455&room=" + "r".repeat(22) + "&key=" + "k".repeat(22) + "&access=read" }));
+    invite: "screenplay://join?relay=wss%3A%2F%2Fmac.tail123.ts.net%3A4455&room=" + "r".repeat(22) + "&key=" + "k".repeat(22) + "&access=read" }), nodeLinkCrypto);
   let body: Record<string, unknown> = {};
   t.mock.method(globalThis, "fetch", async (_url: string, options: RequestInit) => {
     body = JSON.parse(String(options.body));

@@ -6,6 +6,7 @@ import type { FolderGrant } from "./folder.ts";
 import type { PhoneInboxStore } from "./inbox.ts";
 import { phoneContent, phoneReceiptKey, type PhoneInbox } from "../../shared/channels/phone.ts";
 import { linkRoot, toBase64url } from "@screenplay/relay/sealed";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 
 export const receiptId = /^[-\w]{12,80}$/;
 export const digest = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -17,11 +18,17 @@ export interface RememberedPhone {
   id: string; name: string; tokenHash: string; writerKey: string; scriptId: string;
   created: number; lastSeen: number; revoked?: boolean;
   address: string; hostname?: string; encrypted: boolean;
-  /** Home Wi-Fi pairings: the sealed link's root key, base64url. Tailscale pairings (hostname set) have none. */
-  link?: string;
+  /**
+   * Home Wi-Fi pairings: the version 3 sealed link's root key, base64url. Tailscale pairings (hostname set) have
+   * none. Beta 13 stored a version 2 root as `link`, which nothing reads any more.
+   */
+  root?: string;
 }
-/** Paired on home Wi-Fi before links were sealed. Its secret crossed the network in the clear, so it is never served live again. */
-export const unsealedPhone = (device: RememberedPhone) => !device.hostname && !device.link;
+/**
+ * Paired on home Wi-Fi by an earlier version: before links were sealed (its secret crossed the network in the
+ * clear), or by beta 13's version 2 link (its root cannot become a version 3 one). It is never served live again.
+ */
+export const outdatedPhone = (device: RememberedPhone) => !device.hostname && !device.root;
 interface Receipt { deviceId: string; scriptId: string; signature: string; outcome?: "accepted" | "ignored"; }
 interface State { devices: RememberedPhone[]; receipts: Record<string, Receipt>; folder?: FolderGrant; }
 export class PhoneDevices {
@@ -73,7 +80,7 @@ export class PhoneDevices {
       if (this.state.devices.filter(d => !d.revoked).length >= 100) throw new Error("Revoke an old iPhone before remembering another.");
       const token = randomBytes(32).toString("base64url");
       const device: RememberedPhone = { id: randomUUID(), scriptId, address, hostname, encrypted: true,
-        ...(hostname ? {} : { link: toBase64url(linkRoot(token)) }),
+        ...(hostname ? {} : { root: toBase64url(linkRoot(nodeLinkCrypto, token)) }),
         name: "iPhone awaiting connection", tokenHash: digest(token), writerKey: randomBytes(16).toString("base64url"),
         created: Date.now(), lastSeen: 0 };
       this.state.devices.push(device);

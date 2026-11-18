@@ -11,6 +11,7 @@ import { PhoneServer } from "../src/main/phone/server.ts";
 import { PhoneInboxStore } from "../src/main/phone/inbox.ts";
 import { publishToPhone } from "../src/renderer/features/phone/publisher.ts";
 import { decodePairing } from "../../mobile/src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { connect } from "../../mobile/src/live.ts";
 import { deliver, syncReceipts, type Take } from "../../mobile/src/outbox.ts";
 
@@ -48,12 +49,12 @@ test("remembered rooms share a stable port, follow their script after restart an
       return { server, info };
     };
     const initial = attach(first, first.token); server = initial.server;
-    const pair = decodePairing(initial.info.pairing);
+    const pair = decodePairing(initial.info.pairing, nodeLinkCrypto);
     assert.equal(pair.expiresAt, Number.MAX_SAFE_INTEGER);
     publisher = publishToPhone(initial.info.publisher, doc, () => ({ title: "Ferry", name: "Jo", writers: [], cursor: null }));
     const otherInitial = attach(second, second.token); other = otherInitial.server;
     otherPublisher = publishToPhone(otherInitial.info.publisher, otherDoc, () => ({ title: "Other", name: "Jo", writers: [], cursor: null }));
-    assert.equal(new URL(decodePairing(otherInitial.info.pairing).origin).port, String(port));
+    assert.equal(new URL(decodePairing(otherInitial.info.pairing, nodeLinkCrypto).origin).port, String(port));
     assert.equal(otherInitial.info.url, "", "a home Wi-Fi pairing has no Safari link");
     assert.notEqual(otherInitial.info.publisher.room, initial.info.publisher.room);
     let text = "", status = "";
@@ -98,7 +99,7 @@ test("remembered rooms share a stable port, follow their script after restart an
       (e: unknown) => e instanceof Error && "status" in e && e.status === 403 && /revoked/.test(e.message));
     // An iPhone that is still paired, with its script closed, hears that and gets its receipts.
     await other.stop(); host.park(devices.device(second.device.id)!, devices);
-    const idle = decodePairing(otherInitial.info.pairing);
+    const idle = decodePairing(otherInitial.info.pairing, nodeLinkCrypto);
     await assert.rejects(deliver(idle, { ...take, room: idle.invite.room }, new AbortController().signal), /not open on the Mac/);
     assert.deepEqual([...await syncReceipts(idle, new AbortController().signal, [])], []);
   } finally {

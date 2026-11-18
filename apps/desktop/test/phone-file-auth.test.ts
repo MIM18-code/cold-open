@@ -12,6 +12,7 @@ import type { PhoneHost } from "../src/main/phone/host.ts";
 import { folderItem, inboxBody, type Take } from "../../mobile/src/outbox.ts";
 import { takesFile } from "../../mobile/src/takes-file.ts";
 import { decodePairing } from "../../mobile/src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { signEnvelope } from "./phone-signing.ts";
 
 const scriptId = "a".repeat(64);
@@ -30,7 +31,7 @@ async function fixture() {
     closeRoom() {},
   } } as unknown as PhoneHost;
   const info = server.attach(host, device, token, async () => {}, () => devices.decisions(device.id));
-  const pair = decodePairing(info.pairing), item = { ...take, room: pair.invite.room };
+  const pair = decodePairing(info.pairing, nodeLinkCrypto), item = { ...take, room: pair.invite.room };
   const sub = join(root, "Inklot Phone Inbox", device.id);
   await mkdir(sub, { recursive: true });
   const errors: string[] = [];

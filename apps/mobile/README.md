@@ -21,14 +21,18 @@ writer does on the phone under **Away from home?**.
 
 On home Wi-Fi the link is encrypted without a certificate. The pairing code carries a
 256-bit secret that never crosses the network. Both devices derive keys from it and seal
-every request, response and live-script message with XChaCha20-Poly1305
-(`@screenplay/relay/sealed`, the same code on the Mac and the iPhone). The token is never
+every request, response and live-script message with AES-256-GCM
+(`@screenplay/relay/sealed`, the same code on the Mac and the iPhone). On the iPhone the
+cipher, the key derivation and the random bytes all come from Apple's CryptoKit and
+Security framework, through the local module in `modules/link-crypto`
+(`src/link-crypto.ts`); the app carries no encryption code of its own. The token is never
 sent, and a captured request sent again is refused. There is no HTTP or HTTPS choice and
-no trust prompt. A Wi-Fi code is version 2. A newer code than this build knows says
-**Update Cold Open on this iPhone**; a version 1 Wi-Fi code from an older Mac says
-**Update Cold Open on your Mac**. A Wi-Fi pairing saved by an earlier build stays in the
-Keychain but never connects: Status shows **Pair again to encrypt this link**, and its
-waiting takes can still go to the Mac by AirDrop.
+no trust prompt. A Wi-Fi code is version 3. A newer code than this build knows says
+**Update Cold Open on this iPhone**; a version 2 code (Mac beta 13) or a version 1 Wi-Fi
+code from an older Mac says **Update Cold Open on your Mac**. A Wi-Fi pairing saved by an
+earlier build, version 2 included, stays in the Keychain but never connects: Status shows
+**Pair again to encrypt this link**, and its waiting takes can still go to the Mac by
+AirDrop.
 [Wire format](../../docs/sync-protocol.md#sealed-link-home-wi-fi).
 
 One-off pairings last two hours. Remembered pairings last until revoked in the Mac's
@@ -167,7 +171,8 @@ on Ctrl-C.
   return to the foreground. Audio is neither uploaded nor saved as a recording.
 - `npm test -w @screenplay/mobile` covers malformed and expired QR codes, both code
   versions and the update messages, a sealed request that shows neither the secret nor
-  the take, awareness,
+  the take, CryptoKit against the Mac's node:crypto byte for byte (compiled with `swiftc`
+  on a Mac), awareness,
   wrong receipts, retry isolation, Tailscale validation, permanent failures, native atomic
   folder writes, AirDrop export contents, HMAC interoperability with Node (including
   Unicode), receipt-content conflicts, unreachable wording, and a real relay, phone

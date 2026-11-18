@@ -26,7 +26,7 @@ await client.whenSynced();
 
 The wire protocol, invite format, keys and read-only rules are in `docs/sync-protocol.md`.
 
-`@screenplay/relay/sealed` is the sealed link the paired iPhone uses on home Wi-Fi: HKDF-SHA256 keys from a secret both ends already hold, XChaCha20-Poly1305 around every HTTP body and relay message, and replay rejection, with no certificate. `createRelay({ readerServer, readerSealed })` makes a reader listener accept only sealed connections, and `sealedWebSocket(keys)` is the matching `WebSocket` class for `RelayClient`. It uses no Node APIs. The format is in `docs/sync-protocol.md` under "Sealed link".
+`@screenplay/relay/sealed` is the sealed link the paired iPhone uses on home Wi-Fi: HKDF-SHA256 keys from a secret both ends already hold, AES-256-GCM around every HTTP body and relay message, and replay rejection, with no certificate. `createRelay({ readerServer, readerSealed })` makes a reader listener accept only sealed connections, and `sealedWebSocket(keys)` is the matching `WebSocket` class for `RelayClient`. It imports no crypto library and no Node API: the caller passes a `LinkCrypto` provider (`hkdf`, `seal`, `open`, `random`, all synchronous) to `linkRoot(crypto, secret)` and `linkKeys(crypto, root)`, and everything else reads it from the keys. `@screenplay/relay/sealed-node` exports `nodeLinkCrypto`, built on `node:crypto`, for the Mac (Electron's built-in crypto) and tests; the iPhone app supplies one built on CryptoKit. The format is in `docs/sync-protocol.md` under "Sealed link".
 
 ```bash
 npm test         # real sockets on 127.0.0.1

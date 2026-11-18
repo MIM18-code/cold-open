@@ -16,6 +16,7 @@ import { lanAddresses } from "../src/main/phone/server.ts";
 import { phonePathKey } from "../src/main/phone/identity.ts";
 import { Settings } from "../src/main/settings-store.ts";
 import { decodePairing } from "../../mobile/src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 
 const snapshot = { title: "Ferry", revision: "v1", cues: [] };
 interface Status {
@@ -64,10 +65,10 @@ test("remembering an iPhone on home Wi-Fi makes a sealed pairing with no Safari 
   const info = await f.call("phone:start", address, snapshot, f.key, true) as { pairing: string; url: string };
   assert.match(f.dialogs.at(-1)!, /The link is encrypted\./);
   const code = JSON.parse(info.pairing);
-  assert.equal(code.v, 2);
+  assert.equal(code.v, 3);
   assert.equal(code.url, undefined);
   assert.equal(info.url, "");
-  const pair = decodePairing(info.pairing);
+  const pair = decodePairing(info.pairing, nodeLinkCrypto);
   assert.equal(pair.origin, `http://${address}:4456`);
   assert.ok(pair.link && pair.remembered);
   const status = await f.status();
@@ -79,7 +80,8 @@ test("remembering an iPhone on home Wi-Fi makes a sealed pairing with no Safari 
   // The Mac keeps a key derived from the secret, in its private state, and can serve the iPhone with it.
   const stored = await readFile(join(f.root, "phone-devices.json"), "utf8");
   assert.ok(!stored.includes(code.secret));
-  assert.equal(JSON.parse(stored).devices[0].link, Buffer.from(linkRoot(code.secret)).toString("base64url"));
+  assert.equal(JSON.parse(stored).devices[0].root, Buffer.from(linkRoot(nodeLinkCrypto, code.secret)).toString("base64url"));
+  assert.equal(JSON.parse(stored).devices[0].link, undefined);
   const link = f.hosts[0]!.links.get(pair.link!.id)!;
   assert.equal((await link.handle({ t: Date.now(), m: "GET", p: "/api/device" }, "127.0.0.1")).status, 200);
 
@@ -92,24 +94,29 @@ test("remembering an iPhone on home Wi-Fi makes a sealed pairing with no Safari 
   assert.deepEqual((await f.status()).remembered, []);
 });
 
-test("an iPhone paired before Wi-Fi links were sealed gets no listener and is marked for pairing again", async t => {
-  let legacyId = "", sealedLink = "";
+test("an iPhone paired by an earlier version gets no listener and is marked for pairing again", async t => {
+  const earlier: string[] = [];
+  let current = "";
   const f = await fixture(t, async (devices, key) => {
-    const legacy = await devices.create(key, "192.168.1.20"), sealed = await devices.create(key, "192.168.1.20");
-    legacyId = legacy.device.id; sealedLink = sealed.device.link!;
-    // What an earlier version saved: no link key, and a flag for the HTTP or custom-certificate listener.
+    const unsealed = await devices.create(key, "192.168.1.20"), beta13 = await devices.create(key, "192.168.1.20");
+    const sealed = await devices.create(key, "192.168.1.20");
+    earlier.push(unsealed.device.id, beta13.device.id); current = sealed.device.root!;
     const state = JSON.parse(await readFile(devices.path, "utf8"));
-    delete state.devices[0].link; state.devices[0].encrypted = false;
+    // Before links were sealed: no link key, and a flag for the HTTP or custom-certificate listener.
+    delete state.devices[0].root; state.devices[0].encrypted = false;
+    // Mac beta 13: a version 2 root under `link`, which no version 3 key can be made from.
+    delete state.devices[1].root; state.devices[1].link = randomBytes(32).toString("base64url");
     await writeFile(devices.path, JSON.stringify(state));
   });
   const resumed = await f.call("phone:resume", f.key, snapshot) as { publishers: unknown[] };
-  assert.equal(resumed.publishers.length, 1, "only the sealed iPhone is served");
+  assert.equal(resumed.publishers.length, 1, "only the version 3 iPhone is served");
   assert.equal(f.hosts.length, 1);
   assert.equal(f.hosts[0]!.sealed, true);
   assert.equal(f.hosts[0]!.routes.size, 0, "no bearer is accepted on home Wi-Fi");
-  assert.deepEqual([...f.hosts[0]!.links.keys()], [linkKeys(fromBase64url(sealedLink)).id]);
+  assert.deepEqual([...f.hosts[0]!.links.keys()], [linkKeys(nodeLinkCrypto, fromBase64url(current)).id]);
   const status = await f.status();
-  assert.deepEqual(status.remembered.map(d => [d.id === legacyId, d.pairAgain ?? false]).sort(), [[false, false], [true, true]]);
+  assert.deepEqual(status.remembered.map(d => [earlier.includes(d.id), d.pairAgain ?? false]).sort(),
+    [[false, false], [true, true], [true, true]]);
 });
 
 test("a one-off home pairing offers the Safari link only when asked, and says it is not encrypted", async t => {
@@ -118,7 +125,7 @@ test("a one-off home pairing offers the Safari link only when asked, and says it
   const f = await fixture(t);
   const plain = await f.call("phone:start", address, snapshot, f.key) as { pairing: string; url: string };
   assert.equal(plain.url, "");
-  assert.equal(JSON.parse(plain.pairing).v, 2);
+  assert.equal(JSON.parse(plain.pairing).v, 3);
   assert.match(f.dialogs.at(-1)!, /The link is encrypted\./);
   assert.doesNotMatch(f.dialogs.at(-1)!, /Safari/);
   await f.call("phone:stop");

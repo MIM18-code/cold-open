@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { createRelay, type Relay } from "@screenplay/relay";
 import type { PhoneTls } from "./tls.ts";
 import { ReplayGuard, fromBase64url, linkKeys } from "@screenplay/relay/sealed";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { digest, type PhoneDevices, type RememberedPhone } from "./devices.ts";
 import { serveLink, type PhoneLink } from "./link.ts";
 import { phonePage } from "./web.ts";
@@ -76,15 +77,15 @@ export class PhoneHost {
    * is revoked, a refusal. On home Wi-Fi the refusal is sealed like any answer, so the iPhone can tell the Mac's
    * word from anyone else's on the network.
    */
-  park(device: RememberedPhone, devices: Pick<PhoneDevices, "seen" | "decisions">, guard = new ReplayGuard()) {
+  park(device: RememberedPhone, devices: Pick<PhoneDevices, "seen" | "decisions">, guard = new ReplayGuard(nodeLinkCrypto)) {
     const idle = async (method: string, path: string) => {
       await devices.seen(device.id);
       const receipts = method === "GET" && path === "/api/receipts", status = method === "GET" && path === "/api/device";
       return { status: receipts || status ? 200 : 503, body: receipts ? devices.decisions(device.id) : status ? { open: false }
         : { error: "The paired script is not open on the Mac. Keep queueing." } };
     };
-    if (device.link) {
-      const keys = linkKeys(fromBase64url(device.link));
+    if (device.root) {
+      const keys = linkKeys(nodeLinkCrypto, fromBase64url(device.root));
       this.links.set(keys.id, { keys, guard, handle: async request => device.revoked
         ? { status: 403, body: { error: "This Mac revoked the pairing" } }
         : idle(request.m, request.p).catch(() => ({ status: 503, body: { error: "The Mac could not save pairing activity. Retry shortly." } })) });

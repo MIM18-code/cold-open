@@ -4,6 +4,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { close, confirmNextPrompt, launch, runCommand } from "./helpers.ts";
 import { decodePairing } from "../../mobile/src/pairing.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { deliver, deviceStatus, folderItem, syncReceipts, type Take } from "../../mobile/src/outbox.ts";
 import { connect, type Row } from "../../mobile/src/live.ts";
 
@@ -35,7 +36,7 @@ test("pair the iPhone reader, follow typing and review an anchored suggestion", 
     await page.getByRole("button", { name: "Copy app pairing code" }).click();
     expect(await electronApp.evaluate((_, expected) =>
       (globalThis as any).__copiedCode === expected, payload)).toBe(true);
-    const pair = decodePairing(payload);
+    const pair = decodePairing(payload, nodeLinkCrypto);
     let status = "", rows: Row[] = [], writers: string[] = [];
     leave = connect(pair, r => { rows = r; }, p => { writers = p?.writers ?? []; }, s => { status = s; });
     await expect.poll(() => writers).toContain("Jo");
@@ -122,7 +123,7 @@ test("remember an iPhone on a saved script and revoke it from the Phone panel", 
     await page.getByRole("button", { name: "Start phone pairing…" }).click();
     await expect(page.locator("figure svg")).toHaveCount(1);
     const raw = await page.evaluate(async () => (await (window as any).desktop.invoke("phone:status")).pairing);
-    const pair = decodePairing(raw);
+    const pair = decodePairing(raw, nodeLinkCrypto);
     expect(pair.remembered).toBe(true);
     expect(new URL(pair.origin).port).toBe("4456");
     expect(pair.link).toBeTruthy();

@@ -139,32 +139,6 @@
     },
     {
       "kind": "npm",
-      "name": "@noble/ciphers",
-      "version": "2.4.0",
-      "license": "MIT",
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/paulmillr/noble-ciphers.git"
-      },
-      "files": [
-        "@noble__ciphers@2.4.0/LICENSE"
-      ]
-    },
-    {
-      "kind": "npm",
-      "name": "@noble/hashes",
-      "version": "2.4.0",
-      "license": "MIT",
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/paulmillr/noble-hashes.git"
-      },
-      "files": [
-        "@noble__hashes@2.4.0/LICENSE"
-      ]
-    },
-    {
-      "kind": "npm",
       "name": "ws",
       "version": "8.22.0",
       "license": "MIT",

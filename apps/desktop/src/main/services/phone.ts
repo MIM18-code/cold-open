@@ -1,7 +1,8 @@
 import { join } from "node:path";
 import type { Invite } from "@screenplay/relay/protocol";
 import { ReplayGuard } from "@screenplay/relay/sealed";
-import { PhoneDevices, unsealedPhone } from "../phone/devices.ts";
+import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
+import { PhoneDevices, outdatedPhone } from "../phone/devices.ts";
 import { PhoneHost } from "../phone/host.ts";
 import { FolderGuard, PhoneFolder } from "../phone/folder.ts";
 import { importTakesFile, type TakesImportResult } from "../phone/takes.ts";
@@ -90,10 +91,10 @@ export function register(ctx: ServiceContext,
     };
     // One replay guard per home Wi-Fi pairing for as long as the app runs, whichever route is answering it.
     const guards = new Map<string, ReplayGuard>();
-    const guardFor = (id: string) => guards.get(id) ?? guards.set(id, new ReplayGuard()).get(id)!;
+    const guardFor = (id: string) => guards.get(id) ?? guards.set(id, new ReplayGuard(nodeLinkCrypto)).get(id)!;
     /** Remembered iPhones on this listener that no open script is serving, revoked ones included. */
     const idleRoutes = (host: PhoneHost) => {
-        for (const device of devices.all().filter(d => d.address === host.address && !unsealedPhone(d) && !d.hostname === host.sealed))
+        for (const device of devices.all().filter(d => d.address === host.address && !outdatedPhone(d) && !d.hostname === host.sealed))
             if (!remembered.has(device.id)) host.park(device, devices, guardFor(device.id));
     };
     const hostFor = async (address: string, hostname: string, tls?: PhoneTls) => {
@@ -242,7 +243,7 @@ export function register(ctx: ServiceContext,
             tailscale: await setupCheck(recheck === true),
             remembered: devices.all().filter(d => !d.revoked && owns(event.sender, d.scriptId)).map(d => ({
                 id: d.id, name: d.name, scriptId: d.scriptId, created: d.created, lastSeen: d.lastSeen,
-                ...(unsealedPhone(d) ? { pairAgain: true } : {}),
+                ...(outdatedPhone(d) ? { pairAgain: true } : {}),
             })), port: stablePort(), folderChosen: !!devices.folder(), folderError, connectionError,
             inbox: owns(event.sender, key) ? await store.list(key) : [],
         };
@@ -443,7 +444,7 @@ export function register(ctx: ServiceContext,
         const opened = { documentId: key, snapshot };
         openScripts.set(event.sender.id, opened);
         scriptsChanged();
-        for (const device of devices.all().filter(d => !d.revoked && d.scriptId === key && !unsealedPhone(d))) {
+        for (const device of devices.all().filter(d => !d.revoked && d.scriptId === key && !outdatedPhone(d))) {
             if (remembered.has(device.id)) continue;
             const host = hosts.get(`${device.address}:${device.hostname ? "https" : "http"}`);
             if (!host) continue;
@@ -462,8 +463,8 @@ export function register(ctx: ServiceContext,
                 && devices.device(id)?.scriptId === key).map(([, connection]) => connection.publisher) : [] };
     });
     const restoreHosts = async () => {
-        // An iPhone paired on home Wi-Fi before links were sealed gets no listener: it must be paired again.
-        for (const device of devices.all().filter(d => !d.revoked && !unsealedPhone(d))) {
+        // An iPhone paired on home Wi-Fi by an earlier version gets no listener: it must be paired again.
+        for (const device of devices.all().filter(d => !d.revoked && !outdatedPhone(d))) {
             try {
                 if (hosts.has(`${device.address}:${device.hostname ? "https" : "http"}`)) continue;
                 let tls;
