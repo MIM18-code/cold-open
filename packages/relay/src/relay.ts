@@ -59,6 +59,8 @@ export interface RelayOptions {
   readerSealed?: (id: string) => LinkKeys | undefined;
   /** Interval for WebSocket pings that drop dead connections, in milliseconds. */
   pingInterval?: number;
+  /** How long a socket on the relay's own port may sit idle before it asks to join, in milliseconds. For tests. */
+  handshakeTimeout?: number;
   /** Receives counts and errors. Never room keys. */
   log?: (message: string) => void;
 }
@@ -87,7 +89,10 @@ type Access = "write" | "read";
 interface Connection {
   socket: WebSocket;
   access: Access;
-  /** Awareness client IDs this connection speaks for, removed when it disconnects. */
+  /**
+   * Awareness client IDs this connection speaks for, removed when it disconnects. An ID it clears stays here: the
+   * relay keeps that client's clock, so it still counts toward maxAwarenessClients.
+   */
   clients: Set<number>;
   alive: boolean;
 }
@@ -151,7 +156,6 @@ class Room {
           // When a stale connection for this client closes later, it must not remove the live presence.
           for (const other of this.connections.values()) if (other !== connection) other.clients.delete(id);
         }
-        for (const id of removed) connection.clients.delete(id);
       }
       const encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, MESSAGE_AWARENESS);
@@ -184,8 +188,20 @@ interface AwarenessChange {
   removed: number[];
 }
 
+/** How much unread data a peer may have waiting and still be answered. */
+const MAX_UNREAD = 16 * 1024 * 1024;
+
+/** The largest answer sent to each peer by reply(), which may sit unread on top of MAX_UNREAD. */
+const answered = new WeakMap<WebSocket, number>();
+
+/**
+ * Relay a message. A peer that stops reading while the room keeps talking (its own presence is echoed back to it)
+ * would grow the host's memory without limit, so it is dropped once it has MAX_UNREAD unread beyond its largest
+ * answer. A reader still receiving a large script is kept.
+ */
 function send(socket: WebSocket, message: Uint8Array): void {
   if (socket.readyState !== socket.OPEN) return;
+  if (socket.bufferedAmount > MAX_UNREAD + (answered.get(socket) ?? 0)) return socket.terminate();
   socket.send(message, (error) => {
     if (error) socket.terminate();
   });
@@ -202,16 +218,14 @@ function dropOnError(socket: WebSocket): (error: Error & { code?: string }) => v
   };
 }
 
-/** How much unread data a peer may have waiting and still be answered. */
-const MAX_UNREAD = 16 * 1024 * 1024;
-
 /**
  * Answer a peer's own request (the document, everyone's presence). A peer that keeps asking without reading the
  * answers would grow the host's memory without limit, so it is dropped and may reconnect. One answer of any size
- * still goes out, and messages relayed from other peers are not counted against it.
+ * still goes out, and send() lets relayed messages queue behind it.
  */
 function reply(socket: WebSocket, message: Uint8Array): void {
   if (socket.bufferedAmount > MAX_UNREAD) return socket.terminate();
+  answered.set(socket, Math.max(answered.get(socket) ?? 0, message.length));
   send(socket, message);
 }
 
@@ -234,6 +248,9 @@ function ownedElsewhere(room: Room, id: number, connection: Connection): boolean
   return false;
 }
 
+/** Sockets the HTTP server holds beyond maxConnections, for peers still joining or being refused. */
+const HANDSHAKE_ROOM = 64;
+
 function toBytes(data: RawData): Uint8Array {
   if (Array.isArray(data)) return new Uint8Array(Buffer.concat(data));
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
@@ -251,6 +268,20 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
     // A plain GET answers health checks; everything else is a WebSocket upgrade.
     response.writeHead(request.url === "/" ? 200 : 404, { "content-type": "text/plain" });
     response.end(request.url === "/" ? "screenplay-relay\n" : "not found\n");
+  });
+  // maxConnections counts only joined connections, so sockets that never finish joining (idle, refused, or still in
+  // the handshake) are capped here, with room for handshakes in progress.
+  if (options.maxConnections !== undefined) server.maxConnections = options.maxConnections + HANDSHAKE_ROOM;
+  // Node never closes a socket that sends nothing, and one that trickles a byte at a time lasts until its headers
+  // timeout, so such sockets could hold those places and lock everyone out. Each socket gets a fixed deadline from
+  // accept, not an idle timer, cleared once it asks to join; joined connections have the ping check.
+  const handshakeTimeout = options.handshakeTimeout ?? 10_000;
+  const deadlines = new WeakMap<Duplex, ReturnType<typeof setTimeout>>();
+  server.on("connection", (socket) => {
+    const deadline = setTimeout(() => socket.destroy(), handshakeTimeout);
+    deadline.unref();
+    deadlines.set(socket, deadline);
+    socket.once("close", () => clearTimeout(deadline));
   });
 
   const removeRoom = (room: Room, code?: number) => {
@@ -301,6 +332,8 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
     if (room.connections.get(connection.socket) !== connection) return;
     room.connections.delete(connection.socket);
     if (connection.clients.size) awarenessProtocol.removeAwarenessStates(room.awareness, [...connection.clients], null);
+    // Awareness keeps a removed client's clock until the room closes; drop the ones this connection leaves behind.
+    for (const id of connection.clients) if (!room.awareness.states.has(id)) room.awareness.meta.delete(id);
     if (!room.connections.size && !room.pinned) {
       room.expiry = setTimeout(() => removeRoom(room), ttl);
       room.expiry.unref?.();
@@ -341,7 +374,8 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
     return true;
   };
 
-  // syncProtocol.readUpdate, with the payload length checked before it is applied and the same error handling.
+  // syncProtocol.readUpdate, with the payload length checked before it is applied. An update Yjs cannot read closes
+  // the writer like any other malformed message.
   const applyUpdate = (room: Room, connection: Connection, decoder: decoding.Decoder) => {
     try {
       const update = decoding.readVarUint8Array(decoder);
@@ -352,7 +386,8 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
       }
       Y.applyUpdate(room.doc, update, connection);
     } catch (error) {
-      console.error("Caught error while handling a Yjs update", error);
+      log(`dropped an update Yjs could not read: ${error instanceof Error ? error.message : String(error)}`);
+      connection.socket.close(CLOSE_BAD_MESSAGE, "malformed message");
     }
   };
 
@@ -388,8 +423,13 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
         }
         // A reader speaks only for its own clients, so it cannot rewrite or remove a writer's presence. A writer may
         // take over its own ID from a connection that has not yet timed out (a laptop waking up and reconnecting).
-        if (connection.access === "read" && awarenessClients(update).some((id) => ownedElsewhere(room, id, connection))) return;
+        const ids = awarenessClients(update);
+        if (connection.access === "read" && ids.some((id) => ownedElsewhere(room, id, connection))) return;
+        const unknown = ids.filter((id) => !room.awareness.meta.has(id));
         awarenessProtocol.applyAwarenessUpdate(room.awareness, update, connection);
+        // Clearing a client the relay never saw changes nothing anyone can see, but Awareness would keep its clock
+        // until the room closes, so a stream of fresh IDs would grow the host's memory without limit.
+        for (const id of unknown) if (!room.awareness.states.has(id)) room.awareness.meta.delete(id);
       } else if (type === MESSAGE_QUERY_AWARENESS) {
         encoding.writeVarUint(encoder, MESSAGE_AWARENESS);
         encoding.writeVarUint8Array(encoder, awarenessProtocol.encodeAwarenessUpdate(room.awareness, [...room.awareness.getStates().keys()]));
@@ -413,6 +453,8 @@ export async function createRelay(options: RelayOptions = {}): Promise<Relay> {
     } catch {
       // Left empty, the room and key fail validation below and the client is refused.
     }
+    // The reader listener belongs to the phone server, which sets its own socket rules.
+    if (!readersOnly) clearTimeout(deadlines.get(stream));
     wss.handleUpgrade(request, stream, head, (socket) => {
       // Before any refusal: a refused peer can still send a broken frame, and a WebSocket "error" with no listener
       // is an uncaught exception in the app that hosts this relay.

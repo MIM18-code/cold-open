@@ -745,8 +745,10 @@ class Pager {
     this.page.lines.push({ ...line, y });
     this.fresh = false;
     if (draft.generated) return;
-    if (!this.positions.has(draft.paragraphId)) this.positions.set(draft.paragraphId, { page: this.pages.length - 1, line: y });
-    if (draft.type === "sceneHeading" && draft.from === 0) {
+    // The heading's first printed line opens the scene. Its source offset is not 0 when the heading starts with a note.
+    const firstLine = !this.positions.has(draft.paragraphId);
+    if (firstLine) this.positions.set(draft.paragraphId, { page: this.pages.length - 1, line: y });
+    if (draft.type === "sceneHeading" && firstLine) {
       this.sceneOpen = true;
       const paragraph = draft.paragraphId;
       const sceneId = this.ctx.sceneIds.get(paragraph) ?? paragraph;

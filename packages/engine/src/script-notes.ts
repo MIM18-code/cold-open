@@ -118,6 +118,10 @@ function findNotes(script: Script): Found[] {
 function rawScript(doc: ScreenplayDoc): Script {
     return { titlePage: [], paragraphs: structuredClone([...doc.paragraphs()]), fdx: structuredClone(storedFdx(doc)) };
 }
+/** The stored extras with the notes' current ranges written in, and none of the other projections toScript() adds. */
+export function storedFdxWithNotes(doc: ScreenplayDoc): Script["fdx"] {
+    return projectScriptNotes(doc, rawScript(doc)).fdx;
+}
 function rangeOf(script: Script, found: Found): {
     from: TextPosition;
     to: TextPosition;
@@ -289,7 +293,9 @@ export function changeScriptNote(doc: ScreenplayDoc, key: string | null, edit: N
     from: TextPosition;
     to: TextPosition;
 }): void {
-    const source = doc.toScript(), infos = scriptNotes(doc), selected = key ? infos.find((n) => n.key === key) : undefined;
+    // The stored extras with only the notes projected: toScript() would also copy locked pages, revisions and tags,
+    // which live in their own meta keys, into "fdx" and bring them back after they are undone or removed.
+    const source = projectScriptNotes(doc, rawScript(doc)), infos = scriptNotes(doc), selected = key ? infos.find((n) => n.key === key) : undefined;
     if (key && !selected)
         throw new Error("This ScriptNote changed. Reopen it.");
     if (key && selected?.state === "orphan" && !attach && edit)

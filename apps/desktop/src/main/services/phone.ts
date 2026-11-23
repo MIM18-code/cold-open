@@ -210,10 +210,11 @@ export function register(ctx: ServiceContext,
         await store.move(legacyKey, key, () => undefined);
         ctx.broadcast("phone:inbox-changed");
     });
+    const sessionKey = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     ctx.handle("phone:claim-key", async (event, key: unknown) => {
         // Only a random session key may be claimed. Path keys are hashes anyone can compute, so they come only from
         // phone:path-key, which needs the script open for writing.
-        if (typeof key !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(key)) {
+        if (typeof key !== "string" || !sessionKey.test(key)) {
             throw new Error("Invalid inbox key.");
         }
         // An untitled script's key is new; an existing inbox belongs to some other script.
@@ -287,14 +288,15 @@ export function register(ctx: ServiceContext,
             throw new Error("A document identity is required for the saved inbox.");
         if (sessions.has(id) || starting.has(id))
             throw new Error("Stop this window’s existing phone link first.");
-        // Tailscale gets HTTPS with its own certificate. Home Wi-Fi gets a sealed link keyed from the pairing code.
-        const tls = tail ? await tailscaleTls(ctx.paths.userData, tail) : undefined;
+        // Claimed before the certificate wait, so a second start in the meantime is refused.
         starting.add(id);
         const target = { documentId };
         inboxTargets.set(id, target);
         const generation = generations.get(id) ?? 0;
         let server: PhoneServer | undefined, deviceId: string | undefined;
         try {
+            // Tailscale gets HTTPS with its own certificate. Home Wi-Fi gets a sealed link keyed from the pairing code.
+            const tls = tail ? await tailscaleTls(ctx.paths.userData, tail) : undefined;
             const protection = browser
                 ? `The link to the iPhone app is encrypted. The Safari link is not: anyone on this Wi-Fi could read the ${snapshot.cues.length} table-read passages it shows. `
                 : "The link is encrypted. ";
@@ -347,6 +349,8 @@ export function register(ctx: ServiceContext,
         catch (e) {
             await server?.stop();
             if (deviceId) { remembered.delete(deviceId); await devices.revoke(deviceId); }
+            // A failure after the link was registered must not leave its stopped server behind.
+            if (server && sessions.get(id)?.server === server) { sessions.delete(id); emit(id); }
             throw e;
         }
         finally {
@@ -379,17 +383,21 @@ export function register(ctx: ServiceContext,
         ctx.broadcast("phone:sharing-changed");
     });
     ctx.handle("phone:detach", event => stop(event.sender.id));
+    // Stop sharing ends this window's one-off link only. Remembered iPhones stay paired and connected; Revoke
+    // beside a device removes it.
     ctx.handle("phone:stop", async event => {
-        await ready;
+        const id = event.sender.id, session = sessions.get(id);
+        if (session?.deviceId) return;
+        // Also cancels a pairing whose confirmation is still open.
+        generations.set(id, (generations.get(id) ?? 0) + 1);
+        if (!session) return;
+        sessions.delete(id);
+        inboxTargets.delete(id);
         try {
-            for (const [deviceId, connection] of remembered) {
-                if (connection.windowId !== event.sender.id) continue;
-                await devices.revoke(deviceId);
-                await connection.server.stop(true);
-                remembered.delete(deviceId);
-            }
+            syncAwake();
+            await session.server.stop();
         } finally { syncAwake(); }
-        await stop(event.sender.id);
+        emit(id);
     });
     const publish = async (id: number, opened: { documentId: string; snapshot: PhoneSnapshot }) => {
         if (openScripts.get(id) !== opened) return;
@@ -450,6 +458,8 @@ export function register(ctx: ServiceContext,
         const grant = new FolderGuard(answer.filePaths[0]).grant();
         await devices.setFolder(grant);
         await startFolder();
+        // Windows that skipped publishing because nothing was shared start publishing to the folder.
+        ctx.broadcast("phone:sharing-changed");
     });
     ctx.handle("phone:revoke", async (event, id: unknown) => {
         await ready;
@@ -474,8 +484,12 @@ export function register(ctx: ServiceContext,
         if (!owns(event.sender, key)) throw new Error("Open the script before resuming its iPhone.");
         const snapshot = validateSnapshot(input), window = ctx.windowOf(event.sender);
         if (!window) return { publishers: [] };
-        if (openScripts.get(event.sender.id)?.documentId !== key && openScripts.has(event.sender.id))
-            await stop(event.sender.id);
+        // The first save of an untitled script moves its inbox, and with it the one-off link, to the path key.
+        // That is the same document, so the link stays. Save As or another script ends it.
+        const previous = openScripts.get(event.sender.id), session = sessions.get(event.sender.id);
+        const firstSave = !!previous && sessionKey.test(previous.documentId) && !!session && !session.deviceId
+            && session.documentId === key;
+        if (previous && previous.documentId !== key && !firstSave) await stop(event.sender.id);
         if (event.sender.isDestroyed()) return { publishers: [] };
         const opened = { documentId: key, snapshot };
         openScripts.set(event.sender.id, opened);
@@ -497,11 +511,21 @@ export function register(ctx: ServiceContext,
             }
         } finally { syncAwake(); }
         await publish(event.sender.id, opened);
+        const live = sessions.get(event.sender.id);
         return { publishers: openScripts.get(event.sender.id)?.documentId === key
             ? [...remembered].filter(([id, connection]) => connection.windowId === event.sender.id
-                && devices.device(id)?.scriptId === key).map(([, connection]) => connection.publisher) : [] };
+                && devices.device(id)?.scriptId === key).map(([, connection]) => connection.publisher) : [],
+            // What the renderer needs to skip background publishing when nothing would receive it, and to offer
+            // Stop One-Off Phone Link only for a one-off link.
+            // The folder writer writes only for this script's paired iPhones.
+            shared: !!live || [...remembered.values()].some(c => c.windowId === event.sender.id)
+                || !!folder && devices.all().some(d => !d.revoked && d.scriptId === key),
+            oneOff: !!live && !live.deviceId };
     });
+    /** Starts missing listeners. Resolves true when a listener started or the connection error changed. */
     const restoreHosts = async () => {
+        const before = connectionError;
+        let started = false;
         // An iPhone paired on home Wi-Fi by an earlier version gets no listener: it must be paired again.
         for (const device of devices.all().filter(d => !d.revoked && !outdatedPhone(d))) {
             try {
@@ -514,18 +538,22 @@ export function register(ctx: ServiceContext,
                     tls = await tailscaleTls(ctx.paths.userData, tail);
                 }
                 await hostFor(device.address, device.hostname ?? device.address, tls);
+                started = true;
                 connectionError = "";
             } catch (e) { connectionError = String(e); }
         }
-        ctx.broadcast("phone:sharing-changed");
+        return started || connectionError !== before;
     };
     const restore = ready.then(async () => { await startFolder(); await restoreHosts(); })
-        .catch(e => { connectionError = String(e); });
+        .catch(e => { connectionError = String(e); })
+        .finally(() => ctx.broadcast("phone:sharing-changed"));
     let restoring = false;
     const retry = setInterval(() => {
         if (restoring) return;
         restoring = true;
-        void ready.then(restoreHosts).catch(e => { connectionError = String(e); }).finally(() => { restoring = false; });
+        // Every window refreshes its status on this broadcast, which runs the Tailscale CLI, so only send it on a change.
+        void ready.then(restoreHosts).then(changed => { if (changed) ctx.broadcast("phone:sharing-changed"); })
+            .catch(e => { connectionError = String(e); }).finally(() => { restoring = false; });
     }, 30000);
     retry.unref();
     const renewal = setInterval(() => {

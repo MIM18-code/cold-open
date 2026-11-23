@@ -296,9 +296,10 @@ cannot merge an old reader copy into the new script.
 
 **Save As** keeps remembered devices attached to the original path and its inbox.
 Pair again for the new copy. Renaming or moving the file also requires a new pairing.
-Untitled scripts support one-off links only. Stopping sharing explicitly revokes this
-window's connected remembered devices as well as its one-off link. Window/document
-changes only detach remembered links. **Revoke** beside a device permanently disables
+Untitled scripts support one-off links only. The first save of an untitled script keeps
+its one-off link, because the inbox and link move to the new path key together. Stopping
+sharing ends only this window's one-off link. Remembered devices stay paired and
+connected. Window/document changes only detach remembered links. **Revoke** beside a device permanently disables
 its credential, stops its room with **4401**, and refuses future folder imports. The phone
 shows **This Mac revoked the pairing** and persists that terminal state across launches.
 On home Wi-Fi the Mac keeps answering a revoked iPhone with a sealed 403, so the iPhone

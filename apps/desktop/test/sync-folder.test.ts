@@ -285,6 +285,82 @@ test("a log whose merged state is past the compaction size is not rewritten on e
   await a.sync.stop();
 });
 
+test("a log past the compaction size is not rewritten on the first appends after a restart", async () => {
+  const folder = freshDir();
+  const doc = new Y.Doc();
+  doc.getText("body").insert(0, "x".repeat(3000));
+  const first = new FolderSync({ folder, deviceId: "device-aaaa", compactBytes: 1000, watch: false, onUpdates: () => undefined });
+  await first.start(Y.encodeStateAsUpdate(doc));
+  await first.stop();
+  const a = device(folder, "device-aaaa", doc, { compactBytes: 1000 });
+  await a.sync.start(Y.encodeStateAsUpdate(doc));
+  const generation = () => parseLog(new Uint8Array(readFileSync(join(folder, "device-aaaa.ylog")))).generation;
+  const before = generation();
+  for (let i = 0; i < 5; i++) {
+    doc.getText("body").insert(0, "a");
+    await a.sync.append([]);
+  }
+  assert.equal(generation(), before);
+  await a.sync.stop();
+});
+
+test("a log of several records past the compaction size is compacted on the first append after a restart", async () => {
+  const folder = freshDir();
+  const doc = new Y.Doc();
+  const updates: Uint8Array[] = [];
+  doc.on("update", (update: Uint8Array) => updates.push(update));
+  // Earlier sessions each appended a little and never reached their compaction size.
+  const first = new FolderSync({ folder, deviceId: "device-aaaa", compactBytes: 1_000_000, watch: false, onUpdates: () => undefined });
+  await first.start(Y.encodeStateAsUpdate(doc));
+  for (let i = 0; i < 40; i++) {
+    doc.getText("body").insert(0, `line ${i} ${"x".repeat(40)}\n`);
+    await first.append(updates.splice(0));
+  }
+  await first.stop();
+  const log = () => parseLog(new Uint8Array(readFileSync(join(folder, "device-aaaa.ylog"))));
+  assert.ok(log().records.length > 1);
+  const before = log().generation;
+  const a = device(folder, "device-aaaa", doc, { compactBytes: 1000 });
+  await a.sync.start(Y.encodeStateAsUpdate(doc));
+  doc.getText("body").insert(0, "a");
+  await a.sync.append([]);
+  assert.notEqual(log().generation, before);
+  assert.equal(log().records.length, 1);
+  await a.sync.stop();
+});
+
+test("compacting after a torn append keeps the changes written behind the torn record", async () => {
+  const folder = freshDir();
+  const doc = new Y.Doc();
+  const body = doc.getText("body");
+  const updates: Uint8Array[] = [];
+  doc.on("update", (update: Uint8Array) => updates.push(update));
+  const errors: unknown[] = [];
+  const a = new FolderSync({ folder, deviceId: "device-aaaa", compactBytes: 200, watch: false, onUpdates: () => undefined, onError: (error) => errors.push(error) });
+  body.insert(0, "one");
+  await a.start(Y.encodeStateAsUpdate(doc));
+  updates.length = 0;
+  body.insert(3, "-two");
+  await a.append(updates.splice(0));
+  // A failed write (a full disk) got one whole record onto the disk, then the start of a record whose body never
+  // arrived. The append was reported as failed, so this device never counted the whole one as written.
+  body.insert(body.length, "-written-before-the-tear");
+  writeFileSync(join(folder, "device-aaaa.ylog"), encodeRecords(updates.splice(0)), { flag: "a" });
+  writeFileSync(join(folder, "device-aaaa.ylog"), new Uint8Array([0, 0, 1, 0xf4, 1, 2, 3, 4, 9, 9]), { flag: "a" });
+  for (let i = 0; i < 6; i++) {
+    body.insert(body.length, `-edit${i}-${"x".repeat(40)}`);
+    await a.append(updates.splice(0));
+  }
+  assert.deepEqual(errors, []);
+
+  const other = new Y.Doc();
+  const b = new FolderSync({ folder, deviceId: "device-bbbb", watch: false, onUpdates: () => undefined });
+  for (const update of await b.start()) Y.applyUpdate(other, update);
+  assert.equal(other.getText("body").toString(), body.toString());
+  await a.stop();
+  await b.stop();
+});
+
 test("stopping while the start is still under way leaves no watcher or timer behind", async () => {
   const folder = freshDir();
   const a = device(folder, "device-aaaa", new Y.Doc(), { watch: true });

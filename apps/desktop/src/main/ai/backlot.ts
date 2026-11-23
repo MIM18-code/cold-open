@@ -104,7 +104,7 @@ export async function readBacklot(path: string, maxChars?: number): Promise<Back
   let parsed: unknown;
   try {
     // Only a regular file: a FIFO put in its place (the project may sit in a shared folder) must not hang the app.
-    parsed = JSON.parse(new TextDecoder().decode(await readChosenFile(path)));
+    parsed = JSON.parse(new TextDecoder().decode(await readChosenFile(path, MAX_BYTES)));
   } catch {
     throw new Error("That file is not valid JSON.");
   }
@@ -142,7 +142,6 @@ export function productionState(project: unknown): import("../../shared/channels
 }
 export async function readProductionState(path: string): Promise<import("../../shared/channels/backlot.ts").BacklotProductionState> {
   if ((await stat(path)).size > MAX_BYTES) throw new Error("That file is too large to be a project.");
-  const bytes = await readChosenFile(path);
-  if (bytes.byteLength > MAX_BYTES) throw new Error("That file is too large to be a project.");
+  const bytes = await readChosenFile(path, MAX_BYTES);
   return productionState(JSON.parse(new TextDecoder().decode(bytes)));
 }

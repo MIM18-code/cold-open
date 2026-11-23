@@ -4,7 +4,7 @@ import { phoneFolder } from "./folder";
 import type { Pairing } from "./pairing";
 import type { Take } from "./outbox";
 import { pairingEnded } from "./reach";
-import { unsentTakes } from "./takes-file";
+import { resendableTakes, unsentTakes } from "./takes-file";
 import { shownText } from "./writing";
 import { UNPAIRED } from "./store";
 import { Action, c, Caption, errorText, Label, NavBar, StatusDot, Symbol, Warning } from "./ui";
@@ -20,7 +20,7 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
   const [sendNote, setSendNote] = useState(""), [sendError, setSendError] = useState("");
   const current = takes.filter(t => t.room === pair.invite.room);
   const previous = takes.filter(t => t.room !== pair.invite.room);
-  const unsent = unsentTakes(pair, takes);
+  const unsent = unsentTakes(pair, takes), resend = resendableTakes(pair, takes);
   const terminal = pairingEnded(status);
   async function send() {
     setSending(true); setSendNote(""); setSendError("");
@@ -55,8 +55,9 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
           this iPhone saves pending items there. Accepted and Ignored arrive when the live link returns.</Caption>
         {folderError && <Label accessibilityRole="alert">{folderError}</Label>}
       </View>}
-      {pair.remembered && (!terminal || pair.legacy) && unsent.length > 0 && <View style={{ gap: 8 }}>
-        <Action label={`Send to Mac (${unsent.length} remaining)`} icon="square.and.arrow.up"
+      {pair.remembered && (!terminal || pair.legacy) && (unsent.length > 0 || resend.length > 0) && <View style={{ gap: 8 }}>
+        <Action label={unsent.length ? `Send to Mac (${unsent.length} remaining)` : `AirDrop again (${resend.length})`}
+          icon="square.and.arrow.up"
           disabled={sending} press={() => void send()} />
         <Caption>AirDrop a takes file to the Mac when this iPhone and the Mac share no network.
           Takes stay pending until the Mac reports a decision.</Caption>

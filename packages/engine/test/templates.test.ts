@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  applyDocumentTemplate, entranceRanges, numberScenes, pageOf, paginate, parseFdx, plainText,
+  applyDocumentTemplate, entranceRanges, lockPages, pageLocks, storedFdx, numberScenes, pageOf, paginate, parseFdx, plainText,
   ScreenplayDoc, returnKeyFlow, scriptPaginationOptions, setSceneNumbersLocked, templatePageBreaks, templateParagraphs, templateScript,
   templateStyle, writeFdx, type ElementType, type Paragraph, type Script, type TemplateId,
 } from "../src/index.ts";
@@ -305,3 +305,18 @@ test("a known multi-word cue joined by AND comes along with a first entrance", (
   const long = "THE MAN IN BLACK AND STRANGER EXIT.";
   assert.deepEqual(entranceRanges(long, ["THE MAN IN BLACK"]).map(([a, b]) => long.slice(a, b)), ["THE MAN IN BLACK AND STRANGER EXIT"]);
 });
+
+test("applying a template stores only the style, not locked pages that live under their own key", () => {
+  const doc = ScreenplayDoc.fromScript(longScript());
+  lockPages(doc, paginate(doc.toScript()));
+  applyDocumentTemplate(doc, "multiCamera");
+  assert.equal(storedFdx(doc)?.after.some((node) => node.name === "LockedPages"), false);
+  // Undoing Lock Pages takes its key away; the locks must not come back from the stored extras.
+  doc.meta.delete("pageLocks");
+  assert.equal(pageLocks(doc)?.length ?? 0, 0);
+});
+
+const longScript = (): Script => ({ titlePage: [], paragraphs: Array.from({ length: 30 }, (_, i) => [
+  { id: `h${i}`, type: "sceneHeading" as const, runs: [{ text: `INT. ROOM ${i} - DAY` }] },
+  ...Array.from({ length: 4 }, (_, j) => ({ id: `a${i}_${j}`, type: "action" as const, runs: [{ text: "Words ".repeat(40) }] })),
+]).flat() });

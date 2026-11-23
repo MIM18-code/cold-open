@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type ElementType, type Paragraph, commonTypo, editDistance, findingId, parseCue, proofread, scriptVocabulary, spellingWords } from "../src/index.ts";
+import { ScreenplayDoc, type ElementType, type Paragraph, commonTypo, editDistance, findingId, parseCue, proofread, scriptVocabulary, spellingWords } from "../src/index.ts";
 
 let counter = 0;
 const p = (type: ElementType, text: string): Paragraph => ({ id: `p${++counter}`, type, runs: text ? [{ text }] : [] });
@@ -265,4 +265,33 @@ test("a curly apostrophe in action matches a straight one in the cue", () => {
     ["character", "BOTTLES'"], ["dialogue", "One."], ["character", "BOTTLES'"], ["dialogue", "Two."], ["character", "BOTTLES'"], ["dialogue", "Three."],
     ["action", "BOTTLES’ walks away."]);
   assert.deepEqual(proofread(bottles).filter((f) => f.kind === "name"), []);
+});
+
+test("fixes stop before an inline note and never write into it", () => {
+  const doc = ScreenplayDoc.fromScript({ titlePage: [], paragraphs: [
+    { id: "t1", type: "transition", runs: [{ text: "CUT TO: " }, { text: "check", note: true }] },
+    { id: "t2", type: "transition", runs: [{ text: "CUT TO " }, { text: "check", note: true }] },
+    { id: "c", type: "character", runs: [{ text: "BOB" }] },
+    { id: "q", type: "parenthetical", runs: [{ text: "(quietly " }, { text: "note", note: true }] },
+    { id: "d", type: "dialogue", runs: [{ text: "Hello." }] },
+  ] });
+  const fixes = proofread(doc.paragraphs()).filter((f) => f.replacement !== undefined);
+  // The first transition is already correct; the note after it does not count.
+  assert.deepEqual(fixes.map((f) => [f.paragraphId, f.from, f.to, f.replacement]), [["t2", 4, 6, "TO:"], ["q", 7, 8, "y)"]]);
+  for (const f of fixes) doc.replaceText(f.paragraphId, f.from, f.to, f.replacement!);
+  assert.deepEqual(doc.paragraph("t2")!.runs, [{ text: "CUT TO: " }, { text: "check", note: true }]);
+  assert.deepEqual(doc.paragraph("q")!.runs, [{ text: "(quietly) " }, { text: "note", note: true }]);
+});
+
+test("a note after a cue is not part of the name, so name fixes neither delete it nor copy it", () => {
+  let n = 0;
+  const cue = (runs: Paragraph["runs"]): Paragraph[] => [{ id: `c${++n}`, type: "character", runs }, { id: `d${n}`, type: "dialogue", runs: [{ text: "Yes." }] }];
+  const noted = () => cue([{ text: "DAN" }, { text: "x", note: true }]);
+  const heading: Paragraph = { id: "h", type: "sceneHeading", runs: [{ text: "INT. BAR - NIGHT" }] };
+  const names = (paragraphs: Paragraph[]) => proofread(paragraphs).filter((f) => f.kind === "name");
+  assert.deepEqual(names([heading, ...cue([{ text: "DAN" }]), ...cue([{ text: "DAN" }]), ...cue([{ text: "DAN" }]), ...noted()]), []);
+  assert.deepEqual(names([heading, ...noted(), ...noted(), ...noted(), ...cue([{ text: "DAN" }])]), []);
+  // A real slip next to a note is still caught, with a range that stops before the note.
+  const slip = names([heading, ...cue([{ text: "DAN" }]), ...cue([{ text: "DAN" }]), ...cue([{ text: "DAN" }]), ...cue([{ text: "DANN" }, { text: "x", note: true }])]);
+  assert.deepEqual(slip.map((f) => [f.from, f.to, f.replacement]), [[0, 4, "DAN"]]);
 });

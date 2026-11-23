@@ -29,12 +29,18 @@ export class Settings {
   }
 
   set(key: string, value: unknown): void {
-    if (value === undefined || value === null) delete this.values[key];
-    else this.values[key] = value;
+    // Memory changes only once the file has the change: a value JSON cannot hold (a BigInt or a cycle, both of which
+    // arrive over IPC) or a failed write would otherwise leave memory ahead of disk, and the bad value would make
+    // every later save throw too.
+    const next: Record<string, unknown> = Object.assign(Object.create(null), this.values);
+    if (value === undefined || value === null) delete next[key];
+    else next[key] = value;
+    const text = JSON.stringify(next, null, 2);
     mkdirSync(dirname(this.file), { recursive: true });
     const temp = `${this.file}.tmp`;
-    writeFileSync(temp, JSON.stringify(this.values, null, 2));
+    writeFileSync(temp, text);
     renameSync(temp, this.file);
+    this.values = next;
     for (const listener of this.listeners) listener(key, value);
   }
 

@@ -165,19 +165,25 @@ function outweighs(commonWeight: number, rareWeight: number): boolean {
   return rareWeight * 3 <= commonWeight || (rareWeight === 1 && commonWeight >= 2);
 }
 
+/** A cue's name with blanked notes read as spaces, so a note is never part of a name; null when a note sits inside the name. */
+function maskedCue(text: string): Cue | null {
+  const cue = parseCue(text.replace(/\u0001/g, " "));
+  return cue && !text.slice(cue.from, cue.to).includes("\u0001") ? cue : null;
+}
+
 function nameFindings(paragraphs: readonly Paragraph[], texts: readonly string[]): Finding[] {
   const cueCounts = new Map<string, number>();
   const actionCounts = new Map<string, number>();
   const uses: NameUse[] = [];
   // Cue spellings keyed by their straight-apostrophe form, so BOTTLES’ in action matches a BOTTLES' cue.
   const cueNameSet = new Map(paragraphs.flatMap((paragraph, index) => {
-    const name = paragraph.type === "character" ? parseCue(texts[index]!)?.name : undefined;
+    const name = paragraph.type === "character" ? maskedCue(texts[index]!)?.name : undefined;
     return name ? [[name.replace(/\u2019/g, "'"), name] as const] : [];
   }));
   paragraphs.forEach((paragraph, index) => {
     const text = texts[index]!;
     if (paragraph.type === "character") {
-      const cue = parseCue(text);
+      const cue = maskedCue(text);
       if (!cue) return;
       cueCounts.set(cue.name, (cueCounts.get(cue.name) ?? 0) + 1);
       uses.push({ paragraphId: paragraph.id, from: cue.from, to: cue.to, text: cue.name, site: "cue" });
@@ -250,9 +256,10 @@ function headingFindings(paragraph: Paragraph, text: string): Finding[] {
 }
 
 function transitionFindings(paragraph: Paragraph, text: string): Finding[] {
-  const trimmed = text.trimEnd();
+  // A note after the transition is not part of it, and the fix must not reach into the note.
+  const trimmed = text.replace(/[\s\u0001]+$/, "");
   if (!trimmed || /[.:]$/.test(trimmed)) return [];
-  const last = /\S+$/.exec(trimmed)!;
+  const last = /[^\s\u0001]+$/.exec(trimmed)!;
   const end = last.index + last[0].length;
   const word = last[0];
   const fix = /^to$/i.test(word) || /^in$/i.test(word) ? `${word}:` : `${word}.`;
@@ -308,7 +315,7 @@ function punctuationFindings(paragraph: Paragraph, text: string): Finding[] {
     };
     // A parenthetical that lost its last bracket: close it.
     if (opening && paragraph.type === "parenthetical" && at === text.search(/\S/) && stack.length === 1) {
-      const end = text.trimEnd().length;
+      const end = text.replace(/[\s\u0001]+$/, "").length;
       finding.from = end - 1;
       finding.to = end;
       finding.replacement = `${text[end - 1]})`;

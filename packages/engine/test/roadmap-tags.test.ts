@@ -82,3 +82,21 @@ test("a file with its own Tags lookup keeps exactly its mappings when a tag is a
     assert.equal(after.find(d => d.number === "2"), undefined);
     assert.deepEqual(after.map(d => d.label).sort(), ["Lamp", "Umbrella"]);
 });
+test("the same tag is recognised by its ID even when export numbers the tags in another order", () => {
+    // Export numbers authored tags by ID, so Gun (made first, stored as 1) is shown as 2 here.
+    const real = crypto.randomUUID, ids = ["bbbb-tag-gun", "aaaa-tag-knife"];
+    crypto.randomUUID = (() => ids.shift()!) as typeof crypto.randomUUID;
+    try {
+        const doc = ScreenplayDoc.fromScript({ titlePage: [], paragraphs: [{ id: "p1", type: "action", runs: [{ text: "gun knife rope" }] }] });
+        const at = (offset: number) => ({ paragraphId: "p1", offset });
+        applyTag(doc, at(0), at(3), "Props", "Gun");
+        applyTag(doc, at(4), at(9), "Props", "Knife");
+        assert.deepEqual(tagDefinitions(doc.toScript()).map(d => `${d.label}=${d.number}`), ["Knife=1", "Gun=2"]);
+        applyTag(doc, at(0), at(3), "Props", "Gun");
+        assert.throws(() => applyTag(doc, at(0), at(3), "Props", "Knife"), /already contains/);
+        assert.equal(doc.paragraph("p1")!.runs[0]!.fdx?.InklotTagId, "bbbb-tag-gun");
+        doc.ydoc.destroy();
+    } finally {
+        crypto.randomUUID = real;
+    }
+});

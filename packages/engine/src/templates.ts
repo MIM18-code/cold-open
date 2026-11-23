@@ -8,6 +8,7 @@ import { ELEMENT_LAYOUT, PAGE } from "./layout.ts";
 import { plainText, type ElementType, type Paragraph, type Script } from "./model.ts";
 import { characterName } from "./reports.ts";
 import { writeStyle, type DocumentStyle } from "./styles.ts";
+import { storedFdxWithNotes } from "./script-notes.ts";
 import { isTemplateId, type TemplateId } from "./template-rules.ts";
 
 const BASE_RETURNS: DocumentStyle["returns"] = {
@@ -221,7 +222,9 @@ export interface ApplyTemplateOptions {
  */
 export function applyDocumentTemplate(doc: ScreenplayDoc, id: TemplateId, options: ApplyTemplateOptions = {}): void {
   if (!isTemplateId(id)) throw new Error("Unknown template.");
-  const fdx = writeStyle(doc.toScript(), options.style ?? templateStyle(id));
+  // From the stored extras with the notes' current ranges, not toScript(): its locked pages, revisions and tags come
+  // from their own meta keys, and copying them into "fdx" would bring them back after they are undone or removed.
+  const fdx = writeStyle({ titlePage: [], paragraphs: [], fdx: storedFdxWithNotes(doc) }, options.style ?? templateStyle(id));
   doc.ydoc.transact(() => {
     doc.meta.set("fdx", fdx);
     doc.meta.set("template", id);

@@ -8,13 +8,16 @@
 // block that starts with the line "OMITTED SCENE". Fountain apps print neither the boneyard nor its text, and
 // reading the file back puts the text inside the OMITTED heading again, so Restore Omitted Scene still works.
 import { newId } from "./ids.ts";
-import { fountainRuns, readInline, writeInline } from "./inline.ts";
+import { escapeNote, fountainRuns, readInline, unescapeNote, writeInline } from "./inline.ts";
 import { type ElementType, type Paragraph, type Run, type Script, type TitleField, plainText } from "./model.ts";
 import { isOmitted, omittedHeading, omittedParagraphs } from "./revisions.ts";
 
 const HEADING = /^(?:INT\.?\/EXT|INT|EXT|EST|I\/E)[. ]/i;
+// One scene-number grammar for reading and writing. It takes the underscore that replaceSceneNumber accepts.
+const SCENE_NUMBER_TEXT = "[A-Za-z0-9][A-Za-z0-9._\\-]*";
 // No leading \s+: unanchored, it rescans a long run of spaces from every position. The space before is checked apart.
-const SCENE_NUMBER = /#([A-Za-z0-9][A-Za-z0-9.\-]*)#$/;
+const SCENE_NUMBER = new RegExp(`#(${SCENE_NUMBER_TEXT})#$`);
+const IS_SCENE_NUMBER = new RegExp(`^${SCENE_NUMBER_TEXT}$`);
 const TITLE_KEY = /^([A-Za-z][^:\n]*):(.*)$/;
 const PAGE_BREAK = /^={3,}$/;
 const FORCE_CHARS = /^[!@~=#>.]|^\[\[|^\/\*/;
@@ -85,7 +88,7 @@ export function parseFountain(source: string): Script {
       while (!text.includes("*/") && j + 1 < lines.length) { body.push(text); text = lines[++j]!; }
       if (text.includes("*/")) {
         body.push(text.slice(0, text.lastIndexOf("*/")));
-        push(state, "note", [{ text: body.join("\n").replace(/^\n/, "").replace(/\n$/, "") }].filter((run) => run.text), { boneyard: true });
+        push(state, "note", [{ text: openBoneyard(body.join("\n").replace(/^\n/, "").replace(/\n$/, "")) }].filter((run) => run.text), { boneyard: true });
         i = j + 1;
         continue;
       }
@@ -93,10 +96,10 @@ export function parseFountain(source: string): Script {
     if (!forcedAction && trimmed.startsWith("[[") && blankBefore()) {
       const body: string[] = [];
       let j = i;
-      while (j < lines.length && !isBlank(lines[j])) body.push(lines[j++]!);
+      for (; j < lines.length && !isBlank(lines[j]); j++) body.push(isHeldBlank(lines[j]!) ? "" : lines[j]!);
       const joined = body.join("\n").trim();
       if (joined.endsWith("]]") && joined.indexOf("]]") === joined.length - 2) {
-        push(state, "note", [{ text: joined.slice(2, -2) }].filter((run) => run.text));
+        push(state, "note", [{ text: unescapeNote(joined.slice(2, -2)) }].filter((run) => run.text));
         i = j;
         continue;
       }
@@ -192,6 +195,12 @@ const OMITTED_BLOCK = "OMITTED SCENE";
 /** Text for inside a boneyard block: a backslash is doubled and a closing star-slash written as *\/. */
 const escapeBoneyard = (text: string) => text.replace(/\\/g, "\\\\").replace(/\*\//g, "*\\/");
 const unescapeBoneyard = (text: string) => text.replace(/\\([\\/])/g, "$1");
+// A plain boneyard is written as typed apart from "*/", which would end it: one backslash goes in before the slash,
+// after any already there, and one comes out on reading, so a literal "*\/" also survives. An omitted scene's block
+// keeps its own escaping and is read by readOmitted.
+const closeBoneyard = (text: string) => text.replace(/\*(\\*)\//g, "*$1\\/");
+const openBoneyard = (text: string) =>
+  text === OMITTED_BLOCK || text.startsWith(`${OMITTED_BLOCK}\n`) ? text : text.replace(/\*(\\*)\\\//g, "*$1/");
 
 /** A scene heading followed by an OMITTED SCENE boneyard block becomes an OMITTED heading that keeps the text. */
 function readOmitted(paragraphs: Paragraph[]): Paragraph[] {
@@ -276,6 +285,26 @@ function actionBlock(paragraph: Paragraph): string[] {
   return lines;
 }
 
+/**
+ * A parenthetical reads back as one only if its line starts with "(" and ends with ")". So emphasis comes off the
+ * parentheses ("*(beat)*" is written "(*beat*)") and notes at either end move inside them.
+ */
+function parentheticalRuns(runs: Run[]): Run[] {
+  // Notes and the spaces around them may sit outside either parenthesis ("(beat) [[one]] [[two]]"); they keep their
+  // order and move inside.
+  const outside = (run: Run) => !!run.note || !run.text.trim();
+  let start = 0, end = runs.length;
+  while (start < end && outside(runs[start]!)) start++;
+  while (end > start && outside(runs[end - 1]!)) end--;
+  const body = runs.slice(start, end).map((run) => ({ ...run }));
+  const first = body[0], last = body.at(-1);
+  const open = first && /^\s*\(/.exec(first.text), close = last && /\)\s*$/.exec(last.text);
+  if (!first || !last || !open || !close) return runs;
+  last.text = last.text.slice(0, close.index) + last.text.slice(close.index + 1);
+  first.text = first.text.slice(0, open[0].length - 1) + first.text.slice(open[0].length);
+  return [{ text: "(" }, ...runs.slice(0, start), ...body.filter((run) => run.text), ...runs.slice(end), { text: ")" }];
+}
+
 function speechBlock(paragraphs: readonly Paragraph[], start: number): { lines: string[]; next: number } {
   const cue = paragraphs[start]!;
   let end = start + 1;
@@ -288,7 +317,7 @@ function speechBlock(paragraphs: readonly Paragraph[], start: number): { lines: 
     const paragraph = paragraphs[k]!;
     // A parenthetical is one line; a dialogue paragraph may hold several.
     const written = paragraph.type === "parenthetical"
-      ? bodyLines(trimRuns(paragraph.runs.map((run) => ({ ...run, text: run.text.replace(/\n/g, " ") }))))
+      ? bodyLines(parentheticalRuns(trimRuns(paragraph.runs.map((run) => ({ ...run, text: run.text.replace(/\n/g, " ") })))))
       : bodyLines(trimLines(paragraph.runs));
     // Two dialogue paragraphs in a row merge in Fountain; that is the format's limit.
     lines.push(...written);
@@ -300,13 +329,15 @@ function block(paragraph: Paragraph): string[] {
   const text = writeInline(trimRuns(paragraph.runs));
   switch (paragraph.type) {
     case "sceneHeading": {
-      const number = paragraph.sceneNumber && /^[A-Za-z0-9][A-Za-z0-9.\-]*$/.test(paragraph.sceneNumber) ? ` #${paragraph.sceneNumber}#` : "";
+      const number = paragraph.sceneNumber && IS_SCENE_NUMBER.test(paragraph.sceneNumber) ? ` #${paragraph.sceneNumber}#` : "";
       const line = `${text.replace(/\n/g, " ")}${number}`;
-      return [HEADING.test(line) && readsAs([line], "sceneHeading") ? line : `.${line}`];
+      // ".." does not force a heading (it may start "...LATER" in action), so a heading that starts with a dot gets ". ".
+      return [HEADING.test(line) && readsAs([line], "sceneHeading") ? line : `${line.startsWith(".") ? ". " : "."}${line}`];
     }
     case "transition": {
       const single = text.replace(/\n/g, " ");
-      return [isTransition(single) && readsAs([single], "transition") ? single : `>${single}`];
+      // ">X <" is centered text, so an empty note after a final "<" keeps it a transition. The note prints nothing.
+      return [isTransition(single) && readsAs([single], "transition") ? single : `>${single}${single.endsWith("<") ? "[[]]" : ""}`];
     }
     case "lyrics":
       return writeInline(trimLines(paragraph.runs)).split("\n").map((line) => `~${line}`);
@@ -314,8 +345,12 @@ function block(paragraph: Paragraph): string[] {
       return [`${"#".repeat(Math.max(1, paragraph.depth ?? 1))} ${plainText(paragraph.runs).replace(/\n/g, " ").trim()}`];
     case "synopsis":
       return [`= ${plainText(paragraph.runs).replace(/\n/g, " ").trim()}`];
-    case "note":
-      return paragraph.boneyard ? ["/*", plainText(paragraph.runs), "*/"] : [`[[${plainText(paragraph.runs)}]]`];
+    case "note": {
+      const note = plainText(paragraph.runs);
+      if (paragraph.boneyard) return ["/*", closeBoneyard(note), "*/"];
+      // A blank line would end the note, so an empty inner line is held open with two spaces, as in other elements.
+      return `[[${escapeNote(note)}]]`.split("\n").map((line) => (line.trim() === "" ? "  " : line));
+    }
     default:
       return actionBlock(paragraph);
   }

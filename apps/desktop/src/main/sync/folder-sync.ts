@@ -399,6 +399,10 @@ export class FolderSync {
     const intact = bytes && parsed && !parsed.invalid && parsed.end === bytes.length && own.length === records.length;
     if (intact) {
       this.ownBytes = bytes.length;
+      // A log that is already one merged record counts as the last rewrite, so a merged log past the limit is not
+      // rewritten on the first append after every start. A log of several records keeps 0: otherwise each restart
+      // would move the threshold up and a log reopened often would never compact.
+      if (own.length <= 1) this.compactedBytes = bytes.length;
       this.ownRecords = own;
       if (extra) await this.appendNow([extra]);
     } else if (merged || extra) {
@@ -440,8 +444,15 @@ export class FolderSync {
   private async compact(): Promise<void> {
     const bytes = await this.readLog(basename(this.ownLog));
     if (!bytes) return;
-    const records = this.updatesIn(basename(this.ownLog), parseLog(bytes).records);
-    if (records.length > 1) await this.rewrite([mergeAll(records)]);
+    const parsed = parseLog(bytes);
+    // A failed append (a full disk) can leave a torn record with later appends behind it. Reading stops at the
+    // torn one, so add what this device wrote, or the changes behind it would be lost. The records read before it
+    // stay too: the failed append may have written some whole ones that never reached ownRecords. Merging the same
+    // Yjs update twice is harmless.
+    const whole = !parsed.invalid && parsed.end === bytes.length;
+    const read = this.updatesIn(basename(this.ownLog), parsed.records);
+    const records = whole ? read : [...read, ...this.ownRecords];
+    if (records.length > 1 || (!whole && records.length)) await this.rewrite([mergeAll(records)]);
   }
 
   /**

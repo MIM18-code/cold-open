@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 // Exercise native component props and handlers without a Simulator or a JS renderer dependency.
 const result = await build({ stdin: { contents: `export { Pair } from "./src/Pair";
   export { Reader } from "./src/Reader"; export { Capture } from "./src/Capture"; export { begin, reset } from "react";
+  export { StatusDot } from "./src/ui";
   export { opened, keyboard, appState } from "react-native"; export { speech } from "expo";`, resolveDir: resolve(import.meta.dirname, "..") },
   bundle: true, write: false, platform: "node", format: "esm", jsx: "automatic",
   plugins: [{ name: "native-controls", setup(b) {
@@ -41,7 +42,7 @@ const result = await build({ stdin: { contents: `export { Pair } from "./src/Pai
     ` : path === "expo" ? `
       const listeners = { result: [], ended: [] };
       export const speech = { started: 0, finished: 0, listeners, async authorize() { return true; },
-        async start() { this.started++; }, finish() { this.finished++; }, cancel() {},
+        async start() { this.started++; }, finish() { this.finished++; }, cancelled: 0, cancel() { this.cancelled++; },
         addListener(name, fn) { listeners[name].push(fn); return { remove() { listeners[name].splice(listeners[name].indexOf(fn), 1); } }; } };
       export class NativeModule {}
       export const requireNativeModule = () => speech;
@@ -261,4 +262,34 @@ test("leaving the app mid-dictation files the note once the last words arrive", 
   for (const fn of ui.speech.listeners.ended) fn({ error: "" });
   render(ui.Capture, props);
   assert.deepEqual(saved, ["the lamp on the water"]);
+});
+
+test("dictation whose last words never arrive returns to editing after 5 seconds, keeping what was heard", async t => {
+  ui.reset();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const cancelled = ui.speech.cancelled;
+  const props = { initial: { row: null, text: "" }, script: "Ferry", waiting: 0, keep() {},
+    save() { return true; }, reader() {}, readerLabel: "Script" };
+  let tree = render(ui.Capture, props);
+  button(tree, "Dictate a note").props.onPress();
+  await new Promise(r => setImmediate(r));
+  for (const fn of ui.speech.listeners.result) fn({ text: "the ferry at dawn" });
+  tree = render(ui.Capture, props);
+  button(tree, "Stop dictation").props.onPress();
+  tree = render(ui.Capture, props);
+  const input = () => tree.find(n => n.type === "TextInput")!;
+  assert.equal(input().props.editable, false, "finishing");
+  t.mock.timers.tick(5000);
+  tree = render(ui.Capture, props);
+  assert.equal(input().props.editable, true);
+  assert.equal(input().props.value, "the ferry at dawn");
+  assert.equal(ui.speech.cancelled, cancelled + 1);
+});
+
+test("the status dot is red for every ended pairing, orange while connecting and green when live", () => {
+  const color = (status: string) => ui.StatusDot({ status }).props.style.backgroundColor;
+  for (const status of ["Pairing expired", "Refused", "Host stopped sharing", "This Mac revoked the pairing",
+    "Pair again to encrypt this link"]) assert.equal(color(status), "systemRed", status);
+  assert.equal(color("Connecting"), "systemOrange");
+  assert.equal(color("Live"), "systemGreen");
 });

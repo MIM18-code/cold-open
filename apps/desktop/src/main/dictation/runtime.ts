@@ -124,7 +124,8 @@ export class DictationRuntime {
     return { helperPath, exists: existsSync(helperPath) };
   }
 
-  close(): void {
-    this.helper?.close();
+  /** Settles once the speech helper has exited or been killed. */
+  close(): Promise<void> {
+    return this.helper?.close() ?? Promise.resolve();
   }
 }

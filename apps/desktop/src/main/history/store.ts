@@ -28,7 +28,7 @@ export class HistoryStore {
     if (!file) return null;
     try {
       if (file.info.size > limit) throw new Error("A history file exceeds the storage limit.");
-      return await file.read();
+      return await file.read(limit);
     } finally { await file.close(); }
   }
   private async index(folder: string): Promise<Index> {

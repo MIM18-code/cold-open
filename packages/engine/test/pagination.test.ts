@@ -251,6 +251,15 @@ test("scene continueds print (CONTINUED) and CONTINUED: when a scene runs over",
   assert.equal(body(result.pages[1]!)[0]!.y, 2);
 });
 
+test("a scene heading that starts with an inline note still opens its scene on the page", () => {
+  const s = script(["sceneHeading", "INT. LONG"], ...fillTo(60));
+  s.paragraphs[0]!.runs = [{ text: "check this", note: true }, { text: "INT. LONG" }];
+  const result = paginate(s, { sceneContinueds: true });
+  assert.deepEqual(result.pages[0]!.sceneIds, ["s0"]);
+  assert.equal(text(result.pages[0]!.lines.at(-1)!), "(CONTINUED)");
+  assert.equal(text(result.pages[1]!.lines[0]!), "CONTINUED:");
+});
+
 test("scene eighths and their display", () => {
   const s = script(["sceneHeading", "INT. A"], ...fillTo(52), ["sceneHeading", "INT. B"], short(1));
   const result = paginate(s);

@@ -826,3 +826,44 @@ test("a usage limit or 401 is applied to the account that sent the request, even
   assert.equal(h.account.expireAccess(other!.id, "a-token-already-replaced"), true);
   assert.notEqual(h.store.read().profiles.find((p) => p.id === other!.id)!.tokens!.expiresAt, 0);
 });
+
+test("a sign-out whose keychain read or save fails does not leave the account stuck mid-operation", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  const stub = (read: () => ReturnType<ChatgptStore["read"]>, write: () => void) =>
+    ({ read, write, canEncrypt: () => true, available: true }) as unknown as ChatgptStore;
+  const unreadable = new ChatgptOAuth({ store: stub(() => { throw new Error("locked keychain"); }, () => undefined), fetch: h.transport, openBrowser: h.openBrowser, issuer: h.issuer, listen: h.listen });
+  await assert.rejects(unreadable.signOut(), /locked keychain/);
+  await assert.rejects(unreadable.access(new AbortController().signal), /locked keychain/, "not still signing out");
+
+  const unwritable = new ChatgptOAuth({ store: stub(() => h.store.read(), () => { throw new Error("EIO write"); }), fetch: h.transport, openBrowser: h.openBrowser, issuer: h.issuer, listen: h.listen });
+  await assert.rejects(unwritable.signOut(), /EIO write/);
+  await assert.rejects(unwritable.access(new AbortController().signal), /Enable ChatGPT plan usage/, "not still signing out");
+});
+
+test("switching away and back while an account renews joins its renewal instead of sending its refresh token twice", async (t) => {
+  const h = await harness(t); await h.account.signIn();
+  await h.account.signIn({ newProfile: true });
+  const [left, other] = h.store.read().profiles;
+  h.account.select(left!.id);
+  const waiting: (() => void)[] = [];
+  const slow: FetchLike = async (url, init) => {
+    if (new URLSearchParams(String(init?.body ?? "")).get("grant_type") === "refresh_token") await new Promise<void>((resolve) => waiting.push(resolve));
+    return h.transport(url, init);
+  };
+  const account = new ChatgptOAuth({ store: h.store, fetch: slow, openBrowser: h.openBrowser, issuer: h.issuer, listen: h.listen });
+  const started = async (count: number) => { for (let tries = 0; waiting.length < count && tries < 200; tries++) await new Promise((resolve) => setTimeout(resolve, 5)); };
+  account.expireAccess();
+  const first = account.accessToken(new AbortController().signal).catch((error: Error) => error);
+  await started(1);
+  account.select(other!.id);
+  account.expireAccess();
+  const second = account.accessToken(new AbortController().signal).catch((error: Error) => error);
+  await started(2);
+  account.select(left!.id);
+  const third = account.accessToken(new AbortController().signal).catch((error: Error) => error);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  waiting.forEach((release) => release());
+  await Promise.all([first, second, third]);
+  const refreshes = h.forms.filter((form) => form.get("grant_type") === "refresh_token" && form.get("client_id") === left!.clientId);
+  assert.equal(refreshes.length, 1);
+});

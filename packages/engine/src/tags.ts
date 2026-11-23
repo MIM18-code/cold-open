@@ -78,7 +78,10 @@ export function applyTag(doc: ScreenplayDoc, from: TextPosition, to: TextPositio
             if (end > s.start && offset < s.end) {
                 if (r.note)
                     throw new Error("The selection contains an inline note. Select only the screenplay text.");
-                if (r.fdx?.TagNumber && r.fdx.TagNumber !== existing?.number && !replace)
+                // A tag made in this app is known by its ID; its stored number is not the renumbered one in `defs`.
+                const tagId = r.fdx?.InklotTagId;
+                const same = tagId ? tagId === existing?.id : r.fdx?.TagNumber === existing?.number;
+                if (r.fdx?.TagNumber && !same && !replace)
                     throw new Error("The selection already contains another tag. Review replacement before applying.");
             }
             offset = end;

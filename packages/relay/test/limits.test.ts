@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { connect as tcpConnect, type Socket } from "node:net";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -338,6 +339,127 @@ test("with maxAwarenessClients 1, a writer reconnecting takes over its own ID", 
   assert.equal(await closedWith(stale, 100), 0);
   stale.close();
   fresh.close();
+});
+
+test("a null presence for a client the relay never saw leaves nothing behind", async () => {
+  const { relay, url } = await startRelay();
+  const { room, key } = relay.createRoom();
+  const watcher = connect(url, room, key);
+  await watcher.whenSynced();
+  const socket = await rawSocket(url, room, key);
+  // Removing an unknown client fires no change, but the relay used to keep its clock for as long as the room lived.
+  socket.send(presence(500, 5, "null"));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  // A later state with a lower clock is accepted only if that clock was not kept.
+  socket.send(presence(500, 1, '{"user":{"name":"Ana"}}'));
+  await waitFor(() => watcher.awareness.getStates().get(500)?.user?.name === "Ana", "the state to be accepted");
+  socket.close();
+});
+
+test("presence IDs a connection sets and clears still count toward maxAwarenessClients, and are forgotten when it leaves", async () => {
+  const { relay, url } = await startRelay({ maxAwarenessClients: 8 });
+  const { room, key } = relay.createRoom();
+  const watcher = connect(url, room, key);
+  await watcher.whenSynced();
+  const socket = await rawSocket(url, room, key);
+  for (let id = 1; id <= 8; id++) {
+    socket.send(presence(id, 1, '{"user":{"name":"brief"}}'));
+    socket.send(presence(id, 2, "null"));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await closedWith(socket, 100), 0);
+  socket.send(presence(9, 1, '{"user":{"name":"one too many"}}'));
+  assert.equal(await closedWith(socket), 4400);
+  await waitFor(() => relay.stats().connections === 1, "the closed connection to leave");
+  // Clock 1 is older than the clock 2 the closed connection left behind, so the relay accepts it only if that was
+  // dropped. The watcher kept clock 2 itself, so a client that joins afterwards checks.
+  const next = await rawSocket(url, room, key);
+  next.send(presence(1, 1, '{"user":{"name":"Bea"}}'));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const late = connect(url, room, key);
+  await late.whenSynced();
+  await waitFor(() => late.awareness.getStates().get(1)?.user?.name === "Bea", "the reused ID");
+  next.close();
+});
+
+test("a writer whose update Yjs cannot read is closed with 4400", async () => {
+  const { relay, url } = await startRelay();
+  const { room, key } = relay.createRoom();
+  const socket = await rawSocket(url, room, key);
+  // A sync update (0, 2) whose payload is one byte of a Yjs update that ends early.
+  socket.send(new Uint8Array([0, 2, 1, 5]));
+  assert.equal(await closedWith(socket), 4400);
+});
+
+test("sockets that never join a room are capped at the HTTP server too", async () => {
+  const { relay, url } = await startRelay({ maxConnections: 2 });
+  const { room, key } = relay.createRoom();
+  const sockets: Socket[] = [];
+  let dropped = 0;
+  try {
+    for (let i = 0; i < 200; i++) {
+      const socket = tcpConnect(relay.port, "127.0.0.1");
+      socket.on("error", () => undefined);
+      socket.on("close", () => dropped++);
+      sockets.push(socket);
+    }
+    await waitFor(() => dropped >= 100, "the server to refuse the extra sockets");
+    assert.equal(relay.stats().connections, 0);
+    for (const socket of sockets) socket.destroy();
+    // Space comes back once they are gone.
+    await waitFor(() => dropped === 200, "the sockets to close");
+    await connect(url, room, key).whenSynced();
+  } finally {
+    for (const socket of sockets) socket.destroy();
+  }
+});
+
+test("idle sockets that never send anything are closed by the relay and free their places", async () => {
+  const { relay, url } = await startRelay({ maxConnections: 1, handshakeTimeout: 300 });
+  const { room, key } = relay.createRoom();
+  const sockets: Socket[] = [];
+  let closed = 0;
+  try {
+    // More than the 1 + 64 sockets the server holds, none of which ever sends a byte or closes itself.
+    for (let i = 0; i < 100; i++) {
+      const socket = tcpConnect(relay.port, "127.0.0.1");
+      socket.on("error", () => undefined);
+      socket.on("close", () => closed++);
+      sockets.push(socket);
+    }
+    await waitFor(() => closed === 100, "the relay to close every idle socket");
+    const client = connect(url, room, key);
+    await client.whenSynced();
+    // A joined connection is not cut off by the timeout.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    assert.equal(client.status, "connected");
+    assert.equal(relay.stats().connections, 1);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+  }
+});
+
+test("a socket that trickles its request a byte at a time is still closed at the deadline", async () => {
+  const handshakeTimeout = 400;
+  const { relay } = await startRelay({ maxConnections: 1, handshakeTimeout });
+  const request = Buffer.from(`GET /${"B".repeat(22)}?key=${"C".repeat(22)} HTTP/1.1\r\nHost: 127.0.0.1\r\n`);
+  const started = Date.now();
+  const socket = tcpConnect(relay.port, "127.0.0.1");
+  socket.on("error", () => undefined);
+  let sent = 0;
+  const trickle = setInterval(() => {
+    if (!socket.destroyed) socket.write(request.subarray(sent, ++sent));
+  }, handshakeTimeout / 2);
+  try {
+    await new Promise((resolve) => socket.once("close", resolve));
+    const lasted = Date.now() - started;
+    // An idle timer would keep it until Node's own headers timeout, a minute or more.
+    assert.ok(lasted < 3 * handshakeTimeout, `closed after ${lasted} ms`);
+    assert.ok(sent >= 1, "the socket sent bytes before the deadline");
+  } finally {
+    clearInterval(trickle);
+    socket.destroy();
+  }
 });
 
 test("RelayClient stops on 4413 instead of resending the same script", async () => {

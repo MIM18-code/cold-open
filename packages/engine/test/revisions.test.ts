@@ -4,7 +4,7 @@ import * as Y from "yjs";
 
 import {
   NO_REVISIONS, ScreenplayDoc, addDeletionMark, adjustDeletionMarks, clearRevisionMarks, deletionMarks, importedDeletionMarks, isOmitted,
-  keepOmittedScenes, locksFromFdx, lockPages, markInserted, newRevisionSet, omitScene, pageLocks, pageRevisions, paginate,
+  keepOmittedScenes, lockedSceneNumbers, locksFromFdx, omittedParagraphs, lockPages, markInserted, newRevisionSet, omitScene, pageLocks, pageRevisions, paginate,
   numberAddedScenes, parseFdx, plainText, reanchorPageLocks, restoreOmittedScenes, revisedRanges, setSceneNumbersLocked, revisionColor, revisionLabel,
   revisionState, revisionsFromFdx, revisionsNode, setRevisionState, unlockPages, unomitScene, updateRevisionState, writeFdx, type FdxDocumentExtras, type Paragraph, type RevisionState,
 } from "../src/index.ts";
@@ -404,4 +404,30 @@ test("production settings never write the shared FDX value, so an earlier title 
   assert.match(xml, /<LockedPages>\s*<LockedPage Deleted="0" LevelIndex="0" LockLevel="0" PageNumber="1" Position="0"\/>\s*<\/LockedPages>/);
   assert.doesNotMatch(xml, /DeletedTextLocation Offset="62"/);
   assert.equal(revisionState(ScreenplayDoc.fromScript(parseFdx(xml))).sets.length, 3);
+});
+
+test("omitting the first scene keeps text before its line break once, in the OMITTED copy", () => {
+  const doc = ScreenplayDoc.fromScript({ titlePage: [], paragraphs: [
+    { id: "h1", type: "sceneHeading", sceneId: "h1", runs: [{ text: "INT. A - DAY" }] }, { id: "a1", type: "action", runs: [{ text: "One." }] },
+    { id: "h2", type: "sceneHeading", sceneId: "h2", runs: [{ text: "INT. B - DAY" }] }, { id: "a2", type: "action", runs: [{ text: "Two." }] },
+  ] });
+  // A co-writer's typing can leave text before the first line break (lead() in doc.ts).
+  doc.body.insert(0, "BIG ");
+  omitScene(doc, "h1");
+  const paragraphs = doc.paragraphs();
+  assert.deepEqual(paragraphs.map((p) => plainText(p.runs)), ["OMITTED", "INT. B - DAY", "Two."]);
+  assert.deepEqual(omittedParagraphs(paragraphs[0]!).map((p) => plainText(p.runs)), ["BIG INT. A - DAY", "One."]);
+});
+
+test("omitting an unnumbered scene leaves it unnumbered, so a locked number after a numbered scene follows that one", () => {
+  const doc = ScreenplayDoc.fromScript({ titlePage: [], paragraphs: [
+    { id: "h1", type: "sceneHeading", sceneId: "h1", sceneNumber: "1", runs: [{ text: "INT. A - DAY" }] },
+    { id: "h2", type: "sceneHeading", sceneId: "h2", runs: [{ text: "INT. B - DAY" }] }, { id: "a2", type: "action", runs: [{ text: "x" }] },
+    { id: "h3", type: "sceneHeading", sceneId: "h3", runs: [{ text: "INT. C - DAY" }] },
+    { id: "h4", type: "sceneHeading", sceneId: "h4", sceneNumber: "2", runs: [{ text: "INT. D - DAY" }] },
+  ] });
+  omitScene(doc, "h2");
+  const numbers = doc.paragraphs().filter((p) => p.type === "sceneHeading").map((p) => p.sceneNumber);
+  assert.deepEqual(numbers, ["1", undefined, undefined, "2"]);
+  assert.equal(lockedSceneNumbers(numbers)[2], "1B");
 });

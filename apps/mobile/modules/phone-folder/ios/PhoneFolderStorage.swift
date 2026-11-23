@@ -31,8 +31,18 @@ enum PhoneFolderStorage {
       throw storageError("Invalid production snapshot.")
     }
     var bytes = [UInt8](repeating: 0, count: Int(info.st_size) + 1)
-    let count = bytes.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
-    guard count >= 0, count <= 2_000_000 else { throw storageError("Cannot read production snapshot.") }
+    // One read may return less than the whole file, or be interrupted by a signal; read until end of file.
+    var count = 0
+    while count < bytes.count {
+      let got = bytes.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress!.advanced(by: count), $0.count - count) }
+      if got == 0 { break }
+      if got < 0 {
+        if errno == EINTR { continue }
+        throw storageError("Cannot read production snapshot.")
+      }
+      count += got
+    }
+    guard count <= 2_000_000 else { throw storageError("Cannot read production snapshot.") }
     return String(bytes: bytes.prefix(count), encoding: .utf8)
   }
   static func write(root: URL, deviceId: String, receiptId: String, json: String) throws {

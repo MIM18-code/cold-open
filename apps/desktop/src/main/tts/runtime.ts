@@ -350,7 +350,7 @@ export class ReaderRuntime {
         ? referenceChecksum(reference.reference) : `${this.identities.get(request.engine)!.modelChecksum}:${request.voice}` };
       await this.directory(); const path = join(this.root, `${audioKey(request, identity)}.wav`);
       const opened = await openForRead(path);
-      if (opened) { try { if (opened.info.size <= MAX_AUDIO) { const bytes = await opened.read(); if (validWave(bytes)) { signal.throwIfAborted(); await utimes(path, new Date(), new Date()); return { audio: bytes, cached: true }; } } } finally { await opened.close(); } }
+      if (opened) { try { if (opened.info.size <= MAX_AUDIO) { const bytes = await opened.read(MAX_AUDIO); if (validWave(bytes)) { signal.throwIfAborted(); await utimes(path, new Date(), new Date()); return { audio: bytes, cached: true }; } } } finally { await opened.close(); } }
       let bytes: Uint8Array;
       if (request.engine === "system") {
         this.releaseModel();
@@ -359,7 +359,7 @@ export class ReaderRuntime {
           await this.systemRun(["-v", request.voice, "-o", file, "--file-format=WAVE", "--data-format=LEI16@24000", "-f", "-"], text, signal);
           const output = await openForRead(file);
           if (!output) throw new Error("The system voice produced no audio.");
-          try { if (output.info.size > MAX_AUDIO) throw new Error("Generated speech is too large."); bytes = normalizeWave(await output.read()); } finally { await output.close(); }
+          try { if (output.info.size > MAX_AUDIO) throw new Error("Generated speech is too large."); bytes = normalizeWave(await output.read(MAX_AUDIO)); } finally { await output.close(); }
         } finally { await rm(temp, { recursive: true, force: true }); }
       } else {
         await this.load(request.engine, signal);

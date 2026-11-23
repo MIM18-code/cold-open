@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { CHANNELS } from "../src/shared/api.ts";
 import { SETTING_KEYS } from "../src/shared/channels/dictation.ts";
 import type { Handler, ServiceContext } from "../src/main/context.ts";
-import { helperPathProblem, readConfig } from "../src/main/dictation/config.ts";
+import { helperPathProblem, readConfig, resolveHelperPath } from "../src/main/dictation/config.ts";
 import { DictationRuntime } from "../src/main/dictation/runtime.ts";
 import { register as registerSettings } from "../src/main/services/settings.ts";
 
@@ -68,4 +68,17 @@ test("the runtime uses the granted helper and runs nothing a page named", async 
   const result = await typed.check();
   assert.equal(result.helper.ok, false);
   assert.notEqual(result.helper.path, chosen);
+});
+
+test("a packaged app ignores SCREENPLAY_SPEECH_HELPER, so the launching program cannot pick what it runs", () => {
+  const env = { SCREENPLAY_SPEECH_HELPER: "/tmp/evil/speech-helper" };
+  const shipped = "/App/Resources/speech-helper";
+  const exists = (path: string) => path === env.SCREENPLAY_SPEECH_HELPER || path === shipped;
+  assert.equal(resolveHelperPath("", { repoRoot: "/App", resourcesPath: "/App/Resources", env, exists, packaged: true }), shipped);
+  assert.equal(resolveHelperPath("", { repoRoot: "/App", resourcesPath: "/App/Resources", env, exists }), env.SCREENPLAY_SPEECH_HELPER);
+  // Nor does a development build path win, inside the bundle or in the main checkout of a worktree.
+  const worktree = "/Users/me/App/.claude/worktrees/w1/release/Cold Open.app/Contents";
+  const lookup = { repoRoot: worktree, resourcesPath: `${worktree}/Resources`, packaged: true, exists: () => true };
+  assert.equal(resolveHelperPath("", lookup), `${worktree}/Resources/speech-helper`);
+  assert.equal(resolveHelperPath("", { ...lookup, exists: () => false }), `${worktree}/Resources/speech-helper`);
 });

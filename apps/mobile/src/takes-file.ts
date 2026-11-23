@@ -21,8 +21,16 @@ export function unsentTakes(pair: Pairing, takes: Take[]): Take[] {
     .sort((a, b) => a.created - b.created || a.id.localeCompare(b.id));
 }
 
+/** Takes that AirDrop can send again: the share sheet cannot tell a declined or failed AirDrop from one that arrived. */
+export function resendableTakes(pair: Pairing, takes: Take[]): Take[] {
+  return waitingTakes(pair, takes).filter(t => t.outcome === "airdropped")
+    .sort((a, b) => a.created - b.created || a.id.localeCompare(b.id));
+}
+
+/** What Send to Mac shares: unsent takes first, then, once all are sent, the AirDropped ones the Mac has not decided. */
 export function takesBatch(pair: Pairing, takes: Take[]): Take[] {
-  return unsentTakes(pair, takes).slice(0, MAX_TAKES);
+  const unsent = unsentTakes(pair, takes);
+  return (unsent.length ? unsent : resendableTakes(pair, takes)).slice(0, MAX_TAKES);
 }
 
 export function takesFileName(now = new Date()): string {

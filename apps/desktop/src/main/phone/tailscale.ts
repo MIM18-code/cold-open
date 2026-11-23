@@ -8,7 +8,7 @@ import type { PhoneTailscale } from "../../shared/channels/phone.ts";
 import { phoneTls, type PhoneTls } from "./tls.ts";
 
 const execute = promisify(execFile);
-const binaries = ["/usr/local/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"];
+const binaries = ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"];
 export const tailAddress = (s: string) => /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.(?:\d{1,3})\.(?:\d{1,3})$/.test(s)
   && s.split(".").every(n => Number(n) <= 255);
 export const tailName = (s: string) => s.length <= 253
@@ -55,14 +55,19 @@ export async function tailscaleOwnAddress(exec: RunTail = run): Promise<string |
   return null;
 }
 export async function tailscaleNetwork(exec: RunTail = run): Promise<TailNetwork | null> {
+  let stopped = false;
   for (const cli of binaries) {
     try {
-      const status = tailStatus(await exec(cli, ["status", "--json"]));
+      const raw = await exec(cli, ["status", "--json"]);
+      // A stopped Tailscale still reports its last address, which nothing can reach until it runs again.
+      if (JSON.parse(raw)?.BackendState !== "Running") { stopped = true; continue; }
+      const status = tailStatus(raw);
       const address = status.address ?? (await exec(cli, ["ip", "-4"])).trim();
       if (tailAddress(address)) return { address, hostname: status.hostname, cli, tailscale: true,
         name: "Tailscale · works away from home" };
     } catch { /* The other supported installation may own the CLI. */ }
   }
+  if (stopped) return null;
   for (const rows of Object.values(networkInterfaces())) {
     const ip = rows?.find(r => r.family === "IPv4" && tailAddress(r.address));
     if (ip) return { address: ip.address, name: "Tailscale · works away from home", tailscale: true };

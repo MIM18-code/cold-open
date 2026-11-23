@@ -44,6 +44,15 @@ test("Tailscale discovery validates MagicDNS and CGNAT and never interpolates a 
   assert.equal(network?.hostname, "mac.tail123.ts.net");
   assert.equal(network?.address, "100.114.165.59");
   assert.deepEqual(calls.map(c => c.slice(1)), [["status", "--json"], ["ip", "-4"]]);
+  // Installed but stopped: the CLI still prints its last address, which no iPhone can reach.
+  const stopped: string[][] = [];
+  assert.equal(await tailscaleNetwork(async (file, args) => {
+    stopped.push([file, ...args]);
+    if (args[0] === "status") return JSON.stringify({ BackendState: "Stopped", Self: { DNSName: "mac.tail123.ts.net." } });
+    return "100.114.165.59\n";
+  }), null);
+  assert.ok(stopped.some(c => c[0] === "/opt/homebrew/bin/tailscale"), "a Homebrew CLI is found too");
+  assert.ok(!stopped.some(c => c[1] === "ip"));
   assert.deepEqual(await tailscaleCheck(async () => JSON.stringify({ BackendState: "Running",
     CurrentTailnet: { MagicDNSEnabled: true }, CertDomains: ["mac.tail123.ts.net"] })),
   { installed: true, running: true, magicDns: true, https: true });

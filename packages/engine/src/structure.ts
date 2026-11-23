@@ -110,16 +110,24 @@ function movedOrder(count: number, ranges: readonly [number, number][], anchor: 
 function moveRanges(doc: ScreenplayDoc, paragraphs: readonly Paragraph[], ranges: [number, number][], anchor: number): boolean {
   if (ranges.some(([start, end]) => anchor > start && anchor < end)) return false;
   if (movedOrder(paragraphs.length, ranges, anchor).every((value, index) => value === index)) return false;
-  const markers = markerOffsets(doc, paragraphs);
-  const total = doc.body.length;
-  const at = (index: number) => (index < paragraphs.length ? markers[index]! : total);
-  const delta = doc.body.toDelta() as DeltaOp[];
-  const slices = ranges.map(([start, end]) => sliceDelta(delta, at(start), at(end)));
-  let target = at(anchor);
   doc.ydoc.transact(transaction => {
     const before = Y.createDeleteSet();
     for (const [client, spans] of transaction.deleteSet.clients) before.clients.set(client, spans.map(span => ({ clock: span.clock, len: span.len })));
     const sv = btoa(Array.from(Y.encodeStateVector(doc.ydoc), byte => String.fromCharCode(byte)).join(""));
+    // Text before the first line break belongs to the first paragraph (lead() in doc.ts). When that paragraph moves,
+    // or something lands above it, put the text after its line break first so it goes with it.
+    const lead = doc.lead();
+    if (lead && (ranges[0]![0] === 0 || anchor === 0)) {
+      const text = sliceDelta(doc.body.toDelta() as DeltaOp[], 0, lead);
+      doc.body.delete(0, lead);
+      doc.body.applyDelta([{ retain: 1 }, ...text]);
+    }
+    const markers = markerOffsets(doc, paragraphs);
+    const total = doc.body.length;
+    const at = (index: number) => (index < paragraphs.length ? markers[index]! : total);
+    const delta = doc.body.toDelta() as DeltaOp[];
+    const slices = ranges.map(([start, end]) => sliceDelta(delta, at(start), at(end)));
+    let target = at(anchor);
     for (let i = ranges.length - 1; i >= 0; i--) {
       const [start, end] = ranges[i]!;
       const from = at(start), length = at(end) - from;

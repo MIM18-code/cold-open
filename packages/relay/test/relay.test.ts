@@ -462,3 +462,39 @@ test("a reader still receiving a script larger than the unread limit is kept whi
     socket.destroy();
   }
 });
+
+test("a reader that sends presence without reading the echoes is dropped", async () => {
+  const { relay } = await startRelay();
+  const { room, readKey } = relay.createRoom();
+  const socket = tcpConnect(relay.port, "127.0.0.1", () => {
+    socket.write(`GET /${room}?key=${readKey} HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n` +
+      "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n");
+  });
+  socket.on("error", () => undefined);
+  try {
+    await new Promise<void>(resolve => socket.once("data", () => resolve()));
+    socket.pause();
+    assert.equal(relay.stats().connections, 1);
+    const state = JSON.stringify({ blob: "x".repeat(60_000) });
+    // The relay echoes every presence change to everyone, the sender included, so these pile up unread.
+    for (let clock = 1; clock <= 1000 && relay.stats().connections === 1; clock++) {
+      const update = encoding.createEncoder();
+      encoding.writeVarUint(update, 1);
+      encoding.writeVarUint(update, 4242);
+      encoding.writeVarUint(update, clock);
+      encoding.writeVarString(update, state);
+      const message = encoding.createEncoder();
+      encoding.writeVarUint(message, MESSAGE_AWARENESS);
+      encoding.writeVarUint8Array(message, encoding.toUint8Array(update));
+      const payload = encoding.toUint8Array(message);
+      // A masked binary frame with a 16-bit length and an all-zero mask.
+      const header = Buffer.from([0x82, 0x80 | 126, payload.length >> 8, payload.length & 0xff, 0, 0, 0, 0]);
+      socket.write(Buffer.concat([header, payload]));
+      // Not "drain": the relay may drop this socket while the write is still queued, and drain would never come.
+      while (socket.writableLength > 1_000_000 && relay.stats().connections === 1) await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    await waitFor(() => relay.stats().connections === 0, "the unread peer is dropped");
+  } finally {
+    socket.destroy();
+  }
+});

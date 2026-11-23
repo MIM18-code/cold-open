@@ -58,3 +58,26 @@ test("settings:set refuses keys that are not strings, and main-owned prefixes", 
   set("editor.zoom", 2);
   assert.equal(settings.get("editor.zoom"), 2);
 });
+
+test("a value that cannot be saved changes nothing and does not block later settings", () => {
+  const dir = mkdtempSync(join(tmpdir(), "settings-"));
+  const settings = new Settings(join(dir, "settings.json"));
+  const heard: string[] = [];
+  settings.onChange((key) => heard.push(key));
+  settings.set("a", 1);
+  const cycle: Record<string, unknown> = {};
+  cycle.self = cycle;
+  // Structured clone carries both of these over IPC; JSON holds neither.
+  assert.throws(() => settings.set("ai.x", 10n));
+  assert.throws(() => settings.set("c", cycle));
+  assert.equal(settings.get("ai.x"), undefined);
+  settings.set("b", 2);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")), { a: 1, b: 2 });
+  assert.deepEqual(heard, ["a", "b"]);
+
+  // A write that fails leaves memory as it was on disk.
+  writeFileSync(join(dir, "blocker"), "");
+  const unwritable = new Settings(join(dir, "blocker", "settings.json"));
+  assert.throws(() => unwritable.set("a", 1));
+  assert.equal(unwritable.get("a"), undefined);
+});

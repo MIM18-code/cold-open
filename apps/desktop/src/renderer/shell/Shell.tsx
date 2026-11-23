@@ -220,7 +220,17 @@ function useDialogFocus(ref: RefObject<HTMLDivElement | null>, open: boolean, cl
       else if (!event.shiftKey && (document.activeElement === last || !ref.current?.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
     };
     window.addEventListener("keydown", onKey, true);
-    return () => { cancelAnimationFrame(frame); window.removeEventListener("keydown", onKey, true); requestAnimationFrame(() => { if (previous?.isConnected && !previous.closest('[inert]')) previous.focus(); }); };
+    const dialog = ref.current;
+    return () => {
+      cancelAnimationFrame(frame); window.removeEventListener("keydown", onKey, true);
+      requestAnimationFrame(() => {
+        // Put focus back only if it fell out with the dialog. A command run from the dialog (Find from the palette)
+        // may already have focused its own field, and pulling focus back would send typing into the script.
+        const now = document.activeElement;
+        if (now && now !== document.body && !dialog?.contains(now)) return;
+        if (previous?.isConnected && !previous.closest('[inert]')) previous.focus();
+      });
+    };
   }, [open, ref]);
 }
 

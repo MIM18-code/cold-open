@@ -8,6 +8,7 @@ public final class LocalSpeechModule: Module {
   private var task: SFSpeechRecognitionTask?
   private var generation = 0
   private var sessionActive = false
+  private var interruption: NSObjectProtocol?
 
   public func definition() -> ModuleDefinition {
     Name("InklotLocalSpeech")
@@ -64,6 +65,16 @@ public final class LocalSpeechModule: Module {
     node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in request.append(buffer) }
     do { try engine.start() } catch { reset(); throw error }
     let id = generation
+    // A phone call or Siri takes the microphone without failing the recognizer, so the take would sit on Stop
+    // capturing nothing. End it the way a finished take ends; the words heard so far stay in the note.
+    interruption = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification,
+                                                          object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] note in
+      guard let self, id == self.generation,
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+            AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+      self.sendEvent("ended", ["error": ""])
+      self.reset()
+    }
     task = recognizer.recognitionTask(with: request) { [weak self] result, error in
       DispatchQueue.main.async {
         guard let self, id == self.generation else { return }
@@ -101,6 +112,10 @@ public final class LocalSpeechModule: Module {
 
   private func reset() {
     generation += 1
+    if let interruption {
+      NotificationCenter.default.removeObserver(interruption)
+      self.interruption = nil
+    }
     finish()
     task?.cancel()
     if sessionActive {

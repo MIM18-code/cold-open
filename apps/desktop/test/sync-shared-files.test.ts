@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 
 import { PathGrants } from "../src/main/grants.ts";
-import { UnsafeFileError, appendRegular, readChosenFile, readRegular, replaceFile, writeNewFile } from "../src/main/safe-fs.ts";
+import { UnsafeFileError, appendRegular, openForRead, readChosenFile, readRegular, replaceFile, writeNewFile } from "../src/main/safe-fs.ts";
 
 const temp = mkdtempSync(join(tmpdir(), "screenplay-shared-files-"));
 after(() => rmSync(temp, { recursive: true, force: true }));
@@ -124,6 +124,17 @@ test("reads refuse FIFOs at once, and the no-follow helpers refuse links", async
   assert.equal(readFileSync(secret, "utf8"), "SECRET PAGES");
   assert.equal(await readRegular(join(shared, "missing.ylog")), null);
   assert.equal(await appendRegular(join(shared, "missing.ylog"), new Uint8Array([1])), false);
+});
+
+test("a capped read refuses a file that grew past its limit after its size was checked", async () => {
+  const { draft } = layout();
+  const opened = (await openForRead(draft))!;
+  assert.ok(opened.info.size <= 12);
+  writeFileSync(draft, "x".repeat(1000), { flag: "a" });
+  await assert.rejects(opened.read(12), /size limit/);
+  await opened.close();
+  await assert.rejects(readChosenFile(draft, 12), /size limit/);
+  assert.equal(new TextDecoder().decode(await readChosenFile(draft, 2000)).slice(0, 12), "SHARED PAGES");
 });
 
 test("search read grants cannot write until opened and reject a swapped link", () => {

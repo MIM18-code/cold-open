@@ -136,6 +136,19 @@ try {
   await page.keyboard.press("Meta+3");
   assert.equal(await page.evaluate(() => window.__app.session.doc.paragraph("rough").type), "action");
   await page.keyboard.press("Escape"); check("element shortcuts do not change the script while typing in Find");
+  // Find run from the palette keeps its field focused; the palette's focus restore on close must not pull focus
+  // back to the script after Find has taken it.
+  await load();
+  await page.keyboard.press("Meta+k"); await page.locator(".palette input").waitFor();
+  await page.keyboard.type("Edit Find…"); await page.keyboard.press("Enter");
+  const paletteFind = page.getByRole("textbox", { name: "Find", exact: true });
+  await expect(paletteFind).toBeFocused();
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await expect(paletteFind).toBeFocused();
+  await page.keyboard.type("zzz");
+  assert.ok((await paletteFind.inputValue()).endsWith("zzz"));
+  assert.equal((await rows()).some((r) => r[1].includes("zzz")), false);
+  await page.keyboard.press("Escape"); check("Find chosen from the command palette keeps focus and typing stays out of the script");
   await page.evaluate(() => { window.__app.editor.setSelection({ paragraphId: "speech", offset: 7 }); window.__app.editor.focus(); });
   await page.getByRole("button", { name: "Plan", exact: false }).click();
   await page.getByRole("menuitemradio", { name: /Cards/ }).click();
@@ -153,7 +166,8 @@ try {
   assert.equal(await page.evaluate(() => !!document.activeElement.closest('[role="dialog"]')), true);
   await page.keyboard.press("Escape"); check("searchable shortcut reference traps keyboard focus");
   await page.getByRole("button", { name: /^Commands/ }).click();
-  assert.ok(await page.getByRole("option").count() > 40);
+  // The palette clears the last query in an effect after it opens, so wait for the full list.
+  await expect.poll(() => page.getByRole("option").count()).toBeGreaterThan(40);
   for (let i = 0; i < 45; i++) await page.keyboard.press("ArrowDown");
   const selected = page.locator('.palette [role="option"][aria-selected="true"]');
   assert.equal(await selected.count(), 1); assert.equal(await selected.isVisible(), true);

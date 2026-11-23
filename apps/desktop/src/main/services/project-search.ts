@@ -49,7 +49,7 @@ export function register(ctx: ServiceContext): void {
                     try {
                         if (opened.info.size > 8000000)
                             throw new Error("File exceeds 8 MB search limit.");
-                        data = await opened.read();
+                        data = await opened.read(8000000);
                     }
                     finally {
                         await opened.close();

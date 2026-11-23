@@ -3,7 +3,7 @@ import test from "node:test";
 import { formatInvite } from "@screenplay/relay/protocol";
 import { decodePairing } from "../src/pairing.ts";
 import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
-import { sendPending, folderItem, validateTakeSize, type Take, type Outcome } from "../src/outbox.ts";
+import { sendPending, folderItem, validateTakeSize, REQUEST_TIMEOUT, type Take, type Outcome } from "../src/outbox.ts";
 import { readerAnchor } from "../src/reader-anchor.ts";
 const now = Date.now();
 function payload(host: string, secure = true, remembered = true) {
@@ -52,6 +52,38 @@ test("rejected items are terminal and cannot starve later batches; transient cap
   const pending = { ...take };
   await assert.rejects(sendPending(pair, [pending], new AbortController().signal, update), /Inbox full/);
   assert.equal(pending.outcome, "pending");
+});
+
+test("a scene suggestion the Mac refuses as unsigned is rejected alone and later takes still go", async t => {
+  const items = ["receipt-bad-12345", "receipt-good-1234"].map((id, i) => ({ ...take, id, created: now + i }));
+  t.mock.method(globalThis, "fetch", async (_url: string, options: RequestInit) => {
+    const body = JSON.parse(options.body as string);
+    return body.id === "receipt-bad-12345" ? Response.json({ error: "Invalid scene suggestion signature." }, { status: 403 })
+      : Response.json({ id: body.id });
+  });
+  const seen: [string, Outcome][] = [];
+  await sendPending(pair, items, new AbortController().signal, (id, state) => { seen.push([id, state]); });
+  assert.deepEqual(new Map(seen), new Map([["receipt-bad-12345", "rejected"], ["receipt-good-1234", "delivered"]]));
+});
+
+test("each request has its own time limit, so slow deliveries do not use up the later ones' time", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const items = [0, 1, 2].map(i => ({ ...take, id: `receipt-slow-${i}000000`, created: now + i }));
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", (_url: string, options: RequestInit) => new Promise((done, fail) => {
+    const body = JSON.parse(options.body as string);
+    options.signal!.addEventListener("abort", () => fail(new Error("Aborted")));
+    // Two slow answers, then a Mac that never answers.
+    if (calls++ < 2) setTimeout(() => done(Response.json({ id: body.id })), REQUEST_TIMEOUT - 2000);
+  }));
+  const states: Outcome[] = [];
+  const sending = sendPending(pair, items, new AbortController().signal, (_, state) => { states.push(state); });
+  let failure: unknown;
+  sending.catch(e => { failure = e; });
+  for (let s = 0; s < 40 && !failure; s++) { await new Promise(r => setImmediate(r)); t.mock.timers.tick(1000); }
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual(states, ["delivered", "delivered"]);
+  assert.match(String(failure), /Aborted/, "the request that never answers stops after its own limit");
 });
 
 test("size limit measures UTF-8 JSON bytes including anchors, escapes and CJK; folder items keep the same receipt", async () => {

@@ -108,6 +108,24 @@ test("validate catches duplicate IDs written by a buggy peer", () => {
   assert.match(doc.validate().join("\n"), /repeats ID/);
 });
 
+test("a heading given another heading's scene ID gets a new one by itself", () => {
+  const source = () => ({ titlePage: [], paragraphs: [
+    { id: "h1", type: "sceneHeading" as const, sceneId: "h1", runs: [{ text: "INT. A - DAY" }] },
+    { id: "a1", type: "action" as const, runs: [{ text: "x" }] },
+    { id: "h2", type: "sceneHeading" as const, sceneId: "h2", runs: [{ text: "INT. B - DAY" }] },
+    { id: "a2", type: "action" as const, sceneId: "h1", runs: [{ text: "y" }] },
+  ] });
+  let doc = ScreenplayDoc.fromScript(source());
+  doc.paragraphs();
+  doc.setField("h2", "sceneId", "h1");
+  assert.deepEqual(doc.validate(), []);
+  // An action that kept a scene ID from an earlier life becomes a heading.
+  doc = ScreenplayDoc.fromScript(source());
+  doc.paragraphs();
+  doc.setType("a2", "sceneHeading");
+  assert.deepEqual(doc.validate(), []);
+});
+
 test("a repeated paragraph ID gets a new ID by itself, and both copies keep their text", () => {
   const ydoc = new Y.Doc();
   ydoc.clientID = 7;
@@ -514,4 +532,17 @@ test("peers that give a lost type back at the same time agree", () => {
   sync();
   assert.deepEqual(a.toScript(), b.toScript());
   assert.deepEqual(a.validate(), []);
+});
+
+test("moving the first scene, or a scene above it, keeps text before its line break with it", () => {
+  const source = "INT. A - DAY\n\nOne.\n\nINT. B - DAY\n\nTwo.\n";
+  const texts = (doc: ScreenplayDoc) => doc.paragraphs().map((p) => plainText(p.runs));
+  let { doc, ids } = withLead(source, "BIG ");
+  moveScene(doc, ids[0]!, null);
+  assert.deepEqual(texts(doc), ["INT. B - DAY", "Two.", "BIG INT. A - DAY", "One."]);
+  assert.deepEqual(doc.validate(), []);
+  ({ doc, ids } = withLead(source, "BIG "));
+  moveScene(doc, ids[2]!, ids[0]!);
+  assert.deepEqual(texts(doc), ["INT. B - DAY", "Two.", "BIG INT. A - DAY", "One."]);
+  assert.deepEqual(doc.validate(), []);
 });

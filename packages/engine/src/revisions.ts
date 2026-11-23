@@ -853,9 +853,10 @@ export const OMITTED = "OMITTED";
  * paragraphs whole, synopses, notes and every field included, in an OmittedScene element; FDX export writes them
  * as Final Draft's OmittedScene paragraphs, and Restore Omitted Scene (unomitScene) puts them back.
  */
-export function omittedHeading(number: string, sceneId: string, paragraphs: readonly Paragraph[]): Omit<Paragraph, "id"> {
+export function omittedHeading(number: string | undefined, sceneId: string, paragraphs: readonly Paragraph[]): Omit<Paragraph, "id"> {
   return {
-    type: "sceneHeading", runs: [{ text: OMITTED }], sceneNumber: number, sceneId,
+    // An unnumbered scene stays unnumbered: a blank number would read as the number before the next locked one.
+    type: "sceneHeading", runs: [{ text: OMITTED }], ...(number ? { sceneNumber: number } : {}), sceneId,
     fdx: { after: [{ name: "OmittedScene", attrs: [[OMITTED_NATIVE_ATTR, JSON.stringify(paragraphs)]], children: [] }] },
   };
 }
@@ -897,8 +898,11 @@ export function omitScene(doc: ScreenplayDoc, sceneId: string): void {
   if (isOmitted(heading)) return;
   const removed = paragraphs.slice(block.start, block.end);
   doc.ydoc.transact(() => {
+    // Text before the first line break is part of the first paragraph (lead() in doc.ts), so the OMITTED copy keeps
+    // it. Deleting the paragraph leaves it behind for the next one, which would duplicate it.
+    if (block.start === 0 && doc.lead()) doc.body.delete(0, doc.lead());
     for (const paragraph of removed) doc.deleteParagraph(paragraph.id);
-    doc.insertParagraph(block.start, omittedHeading(heading.sceneNumber ?? "", sceneId, removed));
+    doc.insertParagraph(block.start, omittedHeading(heading.sceneNumber, sceneId, removed));
   });
 }
 

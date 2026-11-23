@@ -8,7 +8,7 @@ export async function readBounded(path: string, max: number): Promise<string> { 
     throw new Error("Required local file is missing."); try {
     if (opened.info.size > max)
         throw new Error("Local file exceeds the allowed size.");
-    return new TextDecoder().decode(await opened.read());
+    return new TextDecoder().decode(await opened.read(max));
 }
 finally {
     await opened.close();

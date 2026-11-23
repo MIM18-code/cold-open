@@ -4,7 +4,8 @@ import { formatInvite, parseInvite } from "@screenplay/relay/protocol";
 import { decodePairing } from "../src/pairing.ts";
 import { nodeLinkCrypto } from "@screenplay/relay/sealed-node";
 import { contentHash } from "../src/signing.ts";
-import { outcomes, syncReceipts, deliver, type Take } from "../src/outbox.ts";
+import { outcomes, syncReceipts, deliver, REQUEST_TIMEOUT, type Take } from "../src/outbox.ts";
+import { ReplayGuard, answerSealed } from "@screenplay/relay/sealed";
 import { readPresence } from "../src/live.ts";
 import { takesFile } from "../src/takes-file.ts";
 
@@ -162,4 +163,26 @@ test("a pairing saved before Wi-Fi links were encrypted never sends its token", 
   const { connect } = await import("../src/live.ts");
   assert.throws(() => connect(old, () => {}, () => {}, () => {}), /not encrypted/);
   assert.equal(calls, 0);
+});
+
+test("the first Wi-Fi call's two HTTP requests each get the full time limit", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const sealed = decodePairing(JSON.stringify(wifi), nodeLinkCrypto, now);
+  const guard = new ReplayGuard(nodeLinkCrypto);
+  let posts = 0;
+  // The first request learns the Mac's run ID (425), the second is the real one; each answer takes 7 s.
+  t.mock.method(globalThis, "fetch", (_url: string, options: RequestInit) => new Promise((done, fail) => {
+    posts++;
+    options.signal!.addEventListener("abort", () => fail(new Error("Aborted")));
+    setTimeout(() => void answerSealed(sealed.link!, guard, String(options.body),
+      async request => ({ status: 200, body: { id: (request.b as { id: string }).id } })).then(text => done(new Response(text))),
+    REQUEST_TIMEOUT - 5000);
+  }));
+  const item: Take = { id: "test-receipt-123", room: sealed.invite.room, kind: "note", text: "Prop.",
+    paragraphId: "p", sourceText: "", scene: "Scene 1", created: now, outcome: "pending" };
+  let outcome: unknown = "waiting";
+  deliver(sealed, item, new AbortController().signal).then(() => { outcome = "delivered"; }, e => { outcome = e; });
+  for (let s = 0; s < 30 && outcome === "waiting"; s++) { await new Promise(r => setImmediate(r)); t.mock.timers.tick(1000); }
+  assert.equal(posts, 2);
+  assert.equal(outcome, "delivered");
 });

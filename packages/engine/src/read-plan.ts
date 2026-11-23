@@ -22,8 +22,8 @@ export function speechChunks(text: string, limit = 900): string[] {
     const boundaries = [...prefix.matchAll(/[.!?;]\s+|\n+/g)].map((m) => m.index! + m[0].length);
     let at = boundaries.filter((i) => i <= limit && i >= limit / 3).at(-1) ?? prefix.lastIndexOf(" ", limit);
     if (at < 1) at = limit;
-    // Do not split a UTF-16 surrogate pair.
-    if (/[\uD800-\uDBFF]/.test(rest[at - 1]!)) at--;
+    // Do not split a UTF-16 surrogate pair. Moving back from 1 would leave an empty chunk and loop forever, so move forward.
+    if (/[\uD800-\uDBFF]/.test(rest[at - 1]!)) at = at > 1 ? at - 1 : at + 1;
     result.push(rest.slice(0, at).trim()); rest = rest.slice(at).trim();
   }
   if (rest) result.push(rest);

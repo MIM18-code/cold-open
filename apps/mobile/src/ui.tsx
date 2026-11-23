@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import { Pressable, Text, View, PlatformColor, type TextProps } from "react-native";
 import { SymbolView, type SymbolViewProps } from "expo-symbols";
+import { pairingEnded } from "./reach";
 
 export const c = {
   ink: PlatformColor("label"), sub: PlatformColor("secondaryLabel"), accent: PlatformColor("systemBlue"),
@@ -59,8 +60,7 @@ export function NavBar({ title, leading, trailing }: {
 }
 /** A small coloured dot that says at a glance whether the link to the Mac is up. */
 export function StatusDot({ status }: { status: string }) {
-  const color = status === "Live" ? c.green : ["Refused", "Pairing expired", "Host stopped sharing"].includes(status)
-    ? c.danger : c.orange;
+  const color = status === "Live" ? c.green : pairingEnded(status) ? c.danger : c.orange;
   return <View accessible={false} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />;
 }
 export function Warning({ legacy }: { legacy: boolean }) {

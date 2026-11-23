@@ -33,7 +33,7 @@ export function fullUserName(): Promise<string> {
   };
   if (process.platform !== "darwin") return Promise.resolve(fallback());
   return new Promise((resolve) => {
-    execFile("id", ["-F"], { timeout: 2000 }, (error, stdout) => resolve(!error && stdout.trim() ? stdout.trim() : fallback()));
+    execFile("/usr/bin/id", ["-F"], { timeout: 2000 }, (error, stdout) => resolve(!error && stdout.trim() ? stdout.trim() : fallback()));
   });
 }
 

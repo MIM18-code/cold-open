@@ -28,16 +28,33 @@ export interface SpeechEngine {
 
 export type HelperEngine = "parakeet" | "apple" | "whisper";
 
+export interface SpeechHelperOptions {
+  /** How long one call may wait for an answer before the helper is stopped. */
+  timeoutMs?: number;
+  /** How long close() waits for the helper to exit before killing it. */
+  closeMs?: number;
+}
+
+// A desktop take is at most five minutes, and a first prepare may compile a Core ML model. Whisper on a slow Mac
+// takes a few minutes for a long take; ten is past that, and short enough that a hung helper is noticed.
+const CALL_TIMEOUT_MS = 10 * 60_000;
+const CLOSE_GRACE_MS = 2000;
+
 /** One long-lived `speech-helper serve` process; each engine stays loaded once prepared. */
 export class SpeechHelper {
   private child?: ChildProcessWithoutNullStreams;
   private next = 1;
-  private readonly pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  /** Calls waiting for an answer, with the process each was sent to: a stopped helper fails only its own calls. */
+  private readonly pending = new Map<number, { child: ChildProcessWithoutNullStreams; resolve: (value: any) => void; reject: (error: Error) => void }>();
 
   private readonly binary: string;
+  private readonly timeoutMs: number;
+  private readonly closeMs: number;
 
-  constructor(binary: string) {
+  constructor(binary: string, options: SpeechHelperOptions = {}) {
     this.binary = binary;
+    this.timeoutMs = options.timeoutMs ?? CALL_TIMEOUT_MS;
+    this.closeMs = options.closeMs ?? CLOSE_GRACE_MS;
   }
 
   private start(): ChildProcessWithoutNullStreams {
@@ -58,13 +75,14 @@ export class SpeechHelper {
     });
     const fail = (error: Error) => {
       if (this.child === child) this.child = undefined;
-      for (const waiter of this.pending.values()) waiter.reject(error);
-      this.pending.clear();
+      this.rejectCalls(child, error);
     };
     // A missing binary arrives as "error", not "exit"; unhandled, it would crash the app.
     child.on("error", (error) => fail(new Error(`Speech helper could not start: ${error.message}`)));
     child.on("exit", (code) => fail(new Error(`Speech helper exited (${code}).`)));
     child.stdin.on("error", () => {});
+    // Diagnostics are not read, but a full stderr pipe would stall the helper mid-transcription.
+    child.stderr.resume();
     this.child = child;
     return child;
   }
@@ -73,7 +91,20 @@ export class SpeechHelper {
     const child = this.start();
     const id = this.next++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return;
+        this.pending.delete(id);
+        reject(new Error(`The speech helper did not answer in ${Math.round(this.timeoutMs / 60_000) || 1} minutes, so it was stopped. Try again.`));
+        // A helper that stopped answering one call will not answer the next: start a fresh one then.
+        if (this.child === child) this.child = undefined;
+        child.kill("SIGKILL");
+      }, this.timeoutMs);
+      timer.unref?.();
+      this.pending.set(id, {
+        child,
+        resolve: (value) => { clearTimeout(timer); resolve(value); },
+        reject: (error) => { clearTimeout(timer); reject(error); },
+      });
       child.stdin.write(JSON.stringify({ id, op, engine, ...extra }) + "\n");
     });
   }
@@ -88,7 +119,35 @@ export class SpeechHelper {
     };
   }
 
-  close(): void {
-    this.child?.stdin.end();
+  private rejectCalls(child: ChildProcessWithoutNullStreams, error: Error): void {
+    for (const [id, waiter] of this.pending) {
+      if (waiter.child !== child) continue;
+      this.pending.delete(id);
+      waiter.reject(error);
+    }
+  }
+
+  /**
+   * Ask the helper to exit, kill it if it does not, and fail any call still waiting. Settles once the helper is
+   * gone, so quitting can wait for it instead of leaving a hung helper running.
+   */
+  close(): Promise<void> {
+    const child = this.child;
+    if (!child) return Promise.resolve();
+    this.child = undefined;
+    this.rejectCalls(child, new Error("The speech helper was closed."));
+    if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => child.kill("SIGKILL"), this.closeMs);
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      // A helper that never started (its binary is missing) reports "error" and "close" but never "exit".
+      child.once("exit", done);
+      child.once("close", done);
+      child.once("error", done);
+      child.stdin.end();
+    });
   }
 }

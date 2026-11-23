@@ -27,6 +27,12 @@ test("large paragraphs are bounded without losing words or splitting surrogate p
   assert(chunks.every((s) => s.length <= 100)); assert.equal(chunks.join(" "), text);
   assert.throws(() => speechChunks(text, 3));
 });
+test("a lone high surrogate before the only space still makes progress", () => {
+  const text = "\uD800 " + "a".repeat(900);
+  const chunks = speechChunks(text);
+  assert(chunks.every((s) => s.length > 0));
+  assert.equal(chunks.join(" "), text);
+});
 test("dual-dialogue metadata survives a deterministic sequential read plan", () => {
   const source = { ...script, paragraphs: script.paragraphs.map((p) => p.id === "e" ? { ...p, dual: { block: "pair", side: 1 as const } } : p) };
   assert.equal(compileReadPlan(source).find((c) => c.id.startsWith("e:"))?.dual, "pair");

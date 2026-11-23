@@ -180,7 +180,8 @@ export class ChatgptOAuth {
   /** Why a saved connection could not be unlocked. Status reports it instead of asking the keychain again; signing in or out retries. */
   private locked: string | undefined;
   private pending: AbortController | undefined;
-  private refreshing: { profile: Profile; promise: Promise<string> } | undefined;
+  /** Renewals in flight, by account: switching away and back must join the one running, not send its refresh token twice. */
+  private readonly refreshing = new Map<string, Promise<string>>();
   private session = new AbortController();
   /** Renewals have their own lifetime, so sign-out can stop inference at once and still let one settle. */
   private renewal = new AbortController();
@@ -430,13 +431,15 @@ export class ChatgptOAuth {
     if (!tokens.refresh) { this.invalidate(); throw new AiError("unauthorized", "ChatGPT credentials expired. Sign in again."); }
     // One rotating refresh per account. A cancelled caller does not cancel another caller's renewal.
     const refreshSignal = AbortSignal.any([this.renewal.signal, AbortSignal.timeout(15_000)]);
-    if (this.refreshing?.profile.id !== profile!.id) {
+    let renewing = this.refreshing.get(profile!.id);
+    if (!renewing) {
       const promise = this.refresh(profile!, refreshSignal).finally(() => {
-        if (this.refreshing?.promise === promise) this.refreshing = undefined;
+        if (this.refreshing.get(profile!.id) === promise) this.refreshing.delete(profile!.id);
       });
-      this.refreshing = { profile: profile!, promise };
+      this.refreshing.set(profile!.id, promise);
+      renewing = promise;
     }
-    const result = await untilAborted(this.refreshing!.promise, signal);
+    const result = await untilAborted(renewing, signal);
     signal.throwIfAborted();
     return { token: result, profileId: profile!.id };
   }
@@ -503,6 +506,15 @@ export class ChatgptOAuth {
   async signOut(): Promise<void> {
     if (this.signingOut) return;
     this.signingOut = true;
+    // Reset however this ends: a keychain read or save that throws must not leave every account action refused.
+    try {
+      await this.signOutNow();
+    } finally {
+      this.signingOut = false;
+    }
+  }
+
+  private async signOutNow(): Promise<void> {
     this.locked = undefined;
     this.pending?.abort();
     // OpenAI says to stop requests first, so inference ends now; only a renewal is allowed to settle.
@@ -512,7 +524,9 @@ export class ChatgptOAuth {
     // A renewal that failed without an answer may still have rotated the token server-side; its replacement can't be
     // revoked from here, so revocation is reported as unconfirmed whatever happens to the old token.
     let renewalLost = false;
-    await this.refreshing?.promise.catch((error) => { renewalLost = !(error instanceof AiError && error.code === "unauthorized"); });
+    await Promise.all([...this.refreshing.values()].map((promise) => promise.catch((error) => {
+      if (!(error instanceof AiError && error.code === "unauthorized")) renewalLost = true;
+    })));
     this.endRequests();
     const profile = this.active(), tokens = profile?.tokens;
     let confirmed = !renewalLost;
@@ -543,9 +557,8 @@ export class ChatgptOAuth {
       }
     } catch { confirmed = false; }
     finally {
-      if (profile) { delete profile.tokens; profile.paused = false; this.renewedAfter401.delete(profile.id); this.save(); }
       this.note = confirmed ? undefined : "Signed out on this Mac. Remote revocation was not confirmed; disconnect Cold Open in ChatGPT Settings.";
-      this.signingOut = false;
+      if (profile) { delete profile.tokens; profile.paused = false; this.renewedAfter401.delete(profile.id); this.save(); }
     }
   }
 

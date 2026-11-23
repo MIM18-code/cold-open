@@ -25,7 +25,8 @@ function allowOwnMicrophone(): void {
 }
 
 function applyMicrophonePolicy(): void {
-  const devUrl = process.env.SCREENPLAY_DEV_URL;
+  // Same rule as the window: a packaged app always shows its own file, whatever the launching program sets.
+  const devUrl = app.isPackaged ? undefined : process.env.SCREENPLAY_DEV_URL;
   const ownPage = join(import.meta.dirname, "../renderer/index.html");
   const isOwn = (url: string) => (devUrl ? url.startsWith(devUrl) : url.startsWith(pathToFileURL(ownPage).href));
   const audioOnly = (types?: readonly string[]) => !types || types.every((type) => type === "audio");
@@ -62,7 +63,7 @@ export function register(ctx: ServiceContext): void {
   let runtime: Promise<DictationRuntime> | undefined;
   const load = () => (runtime ??= import("../dictation/runtime.ts").then(({ DictationRuntime }) => new DictationRuntime({
     settings: () => ctx.settings.all(),
-    lookup: { repoRoot: ctx.paths.repoRoot, env: process.env, resourcesPath: process.resourcesPath },
+    lookup: { repoRoot: ctx.paths.repoRoot, env: process.env, resourcesPath: process.resourcesPath, packaged: app.isPackaged },
   })));
   ctx.onQuit(async () => (await runtime)?.close());
 

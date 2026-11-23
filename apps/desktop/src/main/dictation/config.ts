@@ -26,19 +26,23 @@ export interface HelperLookup {
   env?: Record<string, string | undefined>;
   /** Electron's resources folder in a packaged app, where the helper ships beside the app. */
   resourcesPath?: string;
+  /** A packaged (signed) app runs only the helper it ships, so whoever launches the app cannot choose what it runs. */
+  packaged?: boolean;
   exists?: (path: string) => boolean;
 }
 
 /**
  * The helper to run. The one the writer chose is used as given, so a wrong one is reported instead of
- * silently replaced. Otherwise the app's own locations: the SCREENPLAY_SPEECH_HELPER variable, this
+ * silently replaced. Otherwise the app's own locations: the SCREENPLAY_SPEECH_HELPER variable (development only), this
  * checkout's build, the packaged app's resources, then the main checkout when this is a git worktree under it.
+ * A packaged app uses only its resources.
  */
 export function resolveHelperPath(granted: string, lookup: HelperLookup): string {
   if (granted) return granted;
+  if (lookup.packaged && lookup.resourcesPath) return join(lookup.resourcesPath, "speech-helper");
   const exists = lookup.exists ?? existsSync;
   const candidates = [
-    lookup.env?.SCREENPLAY_SPEECH_HELPER,
+    lookup.packaged ? undefined : lookup.env?.SCREENPLAY_SPEECH_HELPER,
     join(lookup.repoRoot, HELPER_RELATIVE),
     lookup.resourcesPath ? join(lookup.resourcesPath, "speech-helper") : undefined,
     ...(lookup.repoRoot.includes("/.claude/worktrees/") ? [join(lookup.repoRoot.split("/.claude/worktrees/")[0]!, HELPER_RELATIVE)] : []),

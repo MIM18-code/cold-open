@@ -14,6 +14,7 @@ import { tmpdir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+import { createServer as createHttpServer } from 'node:http';
 import { connect, createServer } from 'node:net';
 import { _electron as electron } from 'playwright';
 import { PDFDocument } from 'pdf-lib';
@@ -102,8 +103,8 @@ async function sealedChecks() {
   writeFileSync(hook, `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "");`);
   const app = start('sealed-profile', [`--inspect=${port}`], { ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: `--require=${hook}` });
   // A renderer process under this app means it started as the app and made its window.
-  const rendering = () => spawnSync('/bin/ps', ['-axo', 'ppid=,command='], { encoding: 'utf8' }).stdout.split('\n')
-    .some(line => line.trim().startsWith(`${app.child.pid} `) && line.includes('Helper (Renderer)'));
+  const rendering = (run = app) => spawnSync('/bin/ps', ['-axo', 'ppid=,command='], { encoding: 'utf8' }).stdout.split('\n')
+    .some(line => line.trim().startsWith(`${run.child.pid} `) && line.includes('Helper (Renderer)'));
   try {
     for (let i = 0; i < 120 && !app.exit && !rendering(); i++) await sleep(250);
     check(!app.exit && rendering(), `The sealed app did not open its window: ${app.describe()}`);
@@ -116,6 +117,24 @@ async function sealedChecks() {
     check(app.exit?.code === 0, `The sealed app did not quit cleanly: ${app.describe()}`);
   } finally { if (!app.exit) app.child.kill('SIGKILL'); }
   console.log('PASS sealed app has the release fuses, opens hidden, ignores ELECTRON_RUN_AS_NODE, NODE_OPTIONS and --inspect, quits cleanly');
+
+  // SCREENPLAY_DEV_URL is for `npm run dev`. If a packaged app honoured it, the launching program's page would get the
+  // service bridge and the microphone grant. Any request to this server, even for a favicon, fails the check.
+  const requests = [];
+  const devServer = createHttpServer((request, response) => { requests.push(request.url); response.end('<!doctype html><title>not Cold Open</title>'); });
+  await new Promise(done => devServer.listen(0, '127.0.0.1', done));
+  const devApp = start('dev-url-profile', [], { SCREENPLAY_DEV_URL: `http://127.0.0.1:${devServer.address().port}` });
+  try {
+    for (let i = 0; i < 120 && !devApp.exit && !rendering(devApp); i++) await sleep(250);
+    check(!devApp.exit && rendering(devApp), `The sealed app did not open its window with SCREENPLAY_DEV_URL set: ${devApp.describe()}`);
+    await sleep(3000);
+    check(!devApp.exit, `The sealed app quit on its own with SCREENPLAY_DEV_URL set: ${devApp.describe()}`);
+    assert.deepEqual(requests, [], 'The sealed app loaded SCREENPLAY_DEV_URL instead of its own page');
+    devApp.child.kill('SIGTERM');
+    await Promise.race([devApp.exited, sleep(15000)]);
+    check(devApp.exit?.code === 0, `The sealed app did not quit cleanly with SCREENPLAY_DEV_URL set: ${devApp.describe()}`);
+  } finally { if (!devApp.exit) devApp.child.kill('SIGKILL'); devServer.close(); }
+  console.log('PASS sealed app ignores SCREENPLAY_DEV_URL: the address it named got no request');
 
   // Chromium's own debugger switches reach the page, and no fuse covers them. The app must quit instead
   // (src/main/page-debugger.ts) without the debugger ever answering. Both launches are watched from the first
@@ -148,9 +167,9 @@ async function sealedChecks() {
 }
 
 async function main() {
-  const launch = (profile, path) => electron.launch({ executablePath: binary, args: [`--user-data-dir=${output(profile)}`, ...(path ? [path] : [])], env });
+  const launch = (profile, path, extraEnv = {}) => electron.launch({ executablePath: binary, args: [`--user-data-dir=${output(profile)}`, ...(path ? [path] : [])], env: { ...env, ...extraEnv } });
   let app;
-  const open = async (profile, path) => { app = await launch(profile, path); assert.equal(await app.evaluate(({ app }) => app.getVersion()), expectedVersion, 'Packaged app version differs from package.json'); const p = await app.firstWindow(); await p.locator('.editor-pm').waitFor(); return p; };
+  const open = async (profile, path, extraEnv) => { app = await launch(profile, path, extraEnv); assert.equal(await app.evaluate(({ app }) => app.getVersion()), expectedVersion, 'Packaged app version differs from package.json'); const p = await app.firstWindow(); await p.locator('.editor-pm').waitFor(); return p; };
   const close = async () => { if (app) { await app.close(); app = undefined; } };
   const command = async (p, name) => { await p.getByRole('button', { name: /^Commands/ }).click(); await p.getByText(name, { exact: false }).first().click(); };
   const saveDialog = async path => app.evaluate(({ dialog }, target) => { globalThis.__testSaveDialogCalls = 0; dialog.showSaveDialog = async () => { globalThis.__testSaveDialogCalls++; return target ? { canceled: false, filePath: target } : { canceled: true }; }; }, path);
@@ -271,6 +290,16 @@ async function main() {
     for (const piece of ['CAFÉ', 'Zoë', '李', 'Left voice.', 'Right voice.']) check(pdfText(unicodePdf).includes(piece), `Unicode PDF missing ${piece}`);
     await close();
     console.log('PASS multipage and CJK PDF text, with expected system-font confirmation supplied');
+
+    // A packaged app runs its own speech helper, never one the launching program names. The status call resolves the
+    // path without running it.
+    const planted = output('planted-speech-helper');
+    writeFileSync(planted, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    p = await open('helper-env-profile', undefined, { SCREENPLAY_SPEECH_HELPER: planted });
+    const status = await p.evaluate(() => window.desktop.invoke('dictation:status'));
+    assert.equal(status.helperPath, helper, 'The packaged app chose the speech helper named by SCREENPLAY_SPEECH_HELPER');
+    await close();
+    console.log('PASS packaged app ignores SCREENPLAY_SPEECH_HELPER');
     console.log('PASS packaged basic gate');
   } finally {
     // A failed assertion may leave an unsaved test document; quit only this test process.

@@ -87,7 +87,8 @@ test("AirDrop sends the oldest 100 and subsequent files reach every remaining ta
     assert.equal(unsentTakes(pair, takes).length, 205 - sent.length);
   }
   assert.equal(new Set(sent).size, 205);
-  assert.deepEqual(takesBatch(pair, takes), []);
+  assert.equal(takesBatch(pair, takes).length, 100, "a failed AirDrop can be sent again");
+  assert.equal(takesBatch(pair, takes)[0]!.created, now);
   assert.equal(waitingTakes(pair, takes).length, 205, "AirDrop still awaits the Mac's receipts.");
 });
 

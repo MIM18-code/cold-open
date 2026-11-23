@@ -1,5 +1,5 @@
 import { _electron as electron, expect, test } from "@playwright/test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -158,6 +158,149 @@ test("closing with unsaved changes asks, and Cancel keeps the window", async () 
     (globalThis as any).e2eMessageBox = () => 1;
   });
   await electronApp.close();
+});
+
+test("a save that fails while closing shows the error and the window can still close", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "screenplay-file-"));
+  const native = join(dir, "Kitchen.screenplay");
+  const { electronApp, page } = await launch();
+  const windows = () => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  try {
+    await page.evaluate(write);
+    await electronApp.evaluate(({ dialog }, path) => {
+      dialog.showSaveDialog = (async () => ({ canceled: false, filePath: path })) as any;
+    }, native);
+    await page.evaluate(() => (window as any).__app.runCommand("file.saveAs"));
+    await expect.poll(() => existsSync(native)).toBe(true);
+    // A read-only file in a read-only folder: the next save fails with EACCES.
+    chmodSync(native, 0o444); chmodSync(dir, 0o555);
+    await page.evaluate(() => {
+      const s = (window as any).__app.session;
+      s.edit(() => s.doc.insertText(s.doc.toScript().paragraphs[1].id, 0, "Later, "));
+    });
+    await electronApp.evaluate(() => { (globalThis as any).e2eMessageBox = () => 0; });
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+    await expect(page.locator(".toast.toast-error")).toHaveCount(1);
+    expect(await windows()).toBe(1);
+    // Don't Save on the next try closes the window instead of being ignored.
+    await electronApp.evaluate(() => { (globalThis as any).e2eMessageBox = () => 1; });
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+    await expect.poll(windows).toBe(0);
+  } finally {
+    chmodSync(dir, 0o755); chmodSync(native, 0o644);
+    // A window stuck in a close request would also stop the app from quitting.
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy()));
+    await electronApp.close();
+  }
+});
+
+test("a window whose renderer crashed during a close request can close after it reloads", async () => {
+  const { electronApp, page } = await launch();
+  const windows = () => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  try {
+    await page.evaluate(write);
+    // The "This window stopped working" sheet answers Reload straight away.
+    await electronApp.evaluate(({ dialog }) => { dialog.showMessageBox = (async () => ({ response: 0, checkboxChecked: false })) as any; });
+    // Count renderer-ready calls, so the second close goes through the reloaded page, not the not-loaded-yet path.
+    await electronApp.evaluate(({ ipcMain }) => {
+      const g = globalThis as any;
+      const handlers = (ipcMain as any)._invokeHandlers as Map<string, (...args: unknown[]) => unknown>;
+      const original = handlers.get("shell:renderer-ready")!;
+      g.readyCalls = 0;
+      handlers.set("shell:renderer-ready", (...args: unknown[]) => { const result = original(...args); g.readyCalls++; return result; });
+    });
+    const loaded = await electronApp.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]!;
+      const reloaded = new Promise<void>((done) => window.webContents.once("did-finish-load", () => done()));
+      window.close();
+      window.webContents.forcefullyCrashRenderer();
+      return reloaded.then(() => true);
+    });
+    expect(loaded).toBe(true);
+    // Playwright's page stays crashed after the reload, so ask the main process whether the new page is ready.
+    await expect.poll(() => electronApp.evaluate(() => (globalThis as any).readyCalls)).toBe(1);
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+    await expect.poll(windows).toBe(0);
+  } finally {
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy()));
+    await electronApp.close();
+  }
+});
+
+for (const [choice, button] of [["Save", 0], ["Don't Save", 1]] as const) {
+  test(`closing with ${choice} while a backup is being written waits for it and leaves no recovery copy`, async () => {
+    test.setTimeout(120_000);
+    const { electronApp, page, userData } = await launch();
+    const windows = () => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+    const flag = (name: string) => electronApp.evaluate((_electron, key) => (globalThis as any)[key], name);
+    const native = join(mkdtempSync(join(tmpdir(), "screenplay-file-")), "Kitchen.screenplay");
+    try {
+      await page.evaluate(write);
+      // Hold the next backup write open in the main process until the test releases it.
+      await electronApp.evaluate(({ dialog, ipcMain }, path) => {
+        dialog.showSaveDialog = (async () => ({ canceled: false, filePath: path })) as any;
+        const g = globalThis as any;
+        const handlers = (ipcMain as any)._invokeHandlers as Map<string, (...args: unknown[]) => unknown>;
+        const original = handlers.get("files:write")!;
+        g.backupStarted = false; g.backupDone = false;
+        handlers.set("files:write", async (event: unknown, ...args: unknown[]) => {
+          if (!String(args[0]).includes("/autosave/")) return original(event, ...args);
+          g.backupStarted = true;
+          await new Promise<void>((done) => { g.releaseBackup = done; });
+          try { return await original(event, ...args); } finally { g.backupDone = true; }
+        });
+      }, native);
+      await expect.poll(() => flag("backupStarted"), { timeout: 45_000 }).toBe(true);
+      await electronApp.evaluate((_electron, answer) => { (globalThis as any).e2eMessageBox = () => answer; }, button);
+      await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+      if (choice === "Save") await expect.poll(() => existsSync(native)).toBe(true);
+      await new Promise((done) => setTimeout(done, 500));
+      // The window waits for the write before it removes the copy and closes.
+      expect(await windows()).toBe(1);
+      await electronApp.evaluate(() => (globalThis as any).releaseBackup());
+      await expect.poll(windows).toBe(0);
+      await expect.poll(() => flag("backupDone")).toBe(true);
+      expect(readdirSync(join(userData, "autosave")).filter((name) => name.endsWith(".screenplay"))).toEqual([]);
+    } finally {
+      await electronApp.evaluate(() => (globalThis as any).releaseBackup?.());
+      await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy()));
+      await electronApp.close();
+    }
+  });
+}
+
+test("a recovered script keeps its title, and Save clears the recovery status", async () => {
+  test.setTimeout(120_000);
+  const dir = mkdtempSync(join(tmpdir(), "screenplay-file-"));
+  const native = join(dir, "Kitchen.screenplay");
+  const first = await launch();
+  try {
+    await first.page.evaluate(write);
+    // The 30-second backup runs first, so the status has an old "saved" entry for Save to clear.
+    await expect(first.page.locator(".recovery-health")).toHaveText("Recovery copy saved", { timeout: 45_000 });
+    await first.electronApp.evaluate(({ dialog }, path) => {
+      dialog.showSaveDialog = (async () => ({ canceled: false, filePath: path })) as any;
+    }, native);
+    await first.page.evaluate(() => { (window as any).__app.session.name = "Night Kitchen"; });
+    await first.page.evaluate(() => (window as any).__app.runCommand("file.saveAs"));
+    await expect.poll(() => first.page.evaluate(() => (window as any).__app.session.dirty)).toBe(false);
+    await first.page.evaluate(() => {
+      const s = (window as any).__app.session;
+      s.edit(() => s.doc.insertText(s.doc.toScript().paragraphs[1].id, 0, "Later, "));
+    });
+    await expect(first.page.locator(".recovery-health")).toHaveText("Recovery pending");
+  } finally {
+    await close(first.electronApp, first.page);
+  }
+  // A backup is named by session ID; the saved file has the same header a backup would.
+  copyFileSync(native, join(first.userData, "autosave", "0b5c43a2-5d0e-4c55-9d1f-2f6a4a3c9e11.screenplay"));
+  const second = await launch([], first.userData);
+  try {
+    await second.page.getByRole("dialog", { name: "Recover unsaved scripts" }).getByRole("button", { name: /Night Kitchen/ }).click();
+    await expect(second.page.locator(".titlebar-name")).toHaveAttribute("title", "Night Kitchen (recovered)");
+  } finally {
+    await close(second.electronApp, second.page);
+  }
 });
 
 test("an opened script shows its proofreading marks before any edit, and keeps them while typing elsewhere", async () => {

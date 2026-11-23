@@ -81,18 +81,7 @@ export async function openForRead(path: string): Promise<OpenedRegular | null> {
   const info = await handle.stat();
   return {
     info,
-    read: async (maximum?: number) => {
-      if (maximum === undefined) return new Uint8Array(await handle.readFile());
-      const bytes = Buffer.alloc(maximum + 1);
-      let offset = 0;
-      while (offset < bytes.length) {
-        const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
-        if (!bytesRead) break;
-        offset += bytesRead;
-      }
-      if (offset > maximum) throw new Error(`${basename(path)} exceeds its size limit.`);
-      return new Uint8Array(bytes.subarray(0, offset));
-    },
+    read: (maximum?: number) => readHandle(handle, path, maximum),
     readFirst: async (length: number) => {
       const bytes = Buffer.alloc(length);
       let offset = 0;
@@ -105,6 +94,23 @@ export async function openForRead(path: string): Promise<OpenedRegular | null> {
     },
     close: () => handle.close(),
   };
+}
+
+/**
+ * The whole file, or with `maximum` at most that many bytes: a file that grew past it since its size was checked
+ * throws instead of being read whole.
+ */
+async function readHandle(handle: FileHandle, path: string, maximum?: number): Promise<Uint8Array> {
+  if (maximum === undefined) return new Uint8Array(await handle.readFile());
+  const bytes = Buffer.alloc(maximum + 1);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+    if (!bytesRead) break;
+    offset += bytesRead;
+  }
+  if (offset > maximum) throw new Error(`${basename(path)} exceeds its size limit.`);
+  return new Uint8Array(bytes.subarray(0, offset));
 }
 
 /** Read a regular file without following a link. Null when there is none. */
@@ -122,11 +128,11 @@ export async function readRegular(path: string): Promise<Uint8Array | null> {
  * Read a file the writer chose (a link they chose is followed), refusing anything but a regular file, so a FIFO
  * or a device never blocks the main process.
  */
-export async function readChosenFile(path: string): Promise<Uint8Array> {
+export async function readChosenFile(path: string, maximum?: number): Promise<Uint8Array> {
   const handle = await openRegular(path, constants.O_RDONLY, true);
   if (!handle) throw Object.assign(new Error(`${basename(path)} can't be found.`), { code: "ENOENT" });
   try {
-    return new Uint8Array(await handle.readFile());
+    return await readHandle(handle, path, maximum);
   } finally {
     await handle.close();
   }

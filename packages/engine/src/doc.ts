@@ -443,6 +443,10 @@ export class ScreenplayDoc {
     const entry = cache.entries[index]!;
     // The first paragraph's lead is in its runs but not between its start and end (see readEntries): read it again.
     if (index === 0 && entry.start > 0) return;
+    // A heading that now repeats another heading's scene ID gives the repair work (see repairDuplicates).
+    const { type, sceneId } = paragraph;
+    if (type === "sceneHeading" && sceneId !== undefined && (entry.paragraph.type !== type || entry.paragraph.sceneId !== sceneId)
+      && cache.entries.some((other, i) => i !== index && other.paragraph.type === type && other.paragraph.sceneId === sceneId)) cache.repeats = true;
     cache.entries[index] = { paragraph, start: entry.start, end: entry.end + shift, ...(entry.untyped && !typed ? { untyped: true } : {}) };
     if (shift) {
       for (let i = index + 1; i < cache.entries.length; i++) {

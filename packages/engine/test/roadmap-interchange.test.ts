@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ScreenplayDoc, parseFdx, writeFdx, scriptNotes, changeScriptNote, readStyle, writeStyle, templateStyle, plainText, moveScene, type Script } from "../src/index.ts";
+import { ScreenplayDoc, applyDocumentTemplate, captureScriptNotes, parseFdx, writeFdx, scriptNotes, changeScriptNote, lockPages, pageLocks, paginate, storedFdx, readStyle, writeStyle, templateStyle, plainText, moveScene, type Script } from "../src/index.ts";
 const fdx = `<FinalDraft DocumentType="Script" Template="No" Version="3"><Content><Paragraph Type="Scene Heading" id="s"><Text>INT. ROOM - DAY</Text></Paragraph><Paragraph Type="Action" id="a"><Text>A red door opens.</Text></Paragraph><Paragraph Type="Scene Heading" id="t"><Text>EXT. ROAD - NIGHT</Text></Paragraph><Paragraph Type="Action" id="b"><Text>She waits.</Text></Paragraph></Content><ScriptNotes Weird="kept"><ScriptNote Range="17,25" Color="#ffff00000000" Custom="yes"><Paragraph Alignment="Left"><Text Style="Bold">Check the door.</Text></Paragraph><Unknown Keep="yes"/></ScriptNote></ScriptNotes><UnknownDocument Keep="yes"/></FinalDraft>`;
 const make = () => ScreenplayDoc.fromScript(parseFdx(fdx));
 test("FDX note range is unchanged on round trip; content, formatting and unknown XML survive", () => {
@@ -166,4 +166,38 @@ test("working FDX saves retain orphan notes without dangling ranges or document 
     assert.equal(scriptNotes(reopened)[0]?.state, "unmapped");
     doc.ydoc.destroy();
     reopened.ydoc.destroy();
+});
+
+test("saving a ScriptNote stores the note, not locked pages that live under their own key", () => {
+  const doc = ScreenplayDoc.fromScript(longScript());
+  lockPages(doc, paginate(doc.toScript()));
+  changeScriptNote(doc, null, { text: "hi", author: "me", color: "" }, { from: { paragraphId: "a0_0", offset: 0 }, to: { paragraphId: "a0_0", offset: 5 } });
+  assert.deepEqual([...storedFdx(doc)!.before, ...storedFdx(doc)!.after].map((node) => node.name), ["ScriptNotes"]);
+  assert.equal(scriptNotes(doc).length, 1);
+  // Undoing Lock Pages takes its key away; the locks must not come back from the stored extras.
+  doc.meta.delete("pageLocks");
+  assert.equal(pageLocks(doc)?.length ?? 0, 0);
+});
+const longScript = (): Script => ({ titlePage: [], paragraphs: Array.from({ length: 30 }, (_, i) => [
+  { id: `h${i}`, type: "sceneHeading" as const, runs: [{ text: `INT. ROOM ${i} - DAY` }] },
+  ...Array.from({ length: 4 }, (_, j) => ({ id: `a${i}_${j}`, type: "action" as const, runs: [{ text: "Words ".repeat(40) }] })),
+]).flat() });
+
+test("applying a template keeps a ScriptNote on the words it covers after text was typed before it", () => {
+  const doc = make();
+  const covered = () => {
+    const note = scriptNotes(doc)[0]!;
+    assert.equal(note.state, "anchored");
+    return plainText(doc.paragraph(note.from!.paragraphId).runs).slice(note.from!.offset, note.to!.offset);
+  };
+  const before = covered();
+  doc.insertText("a", 0, "Then ");
+  assert.equal(covered(), before);
+  // As the layout dialog does: apply, then capture the notes again from the stored extras.
+  doc.ydoc.transact(() => {
+    applyDocumentTemplate(doc, "multiCamera", { underlineEntrances: false });
+    captureScriptNotes(doc);
+  });
+  assert.equal(covered(), before);
+  doc.ydoc.destroy();
 });

@@ -340,7 +340,6 @@ type RecoveryHealth = { state: "waiting" | "saved" | "error"; at?: number; reaso
 const waitingRecovery: RecoveryHealth = { state: "waiting" };
 const recoveryResults = new Map<string, RecoveryHealth>();
 const recoveryListeners = new Set<() => void>();
-const recoveryBusy = new Set<string>();
 function updateRecovery(id: string, value: RecoveryHealth): void {
   recoveryResults.set(id, value);
   for (const listener of recoveryListeners) listener();
@@ -372,19 +371,41 @@ async function writeBackup(session: DocumentSession): Promise<void> {
   if (!path) return;
   await desktop.invoke(CHANNELS.writeFile, path, encodeNative(session.doc, session.name, session.historyId));
 }
+// The backup write in flight for each session. clearBackup waits for it, because the main process finishes a
+// write even after this window is gone, and a copy landing after the clear would come back at next launch.
+const backupWrites = new Map<string, Promise<void>>();
 async function runBackup(session: DocumentSession): Promise<void> {
-  if (!session.dirty || !isDesktop || recoveryBusy.has(session.id)) return;
-  recoveryBusy.add(session.id);
+  if (!session.dirty || !isDesktop || backupWrites.has(session.id) || backupCleanups.has(session.id)) return;
+  const write = writeBackup(session);
+  backupWrites.set(session.id, write);
+  let result: RecoveryHealth;
   try {
-    await writeBackup(session);
-    updateRecovery(session.id, { state: "saved", at: Date.now() });
+    await write;
+    result = { state: "saved", at: Date.now() };
   } catch (error) {
-    updateRecovery(session.id, { state: "error", reason: error instanceof Error ? error.message : String(error) });
-  } finally {
-    recoveryBusy.delete(session.id);
+    result = { state: "error", reason: error instanceof Error ? error.message : String(error) };
   }
+  // clearBackup took this write over; the copy is being removed, so its outcome no longer matters.
+  if (backupWrites.get(session.id) !== write) return;
+  backupWrites.delete(session.id);
+  updateRecovery(session.id, result);
 }
-async function clearBackup(session: DocumentSession): Promise<void> {
+// One cleanup per session at a time. Save starts one without waiting; the close that follows must wait for that
+// same cleanup, and the backup write it waits on, before the window goes.
+const backupCleanups = new Map<string, Promise<void>>();
+function clearBackup(session: DocumentSession): Promise<void> {
+  const running = backupCleanups.get(session.id);
+  if (running) return running;
+  const cleanup = removeBackup(session).finally(() => backupCleanups.delete(session.id));
+  backupCleanups.set(session.id, cleanup);
+  return cleanup;
+}
+async function removeBackup(session: DocumentSession): Promise<void> {
+  const write = backupWrites.get(session.id);
+  backupWrites.delete(session.id);
+  await write?.catch(() => undefined);
+  // The copy is gone, so the status must not keep saying "Recovery copy saved" after the next edit.
+  if (recoveryResults.delete(session.id)) for (const listener of recoveryListeners) listener();
   const path = await backupPath(session);
   if (path) await desktop.invoke("files:remove-autosave", path).catch(() => undefined);
   if (session.recoveredFrom) {
@@ -415,7 +436,10 @@ async function recoverPath(path: string): Promise<void> {
     return;
   }
   session.path = null;
-  session.name = `${session.name} (recovered)`;
+  // A backup's file name is the session ID; the script's title is in the backup's header.
+  const { header, doc } = decodeNative(file.data);
+  doc.ydoc.destroy();
+  session.name = `${header.title || session.name} (recovered)`;
   session.recoveredFrom = path;
   session.markDirty();
   app.setSession(session);
@@ -564,10 +588,16 @@ const feature: Feature = {
 
     desktop.on(CHANNELS.openPath, (path) => void openPath(path as string).catch((error) => a.toast(String(error.message ?? error), "error")));
     desktop.on(CHANNELS.closeRequested, async () => {
-      if (await confirmDiscard()) {
-        await clearBackup(a.session);
-        await desktop.invoke(CHANNELS.closeAllowed);
-      } else await desktop.invoke("shell:close-cancelled");
+      // The main process ignores further close requests until it hears back, so every path must answer.
+      let allowed = false;
+      try {
+        allowed = await confirmDiscard();
+      } catch (error) {
+        a.toast(`Couldn't save: ${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+      if (!allowed) { await desktop.invoke("shell:close-cancelled"); return; }
+      await clearBackup(a.session).catch(() => undefined);
+      await desktop.invoke(CHANNELS.closeAllowed);
     });
     if (!isDesktop) {
       window.addEventListener("beforeunload", (event) => {

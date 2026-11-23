@@ -35,7 +35,9 @@ useLegacyUserData();
 if (!app.requestSingleInstanceLock()) process.exit(0);
 // End-to-end tests run hidden: no Dock icon, and no native dialog may attach to (and show) a hidden window.
 const e2e = !!process.env.SCREENPLAY_E2E;
-const devUrl = process.env.SCREENPLAY_DEV_URL;
+// The dev server's address, for `npm run dev` only. A packaged app ignores it, or any program that launches the signed
+// app could load its own page with the service bridge and the microphone grant.
+const devUrl = app.isPackaged ? undefined : process.env.SCREENPLAY_DEV_URL;
 const rendererIndex = join(import.meta.dirname, "../renderer/index.html");
 const commands = new Map<number, MenuCommand[]>();
 const closable = new Set<number>();
@@ -151,7 +153,8 @@ function createWindow(path?: string, mode: WindowMode = "open", tabParent?: Brow
   window.webContents.on("will-navigate", (event, url) => {
     if (url !== window.webContents.getURL()) event.preventDefault();
   });
-  window.webContents.on("did-start-loading", () => ready.delete(id));
+  // A reloaded page never answers a close request sent to the page it replaced, so forget that request too.
+  window.webContents.on("did-start-loading", () => { ready.delete(id); closing.delete(id); });
   // One key press runs one command. A menu command's key could otherwise reach both the page (the editor runs
   // its own shortcuts, and Chromium turns Cmd+B in editable text into its own bold) and the menu. Electron emits
   // before-input-event ahead of the page's keydown and the menu's key equivalents, and preventDefault here stops
@@ -167,6 +170,8 @@ function createWindow(path?: string, mode: WindowMode = "open", tabParent?: Brow
   });
   window.webContents.on("render-process-gone", (_event, details) => {
     console.error(`Renderer for window ${id} exited: ${details.reason} (${details.exitCode})`);
+    // A gone renderer cannot answer a close request or receive messages.
+    ready.delete(id); closing.delete(id);
     if (details.reason !== "clean-exit" && !window.isDestroyed()) {
       void dialog.showMessageBox(window, { type: "error", message: "This window stopped working.", detail: "Your last autosave is kept and offered when you reopen the app.", buttons: ["Reload"] })
         .then(() => !window.isDestroyed() && window.reload());
@@ -179,7 +184,7 @@ function createWindow(path?: string, mode: WindowMode = "open", tabParent?: Brow
     // Not loaded yet: nothing to save, so close straight away.
     if (!ready.has(id)) {
       closable.add(id);
-      setImmediate(() => window.close());
+      setImmediate(() => { if (!window.isDestroyed()) window.close(); });
       return;
     }
     if (closing.has(id)) return;

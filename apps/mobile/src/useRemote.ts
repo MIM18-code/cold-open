@@ -7,7 +7,7 @@ import { decodePairing, PAIR_AGAIN, type Pairing } from "./pairing";
 import { linkCrypto } from "./link-crypto";
 import { folderProduction } from "./production.ts";
 import { readScript, connect, type Presence, type Row } from "./live";
-import { sendPending, deviceStatus, permanentFailure, validateTakeSize, DeliveryError, syncReceipts, type Take } from "./outbox";
+import { sendPending, deviceStatus, permanentFailure, pairingRefused, validateTakeSize, DeliveryError, syncReceipts, type Take } from "./outbox";
 import { phoneFolder, saveToFolder } from "./folder";
 import { errorText } from "./errors";
 import { cacheProduction, cachedProduction, cacheRows, cachedRows, claimUnpairedNotes, endedPairing, listTakes, mark, rememberEnd,
@@ -37,7 +37,7 @@ export function useRemote() {
     // Paired on Wi-Fi before links were encrypted: nothing is sent or received until it is paired again.
     if (pair.legacy) { setStatus(PAIR_AGAIN); return; }
     if (pair.expiresAt > Date.now() && !endedPairing(pair.invite.room) && claimUnpairedNotes(pair.invite.room)) setTakes(listTakes());
-    let stopped = false, busy = false, reported = false, wait = 1000;
+    let stopped = false, busy = false, reported = false, wait = 1000, relay = "";
     let timer: ReturnType<typeof setTimeout>, expiry: ReturnType<typeof setTimeout>;
     let disconnect: (() => void) | undefined;
     let request: AbortController | undefined;
@@ -56,7 +56,6 @@ export function useRemote() {
       clearTimeout(timer);
       request = new AbortController();
       const { signal } = request;
-      const timeout = setTimeout(() => request?.abort(), 12000);
       const conflicts = new Set<string>();
       try {
         const items = listTakes().filter(t => t.room === pair.invite.room);
@@ -64,7 +63,7 @@ export function useRemote() {
         if (pair.remembered && device.open && !reported) {
           await deviceStatus(pair, signal, phoneFolder.deviceName()); reported = true;
         }
-        if (pair.remembered && !device.open) unreachable("script-closed");
+        if (pair.remembered && !device.open && !stopped) unreachable("script-closed");
         if (items.some(t => t.outcome === "delivered" || t.outcome === "pending"
             || t.outcome === "saved" || t.outcome === "airdropped")) {
           for (const [id, state] of await syncReceipts(pair, signal, items, sha256)) {
@@ -77,8 +76,12 @@ export function useRemote() {
         if (!device.open) throw new DeliveryError(503, "The paired script is not open on the Mac.");
         await sendPending(pair, listTakes().filter(t => !conflicts.has(t.id)), signal, mark, sha256);
         wait = 3500;
+        // A failed poll replaced "Live" with "Can't reach the Mac"; the relay only reports changes, so put it back.
+        if (relay === "Live" && !stopped) setStatus(relay);
       } catch (e) {
-        if (e instanceof DeliveryError && [401, 403, 410].includes(e.status)) {
+        // The pairing ended or the screen closed while this poll was out; its error is only the abort.
+        if (stopped) return;
+        if (pairingRefused(e)) {
           end(pair.remembered ? "This Mac revoked the pairing" : e.status === 410 ? "Pairing expired" : "Refused");
         } else {
           if (pair.remembered) unreachable(e instanceof DeliveryError && /not open on the Mac/.test(e.message)
@@ -102,7 +105,7 @@ export function useRemote() {
           wait = Math.min(30000, wait * 2);
         }
       } finally {
-        clearTimeout(timeout); busy = false;
+        busy = false;
         if (!stopped) { setTakes(listTakes()); timer = setTimeout(tick, wait); }
       }
     };
@@ -117,6 +120,7 @@ export function useRemote() {
         if (p?.production) cacheProduction(pair.invite.room, p.production);
         setPeople(old => p ?? { ...old, writers: [], cursor: null, offset: 0 });
       }, s => {
+        relay = s;
         if (stopped) return;
         if (s === "Refused" || s === "Host stopped sharing") {
           end(pair.remembered ? "This Mac revoked the pairing"
@@ -173,7 +177,9 @@ export function useRemote() {
     if (!pair) throw new Error("Pair with your Mac first.");
     const items = takesBatch(pair, listTakes());
     if (!(await shareTakes(takesFileName(), await takesFile(pair, items, sha256)))) return 0;
-    for (const item of items) mark(item.id, "airdropped");
+    // The Mac may have decided a resent take while the share sheet was open; keep its decision.
+    const now = new Map(listTakes().map(t => [t.id, t.outcome]));
+    for (const item of items) if (["pending", "saved"].includes(now.get(item.id) ?? "")) mark(item.id, "airdropped");
     setTakes(listTakes());
     return items.length;
   }

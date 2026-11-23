@@ -102,6 +102,32 @@ test("pair the iPhone reader, follow typing and review an anchored suggestion", 
   } finally { leave?.(); await close(electronApp, page); }
 });
 
+test("saving an untitled script keeps its one-off phone link", async () => {
+  const { page, electronApp, userData } = await launch();
+  try {
+    const path = join(userData, "Saved Later.screenplay");
+    await electronApp.evaluate(async ({ dialog }, path) => {
+      dialog.showSaveDialog = (async () => ({ canceled: false, filePath: path })) as typeof dialog.showSaveDialog;
+      dialog.showMessageBox = (async () => ({ response: 1, checkboxChecked: false })) as typeof dialog.showMessageBox;
+    }, path);
+    await runCommand(page, "phone.open");
+    const addresses = await page.evaluate(async () => (await (window as any).desktop.invoke("phone:status")).addresses);
+    const lan = addresses.find((a: { tailscale?: boolean }) => !a.tailscale);
+    test.skip(!lan, "This test requires a private LAN interface.");
+    await page.getByLabel("Phone network address").selectOption(lan.address);
+    await page.getByRole("button", { name: "Start phone pairing…" }).click();
+    await expect(page.locator("figure svg")).toHaveCount(1);
+    const active = () => page.evaluate(async () => (await (window as any).desktop.invoke("phone:status")).active);
+    expect(await active()).toBe(true);
+    await runCommand(page, "file.save");
+    await expect.poll(() => page.evaluate(() => (window as any).__app.session.path)).toBe(path);
+    // The save moves the inbox and resumes under the new key; give that time to run before checking.
+    await page.waitForTimeout(1000);
+    expect(await active()).toBe(true);
+    await expect(page.getByRole("button", { name: "Stop sharing / revoke link" })).toBeVisible();
+  } finally { await close(electronApp, page); }
+});
+
 test("remember an iPhone on a saved script and revoke it from the Phone panel", async () => {
   // Electron's evaluate cannot import modules, so file work happens here in the test process.
   const { page, electronApp, userData } = await launch();

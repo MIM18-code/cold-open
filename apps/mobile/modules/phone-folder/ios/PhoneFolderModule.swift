@@ -53,6 +53,10 @@ public final class PhoneFolderModule: Module {
       let root = try URL(resolvingBookmarkData: bookmark, options: .withoutUI, relativeTo: nil, bookmarkDataIsStale: &stale)
       guard root.startAccessingSecurityScopedResource() else { throw folderError("Choose the folder again.") }
       defer { root.stopAccessingSecurityScopedResource() }
+      if stale {
+        UserDefaults.standard.set(try root.bookmarkData(options: .minimalBookmark,
+          includingResourceValuesForKeys: nil, relativeTo: nil), forKey: bookmarkKey)
+      }
       var coordinationError: NSError?
       var result: String?
       var readError: Error?

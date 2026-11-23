@@ -297,6 +297,37 @@ test("applyTextEdits gives the same document as one edit at a time, with formatt
   assert.equal(plainText(after.paragraphs[2]!.runs), "BARTHOLOMEW (V.O.)");
 });
 
+test("applyTextEdits counts text before the first line break as part of the first paragraph", () => {
+  // A co-writer's typing can leave text before the first line break (lead() in doc.ts).
+  const rename = (lead: string, text: string) => {
+    const doc = ScreenplayDoc.fromScript({ titlePage: [], paragraphs: [
+      { id: "a1", type: "action", runs: [{ text }] }, { id: "a2", type: "action", runs: [{ text: "Rain." }] },
+    ] });
+    doc.body.insert(0, lead);
+    applyTextEdits(doc, planRename(doc.toScript(), "BOB", "ROBERTO").edits);
+    assert.deepEqual(doc.validate(), []);
+    return doc.paragraphs().map((p) => plainText(p.runs));
+  };
+  assert.deepEqual(rename("BOB and ", "BOB sits. Then BOB stands."), ["ROBERTO and ROBERTO sits. Then ROBERTO stands.", "Rain."]);
+  assert.deepEqual(rename("BO", "B sits."), ["ROBERTO sits.", "Rain."]);
+});
+
+test("rename and the character reports read around inline notes", () => {
+  const script: Script = { titlePage: [], paragraphs: [
+    { id: "h", type: "sceneHeading", runs: [{ text: "INT. ROOM - DAY" }] },
+    { id: "a", type: "action", runs: [{ text: "BOB" }, { text: "check age", note: true }, { text: " enters. " }, { text: "Ask BOB", note: true }] },
+    { id: "c", type: "character", runs: [{ text: "BOB " }, { text: "maybe ROBERT?", note: true }] },
+    { id: "d", type: "dialogue", runs: [{ text: "Hi." }] },
+  ] };
+  assert.deepEqual(characterReport(script).map((row) => row.name), ["BOB"]);
+  assert.deepEqual(castList(script).map((row) => row.name), ["BOB"]);
+  assert.deepEqual(sceneReport(script).map((row) => row.characters), [["BOB"]]);
+  const doc = ScreenplayDoc.fromScript(script);
+  applyTextEdits(doc, planRename(doc.toScript(), "BOB", "ROBERTO").edits);
+  assert.deepEqual(doc.paragraph("a")!.runs, [{ text: "ROBERTO" }, { text: "check age", note: true }, { text: " enters. " }, { text: "Ask BOB", note: true }]);
+  assert.deepEqual(doc.paragraph("c")!.runs, [{ text: "ROBERTO " }, { text: "maybe ROBERT?", note: true }]);
+});
+
 test("a title before an introduced name stays part of it", () => {
   const rows = characterReport({ titlePage: [], paragraphs: [
     { id: "h", type: "sceneHeading", runs: [{ text: "INT. CLINIC - DAY" }] },

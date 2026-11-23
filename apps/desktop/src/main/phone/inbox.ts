@@ -30,7 +30,7 @@ export class PhoneInboxStore {
         if (!file) return [];
         try {
             if (file.info.size > 3000000) throw new Error("The saved phone inbox exceeds its limit.");
-            const rows = JSON.parse(new TextDecoder().decode(await file.read()));
+            const rows = JSON.parse(new TextDecoder().decode(await file.read(3000000)));
             if (!Array.isArray(rows) || rows.length > 100 || rows.some(r =>
                 !r || typeof r.id !== "string" || !/^[-\w]{12,80}$/.test(r.id) ||
                 !["scene-after", "scene-end", "draft", "note", "dictation", "bookmark"].includes(r.kind) || typeof r.text !== "string" || r.text.length > 20000 ||

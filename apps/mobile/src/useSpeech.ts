@@ -10,6 +10,8 @@ declare class Speech extends NativeModule<{
   authorize(): Promise<boolean>; start(): Promise<void>; finish(): void; cancel(): void;
 }
 const speech = requireNativeModule<Speech>("InklotLocalSpeech");
+// How long to wait for the recognizer's last words after Stop before giving up on them.
+const FINISH_LIMIT = 5000;
 export type SpeechPhase = "idle" | "starting" | "listening" | "finishing";
 
 /** On-device dictation. `begin` runs as a take starts; `heard` gets the take's whole transcript so far.
@@ -18,21 +20,23 @@ export function useSpeech(begin: () => void, heard: (text: string) => void) {
   const [phase, setPhase] = useState<SpeechPhase>("idle"), [error, setError] = useState("");
   const held = useRef(false), active = useRef(false), mounted = useRef(true);
   const handlers = useRef({ begin, heard });
+  const stall = useRef<ReturnType<typeof setTimeout>>(undefined);
   handlers.current = { begin, heard };
   useEffect(() => {
     mounted.current = true;
     const result = speech.addListener("result", e => { if (active.current) handlers.current.heard(e.text); });
     const end = speech.addListener("ended", e => {
       if (!active.current) return;
+      clearTimeout(stall.current);
       active.current = false; held.current = false; setPhase("idle");
       const message = speechError(e.error);
       if (message) setError(message);
     });
     const watch = AppState.addEventListener("change", s => {
-      if (s === "background") { held.current = false; if (active.current) speech.finish(); }
+      if (s === "background") { held.current = false; if (active.current) { speech.finish(); giveUpLater(); } }
     });
     return () => {
-      mounted.current = false; held.current = false;
+      mounted.current = false; held.current = false; clearTimeout(stall.current);
       result.remove(); end.remove(); watch.remove();
       if (active.current) { active.current = false; speech.cancel(); }
     };
@@ -53,7 +57,17 @@ export function useSpeech(begin: () => void, heard: (text: string) => void) {
       if (mounted.current) setError(speechError(errorText(e)) || errorText(e));
     } finally { if (mounted.current && !active.current) setPhase("idle"); }
   }
-  function finish() { held.current = false; if (active.current) { setPhase("finishing"); speech.finish(); } }
+  // A recognizer that never answers after Stop would leave the note read-only. Cancel it; the words heard so far
+  // are already in the note.
+  function giveUpLater() {
+    clearTimeout(stall.current);
+    stall.current = setTimeout(() => {
+      if (!active.current) return;
+      active.current = false; held.current = false; speech.cancel();
+      if (mounted.current) setPhase("idle");
+    }, FINISH_LIMIT);
+  }
+  function finish() { held.current = false; if (active.current) { setPhase("finishing"); speech.finish(); giveUpLater(); } }
   return { phase, error, setError, start, finish, toggle: () => active.current || held.current ? finish() : void start(),
     held, active };
 }

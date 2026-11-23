@@ -70,8 +70,12 @@ function production() {
     }
     return productionResult;
 }
-function snapshot(): PhoneSnapshot {
-    app.flushPending();
+/**
+ * Pass flush = false for publishes the writer did not ask for: flushing commits fields still being typed in, and
+ * some (a Story Map target) reject a partial value and clear it.
+ */
+function snapshot(flush = true): PhoneSnapshot {
+    if (flush) app.flushPending();
     const session = app.session;
     const cues = compileReadPlan(session.script(), DEFAULT_READ_OPTIONS);
     return { production: production(), paragraphs: [...session.doc.paragraphs()], title: session.name, revision: `${session.id}:${session.version}`, cues: cues.map((c) => ({ id: c.id, paragraphId: c.paragraphIds[0] ?? "", speaker: c.speaker === NARRATOR ? "Narrator" : c.speaker, text: c.text, heading: c.sceneHeading ?? "" })) };
@@ -79,6 +83,14 @@ function snapshot(): PhoneSnapshot {
 const publishers = new Map<string, () => void>();
 function disconnectPublisher() {
     for (const stop of [...publishers.values()]) stop();
+}
+// The one-off link's room, so Stop sharing leaves remembered iPhones' publishers running.
+let oneOffRoom = "";
+/** Whether this window has a one-off link, from the last phone:resume. Stop One-Off Phone Link is offered only then. */
+let oneOffLink = false;
+function stopSharing() {
+    publishers.get(oneOffRoom)?.();
+    return desktop.invoke("phone:stop");
 }
 
 function attachPublisher(invite: Invite) {
@@ -152,7 +164,8 @@ function PhonePanel() {
             setNotesUnfiled(unfiled);
             setStatus(next);
             setPort(String(next.port));
-            setAddress(a => a || next.addresses[0]?.address || "");
+            // A stopped Tailscale drops out of the list, so keep the choice only while it is still offered.
+            setAddress(a => next.addresses.some(n => n.address === a) ? a : next.addresses[0]?.address ?? "");
         } catch (e) {
             setError(String(e));
         }
@@ -179,9 +192,12 @@ function PhonePanel() {
         setBusy(true);
         setError("");
         try {
-            const result = await desktop.invoke<{ publisher?: Invite } | null>(channel, ...args);
-            if (channel === "phone:start" && result?.publisher && isCurrent()) attachPublisher(result.publisher);
-            if (channel === "phone:stop") disconnectPublisher?.();
+            if (channel === "phone:stop") publishers.get(oneOffRoom)?.();
+            const result = await desktop.invoke<{ publisher?: Invite; expiresAt?: number | null } | null>(channel, ...args);
+            if (channel === "phone:start" && result?.publisher && isCurrent()) {
+                if (result.expiresAt) oneOffRoom = result.publisher.room;
+                attachPublisher(result.publisher);
+            }
             await refresh();
         } catch (e) {
             setError(String(e));
@@ -264,7 +280,7 @@ function PhonePanel() {
         }
     };
     const stop = async () => {
-        const response = await messageBox({ type: "warning", message: "Stop sharing with the phone?", detail: "The pairing link stops working and connected iPhones are disconnected.", buttons: ["Keep", "Stop sharing"], defaultId: 0, cancelId: 0 });
+        const response = await messageBox({ type: "warning", message: "Stop sharing with the phone?", detail: "The pairing link stops working. Remembered iPhones stay connected. To remove one, use Revoke beside it.", buttons: ["Keep", "Stop sharing"], defaultId: 0, cancelId: 0 });
         if (response !== 1) return;
         await run("phone:stop");
     };
@@ -360,7 +376,7 @@ function PhonePanel() {
           <input aria-label="Private phone pairing link" readOnly value={status.url} /></label>
         <button className="button" onClick={() => void run("phone:copy-link")}>Copy Safari link</button>
       </>}
-      <button className="button" onClick={() => void stop()}>Stop sharing / revoke link</button>
+      {!!status.expiresAt && <button className="button" onClick={() => void stop()}>Stop sharing / revoke link</button>}
       {!status.expiresAt && <button className="button" disabled={busy}
         onClick={() => void run("phone:new-pairing")}>Pair another iPhone</button>}
       {status.url && <>
@@ -444,10 +460,12 @@ function SharingStatus() {
     }, []);
     return active ? <button className="reader-status-button" onClick={() => { app.setFocusMode(false); app.togglePanel("phone", true); }}>● Phone sharing active</button> : null;
 }
-const feature: Feature = { id: "phone", status: [{ id: "phone.sharing", order: 91, component: SharingStatus }], panels: [{ id: "phone", title: "Phone", side: "right", order: 80, component: PhonePanel }], commands: [{ id: "phone.open", label: "Phone Companion…", menu: "Tools", group: "listen", run: () => { app.setFocusMode(false); app.togglePanel("phone", true); } }, { id: "phone.stop", label: "Stop Phone Sharing", menu: "Tools", group: "listen", run: () => { disconnectPublisher?.(); return desktop.invoke("phone:stop"); } }], activate(a) {
+const feature: Feature = { id: "phone", status: [{ id: "phone.sharing", order: 91, component: SharingStatus }], panels: [{ id: "phone", title: "Phone", side: "right", order: 80, component: PhonePanel }], commands: [{ id: "phone.open", label: "Phone Companion…", menu: "Tools", group: "listen", run: () => { app.setFocusMode(false); app.togglePanel("phone", true); } }, { id: "phone.stop", label: "Stop One-Off Phone Link", menu: "Tools", group: "listen", enabled: () => oneOffLink, run: () => stopSharing() }], activate(a) {
         const watch = () => {
             const session = a.session;
-            let disposed = false, lastIdentity = "", resuming = false, key = "", filing = false, again = false;
+            let disposed = false, lastIdentity = "", resuming = false, queued = false, queuedForce = false, key = "", filing = false, again = false;
+            // From the last phone:resume. An edit skipped before it answers is sent once it says something is shared.
+            let shared = false, skipped = false;
             const live = () => !disposed && a.session === session;
             const fileNotes = async (): Promise<void> => {
                 if (!key || !live() || session.readOnly) return;
@@ -463,7 +481,9 @@ const feature: Feature = { id: "phone", status: [{ id: "phone.sharing", order: 9
                 finally { filing = false; if (again) { again = false; void fileNotes(); } }
             };
             const resume = async (force = false) => {
-                if (disposed || a.session !== session || resuming) return;
+                if (disposed || a.session !== session) return;
+                // A sharing change during a resume would otherwise be lost, leaving shared and the menu stale.
+                if (resuming) { queued = true; queuedForce ||= force; return; }
                 const identity = phoneIdentity(session, historyId);
                 if (!force && identity === lastIdentity) return;
                 lastIdentity = identity; resuming = true;
@@ -471,10 +491,29 @@ const feature: Feature = { id: "phone", status: [{ id: "phone.sharing", order: 9
                     key = await phoneDocumentKey(session, historyId, pathKey, moveInbox, claimKey, adoptLegacy);
                     if (disposed || a.session !== session) return;
                     void fileNotes();
-                    const result = await desktop.invoke<{ publishers: Invite[] }>("phone:resume", key, snapshot());
-                    if (!disposed && a.session === session) result.publishers.forEach(attachPublisher);
+                    // The snapshot below carries every edit so far; only edits made while it is in flight count.
+                    skipped = false;
+                    const result = await desktop.invoke<{ publishers: Invite[]; shared?: boolean; oneOff?: boolean }>(
+                        "phone:resume", key, snapshot(false));
+                    if (!disposed && a.session === session) {
+                        result.publishers.forEach(attachPublisher);
+                        shared = result.shared === true;
+                        oneOffLink = !!result.oneOff;
+                        a.refreshMenu();
+                        if (shared && skipped) {
+                            skipped = false;
+                            void desktop.invoke("phone:publish", snapshot(false)).catch(e => a.toast(String(e), "error"));
+                        }
+                    }
                 } catch (e) { if (!disposed) a.toast(String(e), "error"); }
-                finally { resuming = false; }
+                finally {
+                    resuming = false;
+                    if (queued) {
+                        const rerun = queuedForce;
+                        queued = queuedForce = false;
+                        void resume(rerun);
+                    }
+                }
             };
             const offKey = watchPhoneDocumentKey(session, historyId, pathKey, moveInbox,
                 error => a.toast(String(error), "error"), claimKey, adoptLegacy);
@@ -482,7 +521,10 @@ const feature: Feature = { id: "phone", status: [{ id: "phone.sharing", order: 9
             const offProduction = session.onChange(() => {
                 clearTimeout(publishTimer);
                 publishTimer = setTimeout(() => {
-                    if (!disposed && a.session === session) void desktop.invoke("phone:publish", snapshot()).catch(e => a.toast(String(e), "error"));
+                    // Nothing receives it with no link, no remembered iPhone and no iCloud folder.
+                    if (disposed || a.session !== session) return;
+                    if (!shared) { skipped = true; return; }
+                    void desktop.invoke("phone:publish", snapshot(false)).catch(e => a.toast(String(e), "error"));
                 }, 300);
             });
             const offState = session.onState(() => { void resume(); });
@@ -494,6 +536,7 @@ const feature: Feature = { id: "phone", status: [{ id: "phone.sharing", order: 9
         let offIdentity = watch();
         const offSession = a.onSession(() => {
             offIdentity(); disconnectPublisher();
+            oneOffLink = false; a.refreshMenu();
             const session = a.session;
             void desktop.invoke("phone:detach").then(() => {
                 if (a.session === session) offIdentity = watch();

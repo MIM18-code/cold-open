@@ -24,7 +24,27 @@ export function validateTakeSize(item: Take) {
 }
 export function permanentFailure(e: unknown): e is DeliveryError {
   return e instanceof DeliveryError && ([400, 413, 422].includes(e.status)
-    || e.status === 409 && e.message.includes("already used"));
+    || e.status === 409 && e.message.includes("already used")
+    // The Mac refuses this one take's signature; the pairing itself is fine.
+    || e.status === 403 && e.message.includes("scene suggestion signature"));
+}
+/**
+ * The Mac's own answer that this pairing is over. Its other 403s (Host or Origin refused) come from a request the
+ * Mac did not recognise as this pairing's, such as a changed address, so they are retried like an unreachable Mac.
+ */
+export function pairingRefused(e: unknown): e is DeliveryError {
+  return e instanceof DeliveryError && ([401, 410].includes(e.status)
+    || e.status === 403 && e.message.includes("revoked the pairing"));
+}
+// Each HTTP request gets its own time limit, so one poll's later requests are not cut off by a slow earlier one.
+// The poll's own signal still cancels them all.
+export const REQUEST_TIMEOUT = 12000;
+function timed(signal: AbortSignal) {
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  if (signal.aborted) stop(); else signal.addEventListener("abort", stop);
+  const timer = setTimeout(stop, REQUEST_TIMEOUT);
+  return { signal: controller.signal, done() { clearTimeout(timer); signal.removeEventListener("abort", stop); } };
 }
 export async function folderItem(pair: Pairing, item: Take, hash?: Sha256) {
   if (!pair.remembered || !pair.deviceId || !pair.scriptId || item.room !== pair.invite.room)
@@ -52,13 +72,16 @@ export async function deviceStatus(pair: Pairing, signal: AbortSignal, name?: st
 const links = new WeakMap<Pairing, LinkClient>();
 function linkClient(pair: Pairing): LinkClient {
   let client = links.get(pair);
-  if (!client) links.set(pair, client = new LinkClient(pair.link!, async (sealed, signal) => {
-    const response = await fetch(pair.origin + "/link", {
-      signal, redirect: "error", method: "POST", headers: { "Content-Type": "text/plain" }, body: sealed,
-    });
-    // Anything but a sealed answer could come from anyone on the network, so it only means "not reached".
-    if (!response.ok) throw new LinkError("unanswered", "The Mac did not answer this pairing.");
-    return response.text();
+  if (!client) links.set(pair, client = new LinkClient(pair.link!, async (sealed, outer) => {
+    const limit = timed(outer ?? new AbortController().signal);
+    try {
+      const response = await fetch(pair.origin + "/link", {
+        signal: limit.signal, redirect: "error", method: "POST", headers: { "Content-Type": "text/plain" }, body: sealed,
+      });
+      // Anything but a sealed answer could come from anyone on the network, so it only means "not reached".
+      if (!response.ok) throw new LinkError("unanswered", "The Mac did not answer this pairing.");
+      return await response.text();
+    } finally { limit.done(); }
   }));
   return client;
 }
@@ -79,12 +102,16 @@ async function request(pair: Pairing, path: string, signal: AbortSignal, item?: 
   }
   // The bearer goes out only inside TLS (Tailscale).
   if (!pair.origin.startsWith("https://")) throw new DeliveryError(426, PAIR_AGAIN);
-  const response = await fetch(pair.origin + path, {
-    signal, redirect: "error", method: body ? "POST" : "GET",
-    headers: { Authorization: "Bearer " + pair.token, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const json = await response.json().catch(() => ({ error: "The Mac could not save the item." }));
+  const limit = timed(signal);
+  let response: Response, json: any;
+  try {
+    response = await fetch(pair.origin + path, {
+      signal: limit.signal, redirect: "error", method: body ? "POST" : "GET",
+      headers: { Authorization: "Bearer " + pair.token, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    json = await response.json().catch(() => ({ error: "The Mac could not save the item." }));
+  } finally { limit.done(); }
   if (!response.ok) throw new DeliveryError(response.status, json.error || "The Mac could not save the item.");
   return json;
 }

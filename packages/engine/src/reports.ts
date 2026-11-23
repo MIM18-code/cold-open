@@ -6,7 +6,7 @@ import {
   type Pagination, formatEighths, paginate, sceneEighths,
 } from "./pagination.ts";
 import {
-  type ElementType, NON_PRINTING, type Paragraph, type Script, plainText, scenesOf,
+  type ElementType, NON_PRINTING, type Paragraph, type Script, scenesOf,
 } from "./model.ts";
 
 const WORD = /[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu;
@@ -176,7 +176,7 @@ export function characterReport(script: Script, pagination: Pagination = paginat
   for (let i = 0; i < paragraphs.length; i++) {
     const cue = paragraphs[i]!;
     if (cue.type !== "character") continue;
-    const name = characterName(plainText(cue.runs));
+    const name = characterName(visibleText(cue));
     if (!name) continue;
     const entry = speaker(name);
     entry.speeches++;
@@ -251,7 +251,7 @@ export function castList(script: Script): CastMember[] {
   for (const paragraph of script.paragraphs) {
     if (paragraph.type === "sceneHeading") scene++;
     if (paragraph.type !== "character") continue;
-    const name = characterName(plainText(paragraph.runs));
+    const name = characterName(visibleText(paragraph));
     if (!name) continue;
     const member = members.get(name);
     if (member) member.speeches++;
@@ -295,7 +295,7 @@ export function sceneReport(script: Script, pagination: Pagination = paginate(sc
       if (NON_PRINTING.has(paragraph.type)) continue;
       words += countWords(visibleText(paragraph));
       if (paragraph.type === "character") {
-        const name = characterName(plainText(paragraph.runs));
+        const name = characterName(visibleText(paragraph));
         if (name && !characters.includes(name)) characters.push(name);
       }
     }
@@ -462,11 +462,14 @@ export function planRename(script: Script, from: string, to: string): RenamePlan
   const plan: RenamePlan = { edits: [], cues: 0, mentions: 0, paragraphs: 0, upper, proper };
   if (!oldKey || !name || upper === oldKey) return plan;
   for (const paragraph of script.paragraphs) {
-    const text = plainText(paragraph.runs);
+    // Inline notes are blanked out at the same length, so names in them stay as written and offsets still fit.
+    const text = paragraph.runs.map((run) => (run.note ? "\u0001".repeat(run.text.length) : run.text)).join("");
     const edits: TextEdit[] = [];
     if (paragraph.type === "character") {
-      if (characterName(text) === oldKey) {
-        const [start, end] = cueNameRange(text);
+      const cue = text.replace(/\u0001/g, " ");
+      const [start, end] = cueNameRange(cue);
+      // A note inside the name itself is left alone rather than replaced with it.
+      if (characterName(cue) === oldKey && !text.slice(start, end).includes("\u0001")) {
         edits.push({ paragraphId: paragraph.id, from: start, to: end, text: upper, kind: "cue" });
       }
     } else if (RENAME_TYPES.has(paragraph.type)) {
@@ -492,7 +495,7 @@ type DeltaOp = { insert?: unknown; attributes?: Record<string, unknown> };
 export function applyTextEdits(doc: ScreenplayDoc, edits: readonly TextEdit[]): void {
   const ops = doc.body.toDelta() as DeltaOp[];
   const starts = new Map<string, number>();
-  let offset = 0;
+  let offset = 0, lead = -1, leadId: unknown;
   for (const op of ops) {
     if (typeof op.insert !== "string") {
       offset += 1;
@@ -505,16 +508,22 @@ export function applyTextEdits(doc: ScreenplayDoc, edits: readonly TextEdit[]): 
     }
     op.insert.split("\n").forEach((part, k) => {
       if (k > 0) {
+        if (lead < 0) { lead = offset; leadId = op.attributes?.id; }
         if (typeof op.attributes?.id === "string") starts.set(op.attributes.id, offset + 1);
         offset += 1;
       }
       offset += part.length;
     });
   }
-  const placed = edits.map((edit) => {
+  const placed = edits.flatMap((edit) => {
     const start = starts.get(edit.paragraphId);
     if (start === undefined) throw new RangeError(`No paragraph with ID ${edit.paragraphId}.`);
-    return { from: start + edit.from, to: start + edit.to, text: edit.text };
+    // Text before the first line break (lead() in doc.ts) is counted as the start of the first paragraph.
+    const shift = edit.paragraphId === leadId ? lead : 0;
+    if (edit.from >= shift) return [{ from: start + edit.from - shift, to: start + edit.to - shift, text: edit.text }];
+    if (edit.to <= shift) return [{ from: edit.from, to: edit.to, text: edit.text }];
+    // A name across that line break: the new text goes in the lead, and the line break and its ID stay.
+    return [{ from: edit.from, to: shift, text: edit.text }, { from: start, to: start + edit.to - shift, text: "" }];
   }).sort((a, b) => a.from - b.from);
 
   const delta: { retain?: number; insert?: string; delete?: number; attributes?: Record<string, unknown> }[] = [];
@@ -528,7 +537,7 @@ export function applyTextEdits(doc: ScreenplayDoc, edits: readonly TextEdit[]): 
       opIndex++;
     }
     if (edit.from > cursor) delta.push({ retain: edit.from - cursor });
-    delta.push({ insert: edit.text, attributes: { ...ops[opIndex]?.attributes } });
+    if (edit.text) delta.push({ insert: edit.text, attributes: { ...ops[opIndex]?.attributes } });
     delta.push({ delete: edit.to - edit.from });
     cursor = edit.to;
   }

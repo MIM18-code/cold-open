@@ -138,13 +138,26 @@ function writeMarked(runs: readonly Run[]): string {
   return out;
 }
 
-const NOTE = /(?<!\\)\[\[([\s\S]*?)\]\]/g;
-// Stands in for a note while emphasis is read, so a note inside bold text does not break the bold.
-const NOTE_MARK = "\uE000";
+// A bracket after an odd number of backslashes is escaped. After an even number ("a\\[[note]]") the backslashes
+// are escaped backslashes and the note is real. The lookbehind sits after the brackets so it runs only where a
+// note could start; placed first, it would rescan a long run of backslashes from every position.
+const NOTE = /\[\[(?<=(?:^|[^\\])(?:\\\\)*\[\[)([\s\S]*?)\]\]/g;
+
+/**
+ * Note text for between [[ and ]]. A "]" that another "]" follows, possibly after backslashes, gets a backslash
+ * after it, so "]]" inside a note, or a note ending in "]", does not close the note early. Other notes are unchanged.
+ */
+export const escapeNote = (text: string) => `${text}]`.replace(/\](?=\\*\])/g, "]\\").slice(0, -1);
+export const unescapeNote = (text: string) => `${text}]`.replace(/\]\\(?=\\*\])/g, "]").slice(0, -1);
 
 export function readInline(text: string): Run[] {
   const notes: string[] = [];
-  const marked = readMarked(text.replace(NOTE, (_, body: string) => (notes.push(body), NOTE_MARK)));
+  // Stands in for a note while emphasis is read, so a note inside bold text does not break the bold. It is a
+  // private-use character the text does not already hold, so a literal one in the text is not taken for a note.
+  let code = 0xe000;
+  while (text.includes(String.fromCharCode(code))) code++;
+  const NOTE_MARK = String.fromCharCode(code);
+  const marked = readMarked(text.replace(NOTE, (_, body: string) => (notes.push(unescapeNote(body)), NOTE_MARK)));
   const runs: Run[] = [];
   for (const run of marked) {
     run.text.split(NOTE_MARK).forEach((part, k) => {
@@ -175,5 +188,5 @@ export function fountainRuns(runs: readonly Run[]): Run[] {
 }
 
 export function writeInline(runs: readonly Run[]): string {
-  return segments(runs).map((part) => part.note ? `[[${part.runs[0]!.text}]]` : writeMarked(part.runs)).join("");
+  return segments(runs).map((part) => part.note ? `[[${escapeNote(part.runs[0]!.text)}]]` : writeMarked(part.runs)).join("");
 }

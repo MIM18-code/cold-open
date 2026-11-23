@@ -188,3 +188,83 @@ test("a scene heading with a very long run of spaces parses quickly", () => {
   // A number needs a space before it, as before.
   assert.equal(numbered.paragraphs[2]!.sceneNumber, undefined);
 });
+
+/** Write paragraphs, read them back, compare with what should come back, and check a second write is the same file. */
+function roundTrip(paragraphs: Omit<Paragraph, "id">[], expected = paragraphs): string {
+  const written = writeFountain({ titlePage: [], paragraphs: paragraphs.map((p, k) => ({ id: `p${k}`, ...p })) });
+  const back = parseFountain(written);
+  assert.deepEqual(back.paragraphs.map(({ id, sceneId, ...rest }) => rest), expected, written);
+  assert.equal(writeFountain(back), written);
+  return written;
+}
+
+test("a backslash right before a note stays text and the note stays private", () => {
+  assert.equal(roundTrip([{ type: "action", runs: [{ text: "a\\" }, { text: "secret", note: true }] }]), "a\\\\[[secret]]\n");
+  // One backslash still escapes the bracket.
+  assert.deepEqual(readInline("a\\[[not a note]]"), [{ text: "a[[not a note]]" }]);
+});
+
+test("a very long run of backslashes reads quickly", () => {
+  const started = performance.now();
+  readInline("\\".repeat(200_000));
+  assert.ok(performance.now() - started < 2000, "the note match does not rescan the backslashes from every position");
+});
+
+test("a standalone note with a blank line stays one note", () => {
+  assert.equal(roundTrip([{ type: "note", runs: [{ text: "line1\n\nline2" }] }]), "[[line1\n  \nline2]]\n");
+});
+
+test("an italic parenthetical, or one ending in a note, stays a parenthetical", () => {
+  const speech = (runs: Run[]): Omit<Paragraph, "id">[] => [
+    { type: "character", runs: [{ text: "ALICE" }] }, { type: "parenthetical", runs }, { type: "dialogue", runs: [{ text: "Hi." }] },
+  ];
+  // The parentheses themselves cannot carry emphasis in Fountain, so it moves inside them.
+  assert.equal(roundTrip(speech([{ text: "(beat)", italic: true }]), speech([{ text: "(" }, { text: "beat", italic: true }, { text: ")" }])),
+    "ALICE\n(*beat*)\nHi.\n");
+  assert.equal(roundTrip(speech([{ text: "(beat)" }, { text: "n", note: true }]), speech([{ text: "(beat" }, { text: "n", note: true }, { text: ")" }])),
+    "ALICE\n(beat[[n]])\nHi.\n");
+  // A space between the parenthesis and the note stays with the text.
+  assert.equal(roundTrip(speech([{ text: "(beat) " }, { text: "n", note: true }]), speech([{ text: "(beat " }, { text: "n", note: true }, { text: ")" }])),
+    "ALICE\n(beat [[n]])\nHi.\n");
+  // So does a space in a run of its own after an italic parenthetical.
+  roundTrip(speech([{ text: "(beat)", italic: true }, { text: " " }, { text: "n", note: true }]),
+    speech([{ text: "(" }, { text: "beat", italic: true }, { text: " " }, { text: "n", note: true }, { text: ")" }]));
+  // Any mix of notes and spaces after the parenthesis moves inside in order.
+  assert.equal(roundTrip(speech([{ text: "(beat) " }, { text: "one", note: true }, { text: " " }, { text: "two", note: true }]),
+    speech([{ text: "(beat " }, { text: "one", note: true }, { text: " " }, { text: "two", note: true }, { text: ")" }])),
+    "ALICE\n(beat [[one]] [[two]])\nHi.\n");
+  // An ordinary parenthetical is written as before.
+  assert.equal(roundTrip(speech([{ text: "(beat)" }])), "ALICE\n(beat)\nHi.\n");
+});
+
+test("]] inside a note does not end the note", () => {
+  roundTrip([{ type: "action", runs: [{ text: "a " }, { text: "x]]y", note: true }, { text: " b" }] }]);
+  roundTrip([{ type: "action", runs: [{ text: "a " }, { text: "ends in ]", note: true }] }]);
+  roundTrip([{ type: "note", runs: [{ text: "x]]y and a literal ]\\] too]" }] }]);
+});
+
+test("a scene number with an underscore survives export", () => {
+  assert.equal(roundTrip([{ type: "sceneHeading", runs: [{ text: "INT. HOUSE - DAY" }], sceneNumber: "1_A" }]), "INT. HOUSE - DAY #1_A#\n");
+});
+
+test("*/ inside a boneyard does not close it", () => {
+  assert.equal(roundTrip([{ type: "note", runs: [{ text: "x */ y" }], boneyard: true }]), "/*\nx *\\/ y\n*/\n");
+  roundTrip([{ type: "note", runs: [{ text: "C:\\\\share \\/ */" }], boneyard: true }]);
+  // A literal "*\\/" beside a real "*/" keeps its backslash.
+  roundTrip([{ type: "note", runs: [{ text: "a *\\/ b */ c" }], boneyard: true }]);
+  // Backslashes in a boneyard are written as typed, and a file that already holds doubled ones reads as written.
+  assert.equal(roundTrip([{ type: "note", runs: [{ text: "C:\\temp" }], boneyard: true }]), "/*\nC:\\temp\n*/\n");
+  assert.equal(plainText(parseFountain("/*\nC:\\\\temp\n*/\n").paragraphs[0]!.runs), "C:\\\\temp");
+});
+
+test("a forced scene heading that starts with a dot stays a heading", () => {
+  assert.equal(roundTrip([{ type: "sceneHeading", runs: [{ text: "...LATER" }], sceneNumber: "5" }]), ". ...LATER #5#\n");
+});
+
+test("a transition ending in < stays a transition", () => {
+  assert.equal(roundTrip([{ type: "transition", runs: [{ text: "SMASH CUT <" }] }]), ">SMASH CUT <[[]]\n");
+});
+
+test("a literal U+E000 in text is kept and does not move notes", () => {
+  roundTrip([{ type: "action", runs: [{ text: "x\uE000y " }, { text: "n1", note: true }, { text: " z " }, { text: "n2", note: true }] }]);
+});
