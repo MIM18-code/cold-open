@@ -126,6 +126,25 @@ test("a script too full to take another note keeps the box open with the reason,
   } finally { await close(run.electronApp, run.page); }
 });
 
+test("with sentence completion on, ⌘Return in the box belongs to the box, not to Complete Sentence", async () => {
+  const run = await launch();
+  try {
+    await seed(run.page);
+    const { page } = run;
+    await page.evaluate(() => (window as any).__app.setSetting("ai.complete", "shortcut"));
+    // The main process sends ⌘Return to any enabled command before the page sees it, so the command must be
+    // disabled while the note box has the keyboard.
+    const completeEnabled = () => page.evaluate(() => {
+      const app = (window as any).__app;
+      return app.commands.find((c: any) => c.id === "ai.completeSentence").enabled(app);
+    });
+    expect(await completeEnabled()).toBe(true);
+    await page.keyboard.press(`${KEY}+Shift+M`);
+    await expect(box(page).getByRole("textbox", { name: "Quick note text" })).toBeFocused();
+    expect(await completeEnabled()).toBe(false);
+  } finally { await close(run.electronApp, run.page); }
+});
+
 test("it works with the caret outside the script, and not at all in a read-only script", async () => {
   const run = await launch();
   try {

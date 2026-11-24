@@ -1,5 +1,5 @@
 // Live co-writing (share, join, presence) and folder sync through iCloud Drive or Dropbox.
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { parseInvite } from "@screenplay/relay/protocol";
 import { app, type Feature, type ModalProps } from "../../core/app.ts";
@@ -205,15 +205,25 @@ function JoinModal({ close, props }: ModalProps<{ invite?: string } | undefined>
   const [text, setText] = useState(props?.invite ?? "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Escape, the close button and a click outside close the dialog too; a join still connecting stops with it.
+  const joining = useRef(false), gone = useRef(false);
+  useEffect(() => {
+    gone.current = false;
+    return () => { gone.current = true; if (joining.current) void collab.stop(); };
+  }, []);
   const submit = async () => {
     setBusy(true);
     setError("");
+    joining.current = true;
     try {
       await collab.join(text);
-      close();
+      joining.current = false;
+      // Once this dialog is gone, another one may be open in its place.
+      if (!gone.current) close();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
+      joining.current = false;
       setBusy(false);
     }
   };

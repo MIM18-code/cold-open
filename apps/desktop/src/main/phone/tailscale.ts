@@ -6,6 +6,7 @@ import { networkInterfaces } from "node:os";
 import { openForRead } from "../safe-fs.ts";
 import type { PhoneTailscale } from "../../shared/channels/phone.ts";
 import { phoneTls, type PhoneTls } from "./tls.ts";
+import { cachedTrust, TAILSCALE_SIGNER } from "../trusted-program.ts";
 
 const execute = promisify(execFile);
 const binaries = ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"];
@@ -16,6 +17,21 @@ export const tailName = (s: string) => s.length <= 253
 export type TailNetwork = { address: string; name: string; hostname?: string; cli?: string; tailscale: true };
 export type RunTail = (file: string, args: string[]) => Promise<string>;
 const run: RunTail = async (file, args) => (await execute(file, args, { timeout: 30000, maxBuffer: 1024 * 1024 })).stdout;
+/** The path to run for a CLI location, or null when a signed release must not run it (trusted-program.ts). */
+export type TrustTail = (path: string) => Promise<string | null>;
+const trustTailscale: TrustTail = cachedTrust(TAILSCALE_SIGNER);
+/**
+ * The CLIs this app may run, in order. In a signed release a Homebrew build or the shell script in /usr/local/bin is
+ * skipped, since neither carries Tailscale's signature, and the app's own binary is used.
+ */
+async function trustedClis(trust: TrustTail): Promise<string[]> {
+  const clis: string[] = [];
+  for (const path of binaries) {
+    const cli = await trust(path);
+    if (cli && !clis.includes(cli)) clis.push(cli);
+  }
+  return clis;
+}
 export function tailStatus(raw: string): { address?: string; hostname?: string } {
   const status = JSON.parse(raw);
   if (status.BackendState !== "Running") return {};
@@ -36,8 +52,8 @@ export function tailStatusFields(raw: string): Omit<PhoneTailscale, "installed">
  * Whether Tailscale is installed, signed in, has MagicDNS and can issue HTTPS certificates. Returns booleans only,
  * so the Phone panel can explain the next step without any address, port or file path reaching the renderer.
  */
-export async function tailscaleCheck(exec: RunTail = run): Promise<PhoneTailscale> {
-  for (const cli of binaries) {
+export async function tailscaleCheck(exec: RunTail = run, trust: TrustTail = trustTailscale): Promise<PhoneTailscale> {
+  for (const cli of await trustedClis(trust)) {
     let raw: string;
     try { raw = await exec(cli, ["status", "--json"]); } catch { continue; }
     try { return { installed: true, ...tailStatusFields(raw) }; } catch { continue; }
@@ -45,8 +61,8 @@ export async function tailscaleCheck(exec: RunTail = run): Promise<PhoneTailscal
   return { installed: false, running: false, magicDns: false, https: false };
 }
 /** This Mac's Tailscale IPv4 address as Tailscale itself reports it, or null when Tailscale isn't running here. */
-export async function tailscaleOwnAddress(exec: RunTail = run): Promise<string | null> {
-  for (const cli of binaries) {
+export async function tailscaleOwnAddress(exec: RunTail = run, trust: TrustTail = trustTailscale): Promise<string | null> {
+  for (const cli of await trustedClis(trust)) {
     try {
       const { address } = tailStatus(await exec(cli, ["status", "--json"]));
       if (address) return address;
@@ -54,9 +70,9 @@ export async function tailscaleOwnAddress(exec: RunTail = run): Promise<string |
   }
   return null;
 }
-export async function tailscaleNetwork(exec: RunTail = run): Promise<TailNetwork | null> {
+export async function tailscaleNetwork(exec: RunTail = run, trust: TrustTail = trustTailscale): Promise<TailNetwork | null> {
   let stopped = false;
-  for (const cli of binaries) {
+  for (const cli of await trustedClis(trust)) {
     try {
       const raw = await exec(cli, ["status", "--json"]);
       // A stopped Tailscale still reports its last address, which nothing can reach until it runs again.
@@ -82,8 +98,8 @@ async function pem(path: string, limit: number) {
     return new TextDecoder().decode(await file.read(limit));
   } finally { await file.close(); }
 }
-export async function tailscaleTls(root: string, network: TailNetwork, exec: RunTail = run): Promise<PhoneTls> {
-  if (!network.hostname || !tailName(network.hostname) || !binaries.includes(network.cli ?? ""))
+export async function tailscaleTls(root: string, network: TailNetwork, exec: RunTail = run, trust: TrustTail = trustTailscale): Promise<PhoneTls> {
+  if (!network.hostname || !tailName(network.hostname) || !(await trustedClis(trust)).includes(network.cli ?? ""))
     throw new Error("Cold Open needs the Tailscale CLI and this Mac’s MagicDNS name. Enable MagicDNS in the Tailscale DNS settings.");
   await mkdir(root, { recursive: true, mode: 0o700 });
   const folder = await mkdtemp(join(root, "phone-tls-"));

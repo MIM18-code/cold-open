@@ -1,8 +1,9 @@
 // The pipeline with a fake speech engine and a fake formatter, plus settings and error messages.
 import { type Formatter, type Proposal, type SpeechEngine, type Transcript } from "@screenplay/dictation";
 import assert from "node:assert/strict";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { HELPER_RELATIVE, readConfig, resolveHelperPath } from "../src/main/dictation/config.ts";
@@ -88,11 +89,21 @@ test("a transcript-only take returns what was heard and never calls the formatte
 });
 
 test("the recording is deleted after the helper has read it", async () => {
-  const before = readdirSync(tmpdir()).filter((name) => name.startsWith("screenplay-dictation-"));
-  const pipeline = new DictationPipeline({ speech: () => fakeSpeech(SPOKEN), formatter: () => fakeFormatter(proposal) });
-  await pipeline.processAudio({ takeId: 1, audio, context: EMPTY_CONTEXT }, config);
-  const after = readdirSync(tmpdir()).filter((name) => name.startsWith("screenplay-dictation-"));
-  assert.deepEqual(after, before);
+  // A temp folder of its own: other test runs on the Mac make and remove recordings in the shared one meanwhile.
+  const sharedTemp = process.env.TMPDIR, ownTemp = mkdtempSync(join(tmpdir(), "dictation-pipeline-"));
+  process.env.TMPDIR = ownTemp;
+  try {
+    let heardFrom = "";
+    const speech: SpeechEngine = { ...fakeSpeech(SPOKEN), transcribe: (path) => { heardFrom = path; return fakeSpeech(SPOKEN).transcribe(path); } };
+    const pipeline = new DictationPipeline({ speech: () => speech, formatter: () => fakeFormatter(proposal) });
+    await pipeline.processAudio({ takeId: 1, audio, context: EMPTY_CONTEXT }, config);
+    assert.ok(heardFrom.startsWith(ownTemp), "the recording was made in the temp folder");
+    assert.deepEqual(readdirSync(ownTemp).filter((name) => name.startsWith("screenplay-dictation-")), []);
+  } finally {
+    if (sharedTemp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = sharedTemp;
+    rmSync(ownTemp, { recursive: true, force: true });
+  }
 });
 
 test("the speech model loads once", async () => {

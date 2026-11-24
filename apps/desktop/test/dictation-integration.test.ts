@@ -44,12 +44,25 @@ test("a spoken scene becomes a scene heading, action, a cue and dialogue", { tim
       execFileSync("afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", join(folder, "scene.aiff"), join(folder, "scene.wav")]);
       const audio = new Uint8Array(readFileSync(join(folder, "scene.wav")));
 
-      const leftovers = readdirTemp();
       const prepared = await runtime.prepare();
       console.log(`speech engine ready in ${prepared.speechMs.toFixed(0)} ms${prepared.modelWarning ? `; model warning: ${prepared.modelWarning}` : ""}`);
 
+      // The take's recording goes in a temp folder of its own, so the check below sees only this take: other test
+      // runs on the Mac make and remove recordings in the shared temp folder while this one is formatting.
       const stages: string[] = [];
-      const take = await runtime.processAudio({ takeId: 1, audio, context: EMPTY_CONTEXT }, (stage) => stages.push(stage));
+      const sharedTemp = process.env.TMPDIR;
+      process.env.TMPDIR = mkdtempSync(join(folder, "temp-"));
+      let take, leftovers: string[], recorded: string[] = [];
+      try {
+        take = await runtime.processAudio({ takeId: 1, audio, context: EMPTY_CONTEXT }, (stage) => {
+          if (stage === "saved") recorded = readdirTemp();
+          stages.push(stage);
+        });
+        leftovers = readdirTemp();
+      } finally {
+        if (sharedTemp === undefined) delete process.env.TMPDIR;
+        else process.env.TMPDIR = sharedTemp;
+      }
       console.log(`heard: ${take.transcript}`);
       console.log(take.elements.map((e) => `${e.type}: ${e.text}`).join("\n"));
       console.log(`timings ${JSON.stringify(take.timings)}; diagnostics ${take.diagnostics.map((d) => d.code).join(",") || "none"}`);
@@ -66,7 +79,8 @@ test("a spoken scene becomes a scene heading, action, a cue and dialogue", { tim
       assert.match(take.elements[0]!.text, /^INT\. .*KITCHEN.* - NIGHT$/);
       assert.equal(take.elements.find((e) => e.type === "character")?.text, "MAYA");
       assert.match(take.elements.find((e) => e.type === "dialogue")!.text, /anymore/i);
-      assert.deepEqual(readdirTemp(), leftovers, "the temporary recording is gone");
+      assert.equal(recorded.length, 1, "the recording was made in the take's own temp folder");
+      assert.deepEqual(leftovers, [], "the temporary recording is gone");
     } finally {
       rmSync(folder, { recursive: true, force: true });
     }

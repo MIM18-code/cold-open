@@ -27,10 +27,15 @@ export function resendableTakes(pair: Pairing, takes: Take[]): Take[] {
     .sort((a, b) => a.created - b.created || a.id.localeCompare(b.id));
 }
 
-/** What Send to Mac shares: unsent takes first, then, once all are sent, the AirDropped ones the Mac has not decided. */
-export function takesBatch(pair: Pairing, takes: Take[]): Take[] {
+/** What Send to Mac shares: unsent takes first, then, once all are sent, the AirDropped ones the Mac has not decided.
+ * A resend starts after `after`, the last take of the previous shared resend, so more than 100 can all be sent again;
+ * past the newest it starts over from the oldest. */
+export function takesBatch(pair: Pairing, takes: Take[], after?: Take): Take[] {
   const unsent = unsentTakes(pair, takes);
-  return (unsent.length ? unsent : resendableTakes(pair, takes)).slice(0, MAX_TAKES);
+  if (unsent.length) return unsent.slice(0, MAX_TAKES);
+  const resend = resendableTakes(pair, takes);
+  const rest = after ? resend.filter(t => (t.created - after.created || t.id.localeCompare(after.id)) > 0) : resend;
+  return (rest.length ? rest : resend).slice(0, MAX_TAKES);
 }
 
 export function takesFileName(now = new Date()): string {

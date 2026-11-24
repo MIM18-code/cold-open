@@ -31,7 +31,7 @@ import type { ScreenplayDoc } from "./doc.ts";
 import { DELETION_NODE, LOCK_OFFSET_ATTR, LOCK_PARAGRAPH_ATTR, OMITTED_NATIVE_ATTR, fdxPositionAt, paragraphsFromFdxNodes } from "./fdx.ts";
 import { newId } from "./ids.ts";
 import type { FdxDocumentExtras, Paragraph, Run, Script, XmlNode } from "./model.ts";
-import type { PageLock, Pagination } from "./pagination.ts";
+import type { Line, PageLock, Pagination } from "./pagination.ts";
 import { asParagraph, readOnce, storedFdx } from "./shapes.ts";
 import { sceneBlocks, sceneNumberLockFromFdx, sceneNumbersLocked, lockedSceneNumbersOf, writeSceneNumberLock } from "./structure.ts";
 import { asXmlAttrs, asXmlNode } from "./xml.ts";
@@ -485,6 +485,18 @@ export function pageRevisions(script: Pick<Script, "paragraphs" | "fdx">, pagina
     const own = deletionMarks(paragraph).filter((mark) => mark.setId !== "0");
     if (own.length) deletions.set(paragraph.id, [...(deletions.get(paragraph.id) ?? []), ...own]);
   }
+  // Each offset belongs to one line: from where the paragraph's line before it ends, up to its own end, which goes
+  // to the next line. A hyphen or CJK wrap ends one line where the next starts, and offsets in the spaces at a wrap
+  // are on no line, so the plain from-to test marked both lines or neither. The last line takes the rest of the
+  // paragraph, trailing spaces included.
+  const start = new Map<Line, number>(), last = new Map<string, Line>();
+  for (const page of pagination.pages) {
+    for (const line of page.lines) {
+      if (line.generated) continue;
+      start.set(line, last.get(line.paragraphId)?.to ?? line.from);
+      last.set(line.paragraphId, line);
+    }
+  }
   let previous: string | undefined;
   return pagination.pages.map((page) => {
     const marked: number[] = [];
@@ -503,7 +515,7 @@ export function pageRevisions(script: Pick<Script, "paragraphs" | "fdx">, pagina
         }
       }
       for (const mark of deletions.get(line.paragraphId) ?? []) {
-        if (mark.offset >= line.from && mark.offset <= line.to) {
+        if (mark.offset >= start.get(line)! && (mark.offset < line.to || last.get(line.paragraphId) === line)) {
           hit = true;
           note(mark.setId);
         }

@@ -40,6 +40,12 @@ test("Brainstorm sits left of Write, opens ready to type, and keeps each idea as
     await expect(page.getByRole("dialog", { name: "Quick note" })).toHaveCount(0);
     await expect(nav.locator(".plan-trigger")).toHaveText("Plan");
     await expect(nav.locator(".plan-trigger")).not.toHaveClass(/\bon\b/);
+    // The script's Dictate and Continue at end act on the page, so they leave with it; Focus stays.
+    const tools = page.getByRole("toolbar", { name: "Writing tools" });
+    await expect(tools.getByRole("button", { name: "Dictate" })).toHaveCount(0);
+    await expect(tools.getByRole("button", { name: "Continue at end" })).toHaveCount(0);
+    await expect(tools.getByRole("button", { name: /Format Draft/ })).toHaveCount(0);
+    await expect(tools.getByRole("button", { name: "Focus" })).toBeVisible();
 
     await page.keyboard.type("The garbage truck shows up a day early");
     await expect.poll(() => notes(page)).toEqual([{ text: "The garbage truck shows up a day early", kind: "note", anchor: undefined }]);
@@ -53,6 +59,8 @@ test("Brainstorm sits left of Write, opens ready to type, and keeps each idea as
     // Leaving keeps the note being typed and doesn't carry a floating box over to the script.
     await write.click();
     await expect(page.locator(".editor-pm")).toBeVisible();
+    await expect(tools.getByRole("button", { name: "Dictate" })).toBeVisible();
+    await expect(tools.getByRole("button", { name: "Continue at end" })).toBeVisible();
     await expect(page.getByRole("dialog", { name: "Quick note" })).toHaveCount(0);
     expect((await notes(page)).map((n) => n.text).sort()).toEqual(["Open on the dumpster", "The garbage truck shows up a day early"]);
 
@@ -69,5 +77,8 @@ test("Brainstorm sits left of Write, opens ready to type, and keeps each idea as
     // Planning views stay in the Plan menu; Brainstorm isn't repeated there.
     await nav.locator(".plan-trigger").click();
     await expect(page.getByRole("menu", { name: "Planning views" }).getByRole("menuitemradio", { name: /Brainstorm/ })).toHaveCount(0);
+    await page.getByRole("menu", { name: "Planning views" }).getByRole("menuitemradio").first().click();
+    await expect(tools.getByRole("button", { name: "Dictate" })).toHaveCount(0);
+    await expect(tools.getByRole("button", { name: "Continue at end" })).toHaveCount(0);
   } finally { await close(run.electronApp, run.page); }
 });

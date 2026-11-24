@@ -155,6 +155,25 @@ test("pages with revised lines: which lines get a mark and the latest set on the
   assert.ok(pages.some((page) => !page.marked.length && !page.set), "an unrevised page");
 });
 
+test("a deletion mark at a wrap point marks exactly one line", () => {
+  const state: RevisionState = { ...NO_REVISIONS, sets: [{ ...newRevisionSet(NO_REVISIONS), id: "1" }] };
+  const marked = (text: string, offset: number) => {
+    const doc = ScreenplayDoc.fromScript({ titlePage: [], paragraphs: [{ id: "a", type: "action", runs: [{ text }] }] });
+    addDeletionMark(doc, "a", offset, "1");
+    const script = doc.toScript();
+    const pagination = paginate(script);
+    return pageRevisions(script, pagination, state)[0]!.marked.map((index) => [pagination.pages[0]!.lines[index]!.from, pagination.pages[0]!.lines[index]!.to]);
+  };
+  // A hyphen wrap: the first line ends where the second starts.
+  assert.deepEqual(marked("word ".repeat(11) + "anti-establishment-disestablishmentarianism " + "more ".repeat(20), 60), [[60, 118]]);
+  // A CJK wrap, same.
+  assert.deepEqual(marked("あ".repeat(120), 30), [[30, 60]]);
+  // Inside the spaces between two lines, the mark goes to the following line.
+  assert.deepEqual(marked("aaaa ".repeat(10) + "aaaaaaaa" + "     " + "bbbb ".repeat(20), 62), [[63, 122]]);
+  // In the spaces after the last line's text, the mark stays on the last line.
+  assert.deepEqual(marked("a".repeat(61) + "     ", 64), [[0, 61]]);
+});
+
 test("locked pages follow their text through edits and round-trip through FDX", () => {
   const doc = docOf(scenes(10));
   assert.equal(pageLocks(doc), null);

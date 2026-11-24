@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  applyDocumentTemplate, entranceRanges, lockPages, pageLocks, storedFdx, numberScenes, pageOf, paginate, parseFdx, plainText,
+  applyDocumentStyle, applyDocumentTemplate, applyTag, entranceRanges, newRevisionSet, NO_REVISIONS, readStyle, revisionState,
+  setRevisionState, lockPages, pageLocks, storedFdx, numberScenes, pageOf, paginate, parseFdx, plainText,
   ScreenplayDoc, returnKeyFlow, scriptPaginationOptions, setSceneNumbersLocked, templatePageBreaks, templateParagraphs, templateScript,
   templateStyle, writeFdx, type ElementType, type Paragraph, type Script, type TemplateId,
 } from "../src/index.ts";
@@ -314,6 +315,20 @@ test("applying a template stores only the style, not locked pages that live unde
   // Undoing Lock Pages takes its key away; the locks must not come back from the stored extras.
   doc.meta.delete("pageLocks");
   assert.equal(pageLocks(doc)?.length ?? 0, 0);
+});
+
+test("applying an edited layout stores only the style, not revisions or tags that live under their own keys", () => {
+  const doc = ScreenplayDoc.fromScript(longScript());
+  const set = newRevisionSet(NO_REVISIONS, { name: "Blue" });
+  setRevisionState(doc, { ...NO_REVISIONS, sets: [set], currentSetId: set.id });
+  applyTag(doc, { paragraphId: "a0_0", offset: 0 }, { paragraphId: "a0_0", offset: 5 }, "Props", "Lamp");
+  applyDocumentStyle(doc, readStyle(doc.toScript()));
+  const stored = storedFdx(doc)!;
+  assert.equal([...stored.before, ...stored.after].some((node) => node.name === "Revisions" || node.name === "TagData"), false);
+  assert.equal([...stored.before, ...stored.after].some((node) => node.name === "PageLayout"), true);
+  // Undoing the revision set takes its key away; it must not come back from the stored extras.
+  doc.meta.delete("revisions");
+  assert.equal(revisionState(doc).sets.length, 0);
 });
 
 const longScript = (): Script => ({ titlePage: [], paragraphs: Array.from({ length: 30 }, (_, i) => [

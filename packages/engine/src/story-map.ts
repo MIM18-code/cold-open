@@ -281,11 +281,16 @@ export function storyMap(
   if (!sceneList.length || !pages) return { pages, pageLabels, scenes: [] };
   const blocks = sceneBlocks(script.paragraphs);
   const perPage = linesPerPage(pagination.layout.page);
-  const starts = sceneList.map((summary) => {
-    const at = pagination.positions.get(summary.headingId);
-    if (!at) return 0;
-    return Math.min(pages, Math.max(0, at.page + at.line / Math.max(1, perPage)));
+  const order = new Map(script.paragraphs.map((paragraph, i) => [paragraph.id, i]));
+  const positions = sceneList.map((summary) => {
+    let at = pagination.positions.get(summary.headingId);
+    // A heading that holds only a note prints nothing and has no position: the scene starts at its next printed
+    // paragraph, or else where the scene before it starts.
+    for (let i = (order.get(summary.headingId) ?? Infinity) + 1; !at && i < script.paragraphs.length; i++) at = pagination.positions.get(script.paragraphs[i]!.id);
+    return at;
   });
+  positions.forEach((at, i) => { positions[i] = at ?? positions[i - 1]; });
+  const starts = positions.map((at) => at ? Math.min(pages, Math.max(0, at.page + at.line / Math.max(1, perPage))) : 0);
   const rank = new Map((revisions?.sets ?? []).map((set, index) => [set.id, index]));
   return {
     pages,
@@ -311,7 +316,7 @@ export function storyMap(
         headingId: summary.headingId,
         start,
         length: Math.max(0, end - start),
-        page: pageLabels[pagination.positions.get(summary.headingId)?.page ?? 0] ?? "1",
+        page: pageLabels[positions[index]?.page ?? 0] ?? "1",
         eighths: summary.eighths,
         ...(summary.number !== undefined ? { number: summary.number } : {}),
         heading: summary.heading,

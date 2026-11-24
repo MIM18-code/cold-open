@@ -174,14 +174,17 @@ async function installedRuntime(idleMs = 1000) {
   return { root, worker, runtime, network: () => network - baseline };
 }
 
-test("installed synthesis and engine reloads stay offline, warm once, release on idle/pressure, and switch models", async () => {
+test("installed synthesis and engine reloads stay offline, warm once, release on idle/pressure, and switch models", async (t) => {
   const f = await installedRuntime(30);
+  // The idle release runs on the test's clock: on a busy Mac the file reads between two requests can take longer
+  // than the idle time, which released the model early and made the second request load it again.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   try {
     await f.runtime.prepare("phonon", true);
     await f.runtime.synthesize({ ...request, id: "one" });
     assert((await f.runtime.synthesize({ ...request, id: "two" })).cached);
     assert.equal(f.worker.prepares, 1);
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    t.mock.timers.tick(30);
     assert(!f.worker.running);
     await f.runtime.synthesize({ ...request, id: "three", text: "New text" });
     assert.equal(f.worker.prepares, 2);

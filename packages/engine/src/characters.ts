@@ -8,7 +8,7 @@ import { characterName, countWords, findMentions } from "./reports.ts";
 export const NARRATOR = "@narrator";
 
 export interface CharacterIdentity {
-  /** Durable ID: the paragraph ID of the first cue, which survives a rename. */
+  /** Durable ID, which survives a rename: the paragraph ID of the first cue no other character's ID already uses. */
   id: string;
   /** Normalized name as the cues spell it now. */
   displayName: string;
@@ -79,13 +79,20 @@ function spoken(paragraph: Paragraph): string {
 /**
  * Group the script's cues into durable identities. Stored identities are trusted as given: their aliases
  * are confirmed merges, so a cue under an alias joins that character. Without stored aliases every name is
- * its own character. A cue whose paragraph ID belongs to a stored identity keeps that identity through a
- * rename, and the old name becomes an alias so exports and older cast files still resolve.
+ * its own character.
+ *
+ * A stored character is renamed only when none of its saved cues still carries its name or an alias, and
+ * then only to a name no stored character owns (the most common one on its cues). The Rename Character command
+ * does not rely on this: it saves the new name with the cast. The old name becomes
+ * an alias so exports and older cast files still resolve, and the character keeps its ID and voice. Any other
+ * cue goes by the name it carries now: retyping one of ALICE's cues as BOB moves that line to BOB and leaves
+ * ALICE as she was. A new character takes the ID of its first cue unless a character already has that ID.
  */
 export function buildCharacterRegistry(script: Script, stored: readonly CharacterIdentity[] = []): CharacterRegistry {
   const confirmed = stored.slice(0, 1000).map(cloneIdentity);
   const byName = new Map<string, CharacterIdentity>();
-  const byCue = new Map<string, CharacterIdentity>();
+  // A cast saved one row at a time can list a moved cue under its old character and its new one.
+  const byCue = new Map<string, CharacterIdentity[]>();
   for (const identity of confirmed) {
     const name = normalizeCharacterName(identity.displayName);
     identity.displayName = name;
@@ -93,34 +100,95 @@ export function buildCharacterRegistry(script: Script, stored: readonly Characte
     if (!name) continue;
     byName.set(name, identity);
     for (const alias of identity.aliases) if (!byName.has(alias)) byName.set(alias, identity);
-    for (const cueId of identity.cueIds) byCue.set(cueId, identity);
+    for (const cueId of identity.cueIds) byCue.set(cueId, [...byCue.get(cueId) ?? [], identity]);
     // Rebuilt in script order below; a stored order says nothing about this revision.
     identity.cueIds = [];
   }
 
+  const cues: { id: string; name: string }[] = [];
+  for (const paragraph of script.paragraphs) {
+    if (paragraph.type === "character") cues.push({ id: paragraph.id, name: normalizeCharacterName(spoken(paragraph)) });
+  }
+  const owns = (identity: CharacterIdentity, name: string) => identity.displayName === name || identity.aliases.includes(name);
+
+  // Pass 1: a stored character whose saved cues all carry one new name was renamed (Rename Character). A name
+  // another stored character owns means the lines moved to that character instead, so nothing is renamed.
+  const surviving = new Map<CharacterIdentity, { name: string; shared: boolean }[]>();
+  for (const cue of cues) {
+    const listers = cue.name ? byCue.get(cue.id) ?? [] : [];
+    for (const owner of listers) surviving.set(owner, [...surviving.get(owner) ?? [], { name: cue.name, shared: listers.length > 1 }]);
+  }
+  // A cue two characters list is weak evidence, because one of the rows is a stale listing of a line that moved.
+  // A character's new name is the most common free name on its cues. Renames are granted one at a time, first
+  // to a character with a cue of its own under its pick, because each grant takes a name out of play and can
+  // change what the others would pick.
+  const owned = new Set(confirmed.flatMap((identity) => [identity.displayName, ...identity.aliases]));
+  const pending = new Map([...surviving].filter(([identity, found]) => !found.some((cue) => owns(identity, cue.name))));
+  const pick = (found: { name: string; shared: boolean }[]) => {
+    const counts = new Map<string, number>(), solo = new Set<string>();
+    for (const cue of found) {
+      if (owned.has(cue.name)) continue;
+      counts.set(cue.name, (counts.get(cue.name) ?? 0) + 1);
+      if (!cue.shared) solo.add(cue.name);
+    }
+    // A tie goes to a name on a cue of the character's own, then to the name that comes first in the script
+    // (map order is first appearance).
+    const rank = (name: string) => counts.get(name)! * 2 + Number(solo.has(name));
+    let name: string | undefined;
+    for (const other of counts.keys()) if (!name || rank(other) > rank(name)) name = other;
+    return name ? { name, own: solo.has(name) } : undefined;
+  };
+  for (;;) {
+    let grant: [CharacterIdentity, string] | undefined;
+    for (const own of [true, false]) {
+      for (const [identity, found] of pending) {
+        const choice = pick(found);
+        // Names are only ever taken, so a character with none left to pick is done.
+        if (!choice) pending.delete(identity);
+        else if (choice.own || !own) { grant = [identity, choice.name]; break; }
+      }
+      if (grant) break;
+    }
+    if (!grant) break;
+    const [identity, renamed] = grant;
+    pending.delete(identity);
+    if (!identity.aliases.includes(identity.displayName)) identity.aliases.push(identity.displayName);
+    identity.displayName = renamed;
+    byName.set(renamed, identity);
+    owned.add(renamed);
+  }
+
+  // Pass 2: a saved cue stays with its character while it carries that character's name; every other cue goes by name.
   const characters: CharacterIdentity[] = [];
   const seen = new Set<CharacterIdentity>();
+  const created: CharacterIdentity[] = [];
   let current: CharacterIdentity | undefined;
+  let next = 0;
   for (const paragraph of script.paragraphs) {
     if (paragraph.type === "character") {
-      const name = normalizeCharacterName(spoken(paragraph));
+      const { name } = cues[next++]!;
       if (!name) { current = undefined; continue; }
-      current = byCue.get(paragraph.id) ?? byName.get(name);
+      current = byCue.get(paragraph.id)?.find((owner) => owns(owner, name)) ?? byName.get(name);
       if (!current) {
-        current = { id: paragraph.id, displayName: name, aliases: [], cueIds: [] };
+        current = { id: "", displayName: name, aliases: [], cueIds: [] };
         byName.set(name, current);
-        byCue.set(paragraph.id, current);
-      } else if (current.displayName !== name && !current.aliases.includes(name)) {
-        // A rename: keep the voice and pronunciation keyed by identity, remember the old name.
-        if (current.displayName && !current.aliases.includes(current.displayName)) current.aliases.push(current.displayName);
-        current.displayName = name;
-        byName.set(name, current);
+        created.push(current);
       }
       if (!current.cueIds.includes(paragraph.id)) current.cueIds.push(paragraph.id);
       if (!seen.has(current)) { seen.add(current); characters.push(current); }
     } else if (paragraph.type !== "parenthetical" && !NON_PRINTING.has(paragraph.type)) {
       current = undefined;
     }
+  }
+
+  // Two characters with one ID would share a voice and merge their lines, so a new character skips any cue ID
+  // a character already uses, and falls back to a numbered ID when all of its cue IDs are taken.
+  const taken = new Set(confirmed.map((identity) => identity.id));
+  for (const identity of created) {
+    let id = identity.cueIds.find((cueId) => !taken.has(cueId));
+    for (let n = 2; !id; n++) if (!taken.has(`${identity.cueIds[0]}~${n}`)) id = `${identity.cueIds[0]}~${n}`;
+    identity.id = id;
+    taken.add(id);
   }
 
   const suggestions: AliasSuggestion[] = [];

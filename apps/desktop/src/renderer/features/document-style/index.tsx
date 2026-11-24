@@ -1,5 +1,5 @@
 import {
-  applyDocumentTemplate, captureScriptNotes, ELEMENT_TYPES, FDX_STYLE_NAMES, TEMPLATE_IDS, TEMPLATE_NAMES, TEMPLATE_NOTES,
+  applyDocumentStyle, applyDocumentTemplate, captureScriptNotes, ELEMENT_TYPES, FDX_STYLE_NAMES, TEMPLATE_IDS, TEMPLATE_NAMES, TEMPLATE_NOTES,
   pageLocks, readStyle, templateStyle, underlineEntrances, writeStyle, type DocumentStyle, type ElementType, type TemplateId,
 } from "@screenplay/engine";
 import { useEffect, useMemo, useState } from "react";
@@ -100,10 +100,10 @@ function StyleDialog({ close }: ModalProps) {
         applyDocumentTemplate(session.doc, template, {
           style, underlineEntrances: underline, parenthesizeStageDirections: parenthesize,
         });
+        captureScriptNotes(session.doc);
       } else {
-        session.doc.meta.set("fdx", preview.fdx!);
+        applyDocumentStyle(session.doc, style);
       }
-      captureScriptNotes(session.doc);
     });
     session.undo.stopCapturing();
     close();

@@ -126,13 +126,26 @@ export function compileReadPlan(script: Script, options: ReadOptions = DEFAULT_R
   return cues;
 }
 export interface CastBinding { id: string; name: string; aliases: string[]; cueIds: string[]; voices: Record<string, string>; locked: boolean; }
-/** Matching cue IDs preserves a voice through Rename Character; aliases and names are fallbacks for external imports. */
+/**
+ * A character keeps its ID through Rename Character, so matching IDs comes first for every role before any cue
+ * overlap is considered: a line moved to another character must not carry the old owner's voice with it. Shared
+ * cue IDs, then names and aliases, are fallbacks for external imports.
+ */
 export function reconcileCast(roles: ReadRole[], previous: readonly CastBinding[]): CastBinding[] {
   const used = new Set<string>();
+  const matched = new Map<ReadRole, CastBinding>();
+  const phase = (fits: (b: CastBinding, r: ReadRole) => boolean) => {
+    for (const r of roles) {
+      if (matched.has(r)) continue;
+      const old = previous.find((b) => !used.has(b.id) && fits(b, r));
+      if (old) { used.add(old.id); matched.set(r, old); }
+    }
+  };
+  phase((b, r) => b.id === r.id);
+  phase((b, r) => b.cueIds.some((id) => r.cueIds.includes(id)));
+  phase((b, r) => b.name === r.name || b.aliases.includes(r.name) || r.aliases.includes(b.name));
   return roles.map((r) => {
-    const old = previous.find((b) => !used.has(b.id) && b.cueIds.some((id) => r.cueIds.includes(id)))
-      ?? previous.find((b) => !used.has(b.id) && (b.id === r.id || b.name === r.name || b.aliases.includes(r.name) || r.aliases.includes(b.name)));
-    if (old) used.add(old.id);
+    const old = matched.get(r);
     return { id: r.id, name: r.name, aliases: [...r.aliases], cueIds: [...r.cueIds], voices: { ...old?.voices }, locked: old?.locked ?? false };
   });
 }

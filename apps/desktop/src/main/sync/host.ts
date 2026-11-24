@@ -41,18 +41,22 @@ export class Host {
   private relay: Relay | null = null;
   private starting: Promise<Relay> | null = null;
   private readonly rooms = new Map<number, RoomKeys>();
+  /** Starts waiting for the relay. Such a window has no room yet for stop() to close, so stop() marks its starts. */
+  private readonly waiting = new Set<{ owner: number; stopped: boolean }>();
   /** "0.0.0.0" to accept other Macs; "127.0.0.1" in tests, so no firewall prompt appears. */
   private readonly bindHost: string;
   private readonly interfaces: typeof networkInterfaces;
   /** Tailscale's own report of this Mac's address: an address in Tailscale's range alone isn't proof. */
   private readonly tailscale: () => Promise<string | null>;
+  private readonly createRelay: typeof createRelay;
 
-  constructor(bindHost: string, options: { networkInterfaces?: typeof networkInterfaces; tailscale?: () => Promise<string | null> } = {}) {
+  constructor(bindHost: string, options: { networkInterfaces?: typeof networkInterfaces; tailscale?: () => Promise<string | null>; createRelay?: typeof createRelay } = {}) {
     this.bindHost = bindHost;
     // Loopback tests advertise only loopback unless they supply fake interfaces.
     const loopback = bindHost === "127.0.0.1";
     this.interfaces = options.networkInterfaces ?? (loopback ? () => ({}) : networkInterfaces);
     this.tailscale = options.tailscale ?? (loopback ? async () => null : () => tailscaleOwnAddress());
+    this.createRelay = options.createRelay ?? createRelay;
   }
 
   isHosting(owner: number): boolean {
@@ -60,11 +64,19 @@ export class Host {
   }
 
   async start(owner: number): Promise<HostInfo> {
-    const relay = await this.ensureRelay();
-    let keys = this.rooms.get(owner);
-    if (!keys) {
-      keys = relay.createRoom();
+    const attempt = { owner, stopped: false };
+    this.waiting.add(attempt);
+    let relay: Relay, keys: RoomKeys;
+    try {
+      relay = await this.ensureRelay();
+      // The window closed, or stopped sharing, while the relay was starting. Making its room now would leave the
+      // relay listening for a window that is gone.
+      if (attempt.stopped) throw new Error("Sharing was stopped before it started.");
+      keys = this.rooms.get(owner) ?? relay.createRoom();
       this.rooms.set(owner, keys);
+    } finally {
+      this.waiting.delete(attempt);
+      if (!this.rooms.size && !this.waiting.size) await this.close();
     }
     const tail = await this.tailscale().catch(() => null);
     const lan = lanAddress(this.interfaces(), tail);
@@ -88,29 +100,36 @@ export class Host {
   }
 
   async stop(owner: number): Promise<void> {
+    for (const attempt of this.waiting) if (attempt.owner === owner) attempt.stopped = true;
     const keys = this.rooms.get(owner);
     if (!keys) return;
     this.rooms.delete(owner);
     this.relay?.closeRoom(keys.room);
-    if (!this.rooms.size) await this.close();
+    // Another window may be waiting for this relay to make its own room.
+    if (!this.rooms.size && !this.waiting.size) await this.close();
   }
 
   async close(): Promise<void> {
-    const relay = this.relay ?? (await this.starting?.catch(() => null));
+    const relay = this.relay, starting = this.starting;
+    // Before any await: a start still waiting must not make a room on the relay being closed, and a start that
+    // comes later must bind a relay of its own.
     this.relay = null;
     this.starting = null;
     this.rooms.clear();
-    await relay?.close();
+    for (const attempt of this.waiting) attempt.stopped = true;
+    await (relay ?? (await starting?.catch(() => null)))?.close();
   }
 
   private async ensureRelay(): Promise<Relay> {
     if (this.relay) return this.relay;
-    this.starting ??= createRelay({ host: this.bindHost, port: 0, allowClaim: false });
+    const starting = this.starting ??= this.createRelay({ host: this.bindHost, port: 0, allowClaim: false });
     try {
-      this.relay = await this.starting;
-      return this.relay;
+      const relay = await starting;
+      // close() takes a relay that is still starting; that one is not kept.
+      if (this.starting === starting) this.relay = relay;
+      return relay;
     } finally {
-      this.starting = null;
+      if (this.starting === starting) this.starting = null;
     }
   }
 }

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { TABLE_READ, validateSynthesis, isReadEngine } from "../../shared/channels/table-read.ts";
 import type { ServiceContext } from "../context.ts";
+import { isPackagedApp } from "../trusted-program.ts";
 import { VoiceModelManager } from "../models/voice-manager.ts";
 import { VOICE_PACKS } from "../models/voice-manifest.ts";
 import { ReferenceBank } from "../tts/reference-bank.ts";
@@ -21,7 +22,9 @@ export function register(ctx: ServiceContext): void {
   };
   const exports = new Map<number, { abort: AbortController; done: Promise<unknown> }>();
   const destinations = new Set<string>();
-  const helper = [join(process.resourcesPath, "voice-helper", "voice-helper"), join(ctx.paths.repoRoot, "native/voice-helper/.build/release/voice-helper")].find(existsSync);
+  // A packaged app runs only the helper it ships; the build folder is for development.
+  const helper = [join(process.resourcesPath, "voice-helper", "voice-helper"),
+    ...(isPackagedApp() ? [] : [join(ctx.paths.repoRoot, "native/voice-helper/.build/release/voice-helper")])].find(existsSync);
   const get = (sender: Electron.WebContents) => {
     let runtime = runtimes.get(sender.id);
     if (!runtime) {

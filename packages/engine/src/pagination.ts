@@ -359,7 +359,7 @@ function paragraphLayout(paragraph: Paragraph, element: ElementLayout, linesPerI
   const before = value("SpaceBefore"), spacing = value("Spacing");
   if (left !== undefined && right !== undefined && right > left) Object.assign(out, { left, right });
   if (first !== undefined) out.firstIndent = first;
-  if (before !== undefined) out.spaceBefore = before / (72 / linesPerInch);
+  if (before !== undefined && before >= 0) out.spaceBefore = before / (72 / linesPerInch);
   if (spacing !== undefined && spacing > 0) out.spacing = spacing;
   return out;
 }
@@ -1250,7 +1250,8 @@ export function fdxPaginationOptions(script: Script): PaginationOptions {
     const first = number(paragraph, "FirstIndent");
     if (first !== undefined) element.firstIndent = first;
     const before = number(paragraph, "SpaceBefore");
-    if (before !== undefined) element.spaceBefore = before / (72 / linesPerInch);
+    // A negative value would put lines above the page, so the default applies.
+    if (before !== undefined && before >= 0) element.spaceBefore = before / (72 / linesPerInch);
     const spacing = number(paragraph, "Spacing");
     if (spacing !== undefined && spacing > 0) element.spacing = spacing;
     const align = attribute(paragraph, "Alignment")?.toLowerCase();
@@ -1272,11 +1273,15 @@ export function fdxPaginationOptions(script: Script): PaginationOptions {
 
   const page = fdxNodes(script, "PageLayout")[0];
   if (page) {
+    // A broken file's margins can leave room for no lines, which made eighths infinite. Negative margins, and a top
+    // and bottom that leave under two inches of text (the layout dialog's own limit), fall back to the defaults.
     const margin = (name: string) => {
       const points = number(page, name);
-      return points !== undefined ? points / 72 : undefined;
+      return points !== undefined && points >= 0 ? points / 72 : undefined;
     };
-    const top = margin("TopMargin"), bottom = margin("BottomMargin"), header = margin("HeaderMargin"), footer = margin("FooterMargin");
+    const header = margin("HeaderMargin"), footer = margin("FooterMargin");
+    let top = margin("TopMargin"), bottom = margin("BottomMargin");
+    if ((top ?? PAGE.top) + (bottom ?? PAGE.bottom) > PAGE.height - 2) top = bottom = undefined;
     options.page = {
       ...PAGE,
       ...(top !== undefined ? { top } : {}), ...(bottom !== undefined ? { bottom } : {}),

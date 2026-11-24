@@ -33,7 +33,8 @@ const stubs: Record<string, string> = {
   "./live": `export const relay = {}; export const readScript = () => [];
     export function connect(pair, script, presence, status) { relay.status = status; return () => { relay.status = undefined; }; }`,
   "./production.ts": `export const folderProduction = () => ({});`,
-  "./share.ts": `export const shared = []; export async function shareTakes(name, json) { shared.push(json); return true; }`,
+  "./share.ts": `export const shared = [], sheet = { ok: true };
+    export async function shareTakes(name, json) { shared.push(json); return sheet.ok; }`,
   "./store": `export const takes = [], ended = new Map(); export const UNPAIRED = "";
     export const listTakes = () => [...takes].sort((a, b) => b.created - a.created).map(t => ({ ...t }));
     export function saveTake(t) { takes.push({ ...t }); } export const saveNote = saveTake;
@@ -44,7 +45,7 @@ const stubs: Record<string, string> = {
 };
 const result = await build({ stdin: { contents: `export { useRemote } from "./src/useRemote"; export { begin, unmount } from "react";
   export { appState } from "react-native"; export { keychain } from "expo-secure-store"; export { relay } from "./live";
-  export { takes, ended } from "./store"; export { shared } from "./share.ts"; export { folder } from "expo";`, resolveDir: root },
+  export { takes, ended } from "./store"; export { shared, sheet } from "./share.ts"; export { folder } from "expo";`, resolveDir: root },
   bundle: true, write: false, platform: "node", format: "esm",
   plugins: [{ name: "stubs", setup(b) {
     b.onResolve({ filter: /.*/ }, args => args.path in stubs ? { path: args.path, namespace: "stubs" } : undefined);
@@ -60,7 +61,7 @@ const remembered = JSON.stringify({ v: 1, url: `https://mac.tail123.ts.net:4456/
 const flush = () => new Promise(r => setImmediate(r));
 const render = () => { hook.begin(); return hook.useRemote(); };
 async function paired() {
-  hook.unmount(); hook.takes.length = 0; hook.ended.clear(); hook.shared.length = 0;
+  hook.unmount(); hook.takes.length = 0; hook.ended.clear(); hook.shared.length = 0; hook.sheet.ok = true;
   hook.keychain.raw = remembered;
   render(); await flush();
   render(); await flush();
@@ -114,6 +115,28 @@ test("takes sent by AirDrop with no decision from the Mac can be sent again", as
   assert.equal(await render().sendToMac(), 1);
   assert.equal(hook.shared.length, 2);
   assert.equal(JSON.parse(hook.shared[1]).takes[0].id, "receipt-123456789");
+  hook.unmount();
+});
+
+test("AirDrop again moves on to the next 100 undecided takes after each share and wraps to the first", async t => {
+  t.mock.method(globalThis, "fetch", async () => { throw new TypeError("Network request failed"); });
+  await paired();
+  const start = Date.now();
+  for (let i = 0; i < 250; i++) hook.takes.push({ id: `receipt-${String(i).padStart(9, "0")}`, room, kind: "note",
+    text: "Lamp.", paragraphId: "p", sourceText: "", scene: "Scene 1", created: start + i, outcome: "airdropped" });
+  const first = () => JSON.parse(hook.shared.at(-1)).takes[0].id;
+  assert.equal(await render().sendToMac(), 100);
+  assert.equal(first(), "receipt-000000000");
+  hook.sheet.ok = false;
+  assert.equal(await render().sendToMac(), 0);
+  assert.equal(first(), "receipt-000000100", "the cancelled share offered the next batch");
+  hook.sheet.ok = true;
+  assert.equal(await render().sendToMac(), 100, "a cancelled share does not advance");
+  assert.equal(first(), "receipt-000000100");
+  assert.equal(await render().sendToMac(), 50);
+  assert.equal(first(), "receipt-000000200");
+  assert.equal(await render().sendToMac(), 100);
+  assert.equal(first(), "receipt-000000000");
   hook.unmount();
 });
 

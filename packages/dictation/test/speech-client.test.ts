@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,8 +23,11 @@ test("closing a helper whose binary is missing settles, so quitting does not wai
 function fakeHelper(body: string): string {
   const folder = mkdtempSync(join(tmpdir(), "speech-helper-test-"));
   const file = join(folder, "speech-helper");
-  writeFileSync(file, `#!${process.execPath}\n${body}\n`);
+  writeFileSync(file, `#!${process.execPath}\nif (process.argv[2] !== "serve") process.exit(0);\n${body}\n`);
   chmodSync(file, 0o755);
+  // macOS checks a new executable on its first launch, one file at a time across the system: about 250 ms alone and
+  // seconds when many tests start helpers at once, longer than a test's short call timeout. Launch it once here.
+  spawnSync(file, ["warm-up"]);
   return file;
 }
 

@@ -44,6 +44,19 @@ test("stable cue IDs keep casting through renames and additions", () => {
   const next = reconcileCast(renamed, previous);
   assert.equal(next[0]!.id, "c"); assert.equal(next[0]!.voices.ming, "US_Emma"); assert(next[0]!.locked);
 });
+test("a line moved to another character does not carry its old owner's voice", () => {
+  const role = (id: string, name: string, cueIds: string[]) => ({ id, name, aliases: [], cueIds, sample: "Hi." });
+  const bound = (id: string, name: string, cueIds: string[], voice: string) => ({ id, name, aliases: [], cueIds, voices: { ming: voice }, locked: false });
+  // BOB now holds a1, which used to be ALICE's, and comes first in the script.
+  const next = reconcileCast([role("b1", "BOB", ["a1", "b1"]), role("a1", "ALICE", ["a2"])],
+    [bound("a1", "ALICE", ["a1", "a2"], "US_Emma"), bound("b1", "BOB", ["b1"], "US_Adam")]);
+  assert.deepEqual(next.map((c) => [c.id, c.voices.ming]), [["b1", "US_Adam"], ["a1", "US_Emma"]]);
+  // CAROL is new, comes first and shares a cue with ALICE's saved row. ALICE's ID match still wins her voice.
+  const fresh = reconcileCast([role("a1~2", "CAROL", ["a1"]), role("a1", "ALICE", ["a2"])], [bound("a1", "ALICE", ["a1", "a2"], "US_Emma")]);
+  assert.deepEqual(fresh.map((c) => [c.id, c.voices.ming]), [["a1~2", undefined], ["a1", "US_Emma"]]);
+  // Without a matching ID, a shared cue still finds the voice (an imported cast).
+  assert.equal(reconcileCast([role("x", "ALICE", ["a2"])], [bound("a1", "ALICIA", ["a2"], "US_Emma")])[0]!.voices.ming, "US_Emma");
+});
 test("dialogue report includes directions, extensions and full multiline speeches, not notes", () => {
   const pagination = paginate(script), rows = dialogueReport(script, pagination);
   assert.equal(rows.length, 2); assert.equal(rows[0]!.cue, "MAYA (V.O.)");

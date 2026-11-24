@@ -1,10 +1,10 @@
 // Cast fields use separate meta keys so disconnected writers can edit the same role without replacing maps.
 // Legacy rows stay live defaults, read on every call. A v3 field wins only where a writer set that exact key.
-import { type CastBinding, type ScreenplayDoc } from "@screenplay/engine";
+import { normalizeCharacterName, type CastBinding, type ScreenplayDoc, type Script } from "@screenplay/engine";
 import * as Y from "yjs";
 
 import { isReadEngine } from "../../../shared/channels/table-read.ts";
-import { parseCast, type CastState } from "./casting.ts";
+import { castForScript, parseCast, type CastState } from "./casting.ts";
 
 export const LEGACY_CAST_KEY = "tableRead.cast.v1";
 const FIELD_PREFIX = "tableRead.cast.v3.character.";
@@ -216,6 +216,37 @@ export function writeCast(session: CastSession, write: CastWrite): boolean {
     }
   });
   return true;
+}
+
+/**
+ * Rename Character is about to change every cue under `from` to `to` in `script`. The cast follows, so the lines
+ * keep their voice. A saved character that has `from` gets `to` as its main name, or as an alias when `from` was
+ * an alias. When `to` is already a saved character the lines join it, and that character's present name is saved
+ * so it keeps its ID and voice (nothing is written when that character has no cues left: its row already has the name). Characters are read as Table Read shows them now, which covers a name the saved
+ * row does not spell yet. Call it inside the edit that changes the cues, so one undo takes back both.
+ */
+export function renameStoredName(doc: ScreenplayDoc, script: Script, from: string, to: string): void {
+  const old = normalizeCharacterName(from), next = normalizeCharacterName(to);
+  // A longer name would make the saved row unreadable.
+  if (!old || !next || next.length > 160) return;
+  const stored = readStoredCast(doc);
+  const rows = new Map(stored.characters.map((row) => [row.id, row]));
+  const characters = castForScript(script, stored).registry.characters;
+  const has = (name: string) => characters.find((c) => c.displayName === name || c.aliases.includes(name));
+  const source = has(old), target = has(next);
+  if (!source || source === target) return;
+  // Only names are written; cues and voices are already stored. A name too long to read back is not written.
+  const save = (id: string, name: string, aliases: string[]) => {
+    if (name.length <= 160) writeCharacter(doc, { id, name, aliases, cueIds: [], locked: rows.get(id)!.locked, voices: {} });
+  };
+  // A saved character with no cues left is not in the script's characters, but its row still has its name.
+  const dormant = stored.characters.some((row) => row.id !== source.id && [row.name, ...row.aliases].some((own) => normalizeCharacterName(own) === next));
+  if (target && rows.has(target.id)) save(target.id, target.displayName, target.aliases);
+  else if (dormant) return;
+  else if (rows.has(source.id)) {
+    const main = source.displayName === old;
+    save(source.id, main ? next : source.displayName, [...source.aliases, main ? old : next]);
+  }
 }
 
 export function storedCharacters(state: CastState): StoredCharacter[] {

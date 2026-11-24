@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  buildCharacterRegistry, characterEvidence, NARRATOR,
+  applyTextEdits, buildCharacterRegistry, characterEvidence, NARRATOR, planRename,
   type CastBinding, type CharacterIdentity, type Script,
 } from "@screenplay/engine";
 import { DocumentSession } from "../src/renderer/core/session.ts";
@@ -12,7 +12,7 @@ import {
   CastingProposalError, castingRequest, CAST_PROPOSAL_SCHEMA, type ProposalContext,
 } from "../src/renderer/features/table-read/casting.ts";
 import {
-  LEGACY_CAST_KEY, ignoreAlias, mergeStoredCharacters, readStoredCast, writeCast, writeCastState,
+  LEGACY_CAST_KEY, ignoreAlias, mergeStoredCharacters, readStoredCast, renameStoredName, writeCast, writeCastState,
   type StoredCharacter,
 } from "../src/renderer/features/table-read/cast-store.ts";
 import { assignEnsemble, auditionChoices, recastCharacter, subjectFromPacket, voiceInfos, type VoiceInfo } from "../src/renderer/features/table-read/cast-ensemble.ts";
@@ -107,6 +107,62 @@ test("read-only sessions never write or migrate", () => {
   assert.equal(mergeStoredCharacters(session, "m1", "e1"), false);
   assert.equal(doc.meta.get(LEGACY_CAST_KEY) !== undefined, true);
   assert.deepEqual(readStoredCast(doc).characters.map((c) => c.id), ["m1"]);
+});
+
+test("a line retyped to a new character does not take the voice of a character left with nothing to say", () => {
+  // MAYA's first cue now says CAROL. Her other cue has no dialogue under it, so MAYA has no role in the read.
+  const script: Script = { titlePage: [], paragraphs: [
+    p("m1", "character", "CAROL"), p("md", "dialogue", "The door was open."),
+    p("m2", "character", "MAYA"), p("a", "action", "She says nothing."),
+  ] };
+  const view = castForScript(script, { cast: [{ id: "m1", name: "MAYA", aliases: [], cueIds: ["m1", "m2"], locked: true, voices: { system: "Moira" } }] });
+  assert.deepEqual(view.registry.characters.map((c) => [c.id, c.displayName]), [["m1~2", "CAROL"], ["m1", "MAYA"]]);
+  assert.deepEqual(view.state.cast.map((c) => [c.id, c.name, c.voices.system, c.locked]), [["m1~2", "CAROL", undefined, false]]);
+});
+
+test("Rename Character keeps one character and its voice whether the main name or an alias is renamed, and undo takes it back", () => {
+  const script: Script = { titlePage: [], paragraphs: [
+    p("a1", "character", "ALICE"), p("a1d", "dialogue", "One."),
+    p("a2", "character", "ALICIA"), p("a2d", "dialogue", "Two."),
+    p("b1", "character", "BOB"), p("b1d", "dialogue", "Three."),
+  ] };
+  const rename = (session: DocumentSession, from: string, to: string) => {
+    session.undo.stopCapturing();
+    const plan = planRename(session.script(), from, to);
+    session.edit(() => { renameStoredName(session.doc, session.script(), from, plan.upper); applyTextEdits(session.doc, plan.edits); });
+  };
+  const cast = (session: DocumentSession) => castForScript(session.script(), readStoredCast(session.doc)).state.cast.map((c) => [c.id, c.name, c.aliases, c.cueIds, c.voices.system]);
+  for (const [from, name, aliases] of [["ALICE", "CAROL", ["ALICE", "ALICIA"]], ["ALICIA", "ALICE", ["ALICIA", "CAROL"]]] as const) {
+    const session = new DocumentSession(ScreenplayDoc.fromScript(script));
+    writeCast(session, { characters: [{ ...row("a1", "ALICE", "Moira", true, ["ALICIA"]), cueIds: ["a1", "a2"] }, { ...row("b1", "BOB", "Daniel"), cueIds: ["b1"] }] });
+    const before = cast(session);
+    rename(session, from, "Carol");
+    assert.deepEqual(cast(session), [["a1", name, aliases, ["a1", "a2"], "Moira"], ["b1", "BOB", [], ["b1"], "Daniel"]]);
+    session.undo.undo();
+    assert.deepEqual(cast(session), before);
+  }
+  // Renaming to a name another saved character has moves the lines to that character.
+  const session = new DocumentSession(ScreenplayDoc.fromScript(script));
+  writeCast(session, { characters: [{ ...row("a1", "ALICE", "Moira", true, ["ALICIA"]), cueIds: ["a1", "a2"] }, { ...row("b1", "BOB", "Daniel"), cueIds: ["b1"] }] });
+  rename(session, "ALICIA", "Bob");
+  assert.deepEqual(cast(session), [["a1", "ALICE", ["ALICIA"], ["a1"], "Moira"], ["b1", "BOB", [], ["a2", "b1"], "Daniel"]]);
+  // BOB's only cue was retyped CAROL by hand, so Table Read shows CAROL with BOB's ID and voice while the saved
+  // row still says BOB. Merging ALICE into CAROL keeps that character, not ALICE's.
+  session.undo.stopCapturing();
+  session.edit(() => applyTextEdits(session.doc, planRename(session.script(), "BOB", "Carol").edits));
+  assert.deepEqual(cast(session).at(-1), ["b1", "CAROL", ["BOB"], ["a2", "b1"], "Daniel"]);
+  rename(session, "ALICE", "Carol");
+  assert.deepEqual(cast(session), [["b1", "CAROL", ["BOB"], ["a1", "a2", "b1"], "Daniel"]]);
+  // DAN's saved row has no cue left. Renaming CAROL to DAN joins his row and does not make a second DAN.
+  writeCast(session, { characters: [{ ...row("d1", "DAN", "Fred"), cueIds: ["d1"] }] });
+  rename(session, "CAROL", "Dan");
+  assert.deepEqual(readStoredCast(session.doc).characters.map((c) => [c.id, c.name]), [["a1", "ALICE"], ["b1", "CAROL"], ["d1", "DAN"]]);
+  assert.deepEqual(cast(session), [["d1", "DAN", [], ["a1", "a2", "b1"], "Fred"]]);
+  session.undo.undo();
+  assert.deepEqual(cast(session), [["b1", "CAROL", ["BOB"], ["a1", "a2", "b1"], "Daniel"]]);
+  // A name too long for a saved row is not written, and the row stays readable.
+  rename(session, "CAROL", "D".repeat(161));
+  assert.equal(readStoredCast(session.doc).characters.find((c) => c.id === "b1")!.name, "CAROL");
 });
 
 test("confirmed aliases keep the voice map and rename-safe identity", () => {

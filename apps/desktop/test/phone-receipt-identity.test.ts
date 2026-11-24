@@ -1,7 +1,7 @@
 import { signEnvelope } from "./phone-signing.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PhoneDevices } from "../src/main/phone/devices.ts";
@@ -101,5 +101,40 @@ test("legacy inbox rows gain a device only when the ledger identifies their cont
     await devices.decide(scriptId, item.id, "ignored");
     assert.deepEqual(devices.decisions(first.device.id), {});
     assert.deepEqual(devices.decisions(second.device.id), {});
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("revoking an iPhone drops its receipts from the saved file and keeps the others", async () => {
+  const root = await mkdtemp(join(tmpdir(), "receipt-prune-"));
+  const path = join(root, "devices.json");
+  const devices = new PhoneDevices(path);
+  const store = new PhoneInboxStore(join(root, "inbox"));
+  try {
+    const kept = await devices.create(scriptId, "127.0.0.1"), gone = await devices.create(scriptId, "127.0.0.1");
+    await devices.receive(kept.device.id, scriptId, item, store);
+    await devices.receive(gone.device.id, scriptId, { ...item, id: "receipt-000000002" }, store);
+    await devices.revoke(gone.device.id);
+    const saved = JSON.parse(await readFile(path, "utf8"));
+    assert.deepEqual(Object.values(saved.receipts).map((r: any) => r.deviceId), [kept.device.id]);
+    assert.equal(saved.devices.find((d: any) => d.id === gone.device.id)?.revoked, true, "the revoked iPhone stays on file to be refused");
+    // The kept iPhone's receipt still stops a resent take being added twice.
+    assert.equal(await devices.receive(kept.device.id, scriptId, item, store), false);
+    // A file from before this pruning still holds the revoked iPhone's receipt; opening it saves the file without it.
+    saved.receipts.old = { deviceId: gone.device.id, scriptId, signature: "old" };
+    await writeFile(path, JSON.stringify(saved));
+    const reopened = new PhoneDevices(path);
+    await reopened.load();
+    await reopened.migrateInbox(store);
+    const after = JSON.parse(await readFile(path, "utf8"));
+    assert.deepEqual(Object.values(after.receipts).map((r: any) => r.deviceId), [kept.device.id]);
+    // If that write fails, opening still succeeds and the phone service can start.
+    const folder = join(root, "blocked");
+    await mkdir(folder);
+    await writeFile(join(folder, "devices.json"), JSON.stringify(saved));
+    const blocked = new PhoneDevices(join(folder, "devices.json"));
+    await blocked.load();
+    await rm(folder, { recursive: true });
+    await writeFile(folder, "not a folder");
+    await blocked.migrateInbox(store);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

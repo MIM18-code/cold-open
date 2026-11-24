@@ -1,7 +1,6 @@
 // Dictation: turns a recorded take or a pasted transcript into proposed screenplay elements. The work is in
 // src/main/dictation; this file owns the IPC channels, progress events and the microphone permission.
 import { app, dialog, session, systemPreferences } from "electron";
-import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -9,6 +8,7 @@ import {
   DICTATION, SETTING_KEYS, type FormatTextRequest, type MicStatus, type ProcessAudioRequest, type ProgressStage, type TakeProgress,
 } from "../../shared/channels/dictation.ts";
 import type { ServiceContext } from "../context.ts";
+import { chosenHelperProblem } from "../dictation/config.ts";
 import type { DictationRuntime } from "../dictation/runtime.ts";
 
 /**
@@ -120,13 +120,8 @@ export function register(ctx: ServiceContext): void {
     const result = window && window.isVisible() ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
     const path = result.filePaths[0];
     if (result.canceled || !path) return null;
-    try {
-      const real = realpathSync(path);
-      if (!statSync(real).isFile()) throw new Error("not a file");
-      accessSync(real, constants.X_OK);
-    } catch {
-      throw new Error(`${path} is not a program the app can run.`);
-    }
+    const problem = await chosenHelperProblem(path);
+    if (problem) throw new Error(problem);
     ctx.settings.set(SETTING_KEYS.helperPath, path);
     return path;
   });

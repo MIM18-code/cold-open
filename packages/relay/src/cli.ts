@@ -31,8 +31,9 @@ if (values.help) {
 
 An ordinary script uses a few MiB. A document built to be expensive can take about
 20 times max-doc-mb of memory, and each connection can hold about 16 MiB plus one
-script of unread answers, so the defaults bound a deliberate attack at about 7.5 GB
-(4 GB of documents, 3.5 GB of connection buffers). Run the relay under a container
+script or one room's presence (512 KiB per connection), whichever is larger, and
+one more message unread, so the defaults bound a deliberate attack at about 12.5 GB
+(4 GB of documents, 8.5 GB of connection buffers). Run the relay under a container
 or process memory limit. On a small box lower all three limits; the README shows
 the arithmetic.
 

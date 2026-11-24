@@ -289,7 +289,8 @@ export class PhoneServer {
             || body.sourceText.length > 1500 || !["scene-after", "scene-end", "draft", "note", "dictation"].includes(body.kind))) {
             return reply(400, { error: "Invalid paragraph anchor." });
         }
-        if (!anchored && body.revision !== this.snapshot.revision)
+        // A playback control names no passage, so a newer reading cannot misplace it.
+        if (!anchored && path !== "/api/command" && body.revision !== this.snapshot.revision)
             return reply(409, { error: "The shared reading changed. Reload it before sending this item." });
         if (path === "/api/command") {
             if (!["pause", "resume", "previous", "next", "stop"].includes(body.command))

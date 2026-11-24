@@ -150,6 +150,91 @@ test("SmartType completes character names and scene headings", async () => {
   expect((await rows(page)).slice(3)).toEqual([["character", "MARA"], ["dialogue", "Again."], ["sceneHeading", "EXT. KITCHEN - NIGHT"]]);
 });
 
+test("undo closes the SmartType list, so it cannot replace text that is no longer there", async () => {
+  const [, , last] = await load(page, [["sceneHeading", "INT. KITCHEN - NIGHT"], ["character", "MARA"], ["dialogue", "Hi."]]);
+  await select(page, [last!, 3]);
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("ma");
+  await expect(page.locator(".editor-smarttype li")).toHaveText(["MARA"]);
+  await command(page, "editor.undo");
+  await expect(page.locator(".editor-smarttype")).toHaveCount(0);
+});
+
+test("a co-writer's change on another line leaves the SmartType list open; one on its own line closes it", async () => {
+  const [, , last] = await load(page, [["sceneHeading", "INT. KITCHEN - NIGHT"], ["character", "MARA"], ["dialogue", "Hi."]]);
+  await select(page, [last!, 3]);
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("ma");
+  await expect(page.locator(".editor-smarttype li")).toHaveText(["MARA"]);
+  // A change that does not come from this editor, as a co-writer's does.
+  const remote = (id: string, offset: number) => page.evaluate(([paragraph, at]) => {
+    const doc = (window as any).__app.session.doc;
+    doc.ydoc.transact(() => doc.insertText(paragraph, at, "!"), "remote");
+  }, [id, offset] as const);
+  await remote(last!, 3);
+  await expect(page.locator(".editor-smarttype li")).toHaveText(["MARA"]);
+  const cue = await page.evaluate(() => (window as any).__app.session.script().paragraphs.at(-1).id);
+  await remote(cue, 0);
+  await expect(page.locator(".editor-smarttype")).toHaveCount(0);
+});
+
+test("plain text pasted inside a note stays in the note", async () => {
+  const [first] = await load(page, [["action", ""]], { 0: { runs: [{ text: "See " }, { text: "check this", note: true }, { text: " later." }] } });
+  await select(page, [first!, "See check".length]);
+  await page.evaluate(() => (window as any).__app.editor.pasteData(undefined, " twice"));
+  const runs = await page.evaluate((id) => (window as any).__app.session.script().paragraphs.find((p: any) => p.id === id).runs, first);
+  expect(runs).toEqual([{ text: "See " }, { text: "check twice this", note: true }, { text: " later." }]);
+});
+
+test("text with Final Draft extras pasted inside a note keeps them and stays in the script", async () => {
+  const [first, second] = await load(page, [["action", ""], ["action", ""]], {
+    0: { runs: [{ text: "knife", fdx: { RevisionID: "2" } }] },
+    1: { runs: [{ text: "check this", note: true }] },
+  });
+  await select(page, [first!, 0], [first!, 5]);
+  const copied = await page.evaluate(() => {
+    const data = new DataTransfer();
+    document.querySelector(".editor-pm")!.dispatchEvent(new ClipboardEvent("copy", { clipboardData: data, bubbles: true, cancelable: true }));
+    return { text: data.getData("text/plain"), json: data.getData("application/x-screenplay+json") };
+  });
+  await select(page, [second!, 5]);
+  await page.evaluate(({ text, json }) => (window as any).__app.editor.pasteData(json, text), copied);
+  const runs = await page.evaluate((id) => (window as any).__app.session.script().paragraphs.find((p: any) => p.id === id).runs, second);
+  expect(runs).toEqual([{ text: "check", note: true }, { text: "knife", fdx: { RevisionID: "2" } }, { text: " this", note: true }]);
+});
+
+test("a parenthetical with spaces around it loses its own parentheses when it becomes dialogue", async () => {
+  const [first] = await load(page, [["parenthetical", " (beat) "]]);
+  // Selected from just before "(" to just after ")".
+  await select(page, [first!, 1], [first!, 7]);
+  await page.evaluate(() => (window as any).__app.editor.setElementType("dialogue"));
+  expect(await rows(page)).toEqual([["dialogue", " beat "]]);
+  // The selection still covers the same word: only the parentheses before each end move it.
+  const selection = await page.evaluate(() => (window as any).__app.editor.getSelection());
+  expect([selection.anchor.offset, selection.head.offset]).toEqual([1, 5]);
+});
+
+test("a Bold turned on with nothing typed yet does not carry into the script that replaces it", async () => {
+  const [first] = await load(page, [["action", "Old."]]);
+  await select(page, [first!, 4]);
+  await page.evaluate(() => (window as any).__app.editor.toggleMark("bold"));
+  // Revert to Saved and Open put a new session in the window the same way.
+  const next = await page.evaluate(() => {
+    const app = (window as any).__app;
+    const session = app.session.constructor.untitled();
+    session.doc.load({ titlePage: [], paragraphs: [{ id: "fresh", type: "action", runs: [{ text: "New." }] }] });
+    session.undo.clear();
+    app.setSession(session);
+    return "fresh";
+  });
+  await select(page, [next, 4]);
+  await page.keyboard.type("x");
+  const runs = await page.evaluate(() => (window as any).__app.session.doc.paragraph("fresh").runs);
+  expect(runs).toEqual([{ text: "New.x" }]);
+});
+
 test("undo and redo step through the shared document and put the caret back", async () => {
   const [first] = await load(page, [["action", ""]]);
   await select(page, [first!, 0]);
@@ -222,6 +307,29 @@ test("paste reads multi-line Fountain, the app's own paragraphs, and single line
   await select(page, [list[0]!, 5]);
   await paste("big ");
   expect((await rows(page))[0]).toEqual(["sceneHeading", "INT. BIG HALL - DAY"]);
+});
+
+test("a copy and paste inside one paragraph keeps notes, marks and Final Draft extras", async () => {
+  const [first, second] = await load(page, [["action", ""], ["action", "Target."]], {
+    0: { runs: [{ text: "Plain " }, { text: "noted", note: true }, { text: " struck", strikeout: true, fdx: { RevisionID: "2" } }] },
+  });
+  await select(page, [first!, 0], [first!, "Plain noted struck".length]);
+  const copied = await page.evaluate(() => {
+    const data = new DataTransfer();
+    document.querySelector(".editor-pm")!.dispatchEvent(new ClipboardEvent("copy", { clipboardData: data, bubbles: true, cancelable: true }));
+    return { text: data.getData("text/plain"), json: data.getData("application/x-screenplay+json") };
+  });
+  await select(page, [second!, 0]);
+  await page.evaluate(({ text, json }) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", text);
+    data.setData("application/x-screenplay+json", json);
+    document.querySelector(".editor-pm")!.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  }, copied);
+  const runs = await page.evaluate((id) => (window as any).__app.session.script().paragraphs.find((p: any) => p.id === id).runs, second);
+  expect(runs).toEqual([
+    { text: "Plain " }, { text: "noted", note: true }, { text: " struck", strikeout: true, fdx: { RevisionID: "2" } }, { text: "Target." },
+  ]);
 });
 
 test("find highlights matches and Replace All is one undo step", async () => {

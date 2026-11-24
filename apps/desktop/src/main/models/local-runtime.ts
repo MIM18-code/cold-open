@@ -3,11 +3,12 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
 import { DEFAULT_OLLAMA_ENDPOINT } from "../../shared/channels/ai.ts";
+import { OLLAMA_SIGNER, trustedProgram } from "../trusted-program.ts";
 import { OllamaModels } from "./ollama.ts";
 import { fileSHA256 } from "./voice-manager.ts";
 
@@ -42,6 +43,33 @@ export async function installRuntime(root: string, signal: AbortSignal): Promise
   } finally { await rm(stage, { recursive: true, force: true }); }
 }
 
+export const UNSIGNED_OLLAMA = "Local AI was not started: the Ollama program in Cold Open’s folder is not signed by Ollama. " +
+  "Delete the local-ai folder in Cold Open’s Application Support folder and try again.";
+// Ollama starts these from its own folder, so in a sealed app they must carry Ollama's signature too.
+const OLLAMA_RUNNERS = ["llama-server", "llama-quantize"];
+
+/**
+ * The path to start for an Ollama binary, or null when a signed release must not run it (trusted-program.ts).
+ * A Homebrew build is not signed by Ollama; its owner can still run `ollama serve`, which start() uses as is.
+ */
+export async function trustedOllama(candidate: string): Promise<string | null> {
+  const binary = await trustedProgram(candidate, OLLAMA_SIGNER);
+  if (!binary) return null;
+  for (const runner of OLLAMA_RUNNERS.map((name) => join(dirname(binary), name)).filter(existsSync)) {
+    if (!(await trustedProgram(runner, OLLAMA_SIGNER))) return null;
+  }
+  return binary;
+}
+
+/** The first installed candidate that may run. */
+export async function pickRuntime(candidates: string[]): Promise<string | undefined> {
+  for (const candidate of candidates.filter(existsSync)) {
+    const binary = await trustedOllama(candidate);
+    if (binary) return binary;
+  }
+  return undefined;
+}
+
 export class LocalRuntime {
   private child?: ChildProcess;
   private readonly root: string;
@@ -51,12 +79,14 @@ export class LocalRuntime {
     const models = new OllamaModels();
     if (await models.list().then(() => true, () => false)) return;
     signal.throwIfAborted();
-    let binary = [join(this.root, `ollama-${VERSION}`, "ollama"), "/Applications/Ollama.app/Contents/Resources/ollama",
-      join(homedir(), "Applications/Ollama.app/Contents/Resources/ollama"), "/opt/homebrew/bin/ollama", "/usr/local/bin/ollama"].find(existsSync);
+    let binary = await pickRuntime([join(this.root, `ollama-${VERSION}`, "ollama"), "/Applications/Ollama.app/Contents/Resources/ollama",
+      join(homedir(), "Applications/Ollama.app/Contents/Resources/ollama"), "/opt/homebrew/bin/ollama", "/usr/local/bin/ollama"]);
     if (!binary) {
       if (!allowDownload) return;
       report("Downloading and verifying Ollama (187 MB)…");
-      binary = await installRuntime(this.root, signal);
+      const installed = await trustedOllama(await installRuntime(this.root, signal));
+      if (!installed) throw new Error(UNSIGNED_OLLAMA);
+      binary = installed;
     }
     signal.throwIfAborted();
     report("Starting local AI…");

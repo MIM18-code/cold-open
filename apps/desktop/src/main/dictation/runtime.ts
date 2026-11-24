@@ -8,7 +8,7 @@ import { accessSync, constants, existsSync } from "node:fs";
 import type {
   CheckResult, FormatTextRequest, HelperStatus, PrepareResult, ProcessAudioRequest, ServerStatus, TakeResult,
 } from "../../shared/channels/dictation.ts";
-import { type DictationConfig, type HelperLookup, helperPathProblem, readConfig } from "./config.ts";
+import { type DictationConfig, type HelperLookup, helperPathProblem, readConfig, trustedHelper } from "./config.ts";
 import { explainError, helperMissingMessage, modelMissingMessage } from "./errors.ts";
 import { DictationPipeline, type Progress } from "./pipeline.ts";
 
@@ -83,8 +83,8 @@ export class DictationRuntime {
     return this.helper.engine(config.engine, config.whisperModel ? { "whisper-model": config.whisperModel } : {});
   }
 
-  processAudio(request: ProcessAudioRequest, progress: Progress): Promise<TakeResult> {
-    return this.pipeline.processAudio(request, this.config(), progress);
+  async processAudio(request: ProcessAudioRequest, progress: Progress): Promise<TakeResult> {
+    return this.pipeline.processAudio(request, await trustedHelper(this.config()), progress);
   }
 
   processText(request: FormatTextRequest, progress: Progress, signal?: AbortSignal): Promise<TakeResult> {
@@ -93,7 +93,7 @@ export class DictationRuntime {
 
   /** Load the speech model, then ask Ollama to load the formatting model so the first take is not slow. */
   async prepare(): Promise<PrepareResult> {
-    const config = this.config();
+    const config = await trustedHelper(this.config());
     let speechMs: number;
     try {
       speechMs = await this.pipeline.prepare(config);
@@ -111,9 +111,10 @@ export class DictationRuntime {
 
   async check(): Promise<CheckResult> {
     const config = this.config();
-    const refused = this.refusal(config);
+    let refused: string | null = null, run = config;
+    try { run = await trustedHelper(config); } catch (error) { refused = (error as Error).message; }
     const [helper, server] = await Promise.all([
-      refused ? { ok: false, path: config.helperPath, message: refused } : checkHelper(config.helperPath),
+      refused ? { ok: false, path: config.helperPath, message: refused } : checkHelper(run.helperPath),
       checkServer(config),
     ]);
     return { helper, server };

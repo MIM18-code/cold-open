@@ -1,6 +1,7 @@
 // The main process: one window per document, an application menu built from the commands the focused
 // window registers, and the services in src/main/services.
 import "./page-debugger.ts"; // First on purpose: it quits a packaged app started with a page debugger switch.
+import "./trusted-program-setup.ts"; // Before the services: a signed app runs only signed programs outside its bundle.
 import {
   app, BrowserWindow, dialog, Menu, nativeTheme, shell, screen,
   type MenuItemConstructorOptions, type WebContents, type WebFrameMain,

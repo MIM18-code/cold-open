@@ -68,3 +68,10 @@ export function setupChecklist({ tailscale, remembered, folderChosen, showing }:
     },
   ];
 }
+
+/**
+ * Whether Use from anywhere shows open. Otherwise it is one row the writer can open, so someone who only uses the
+ * iPhone at home isn't handed a long setup list. Finishing any step keeps it open from then on.
+ */
+export const checklistOpen = (steps: ChecklistStep[], awayCodeShowing: boolean) =>
+  awayCodeShowing || steps.some(step => step.done);

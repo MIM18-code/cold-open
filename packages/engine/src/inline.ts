@@ -157,7 +157,10 @@ export function readInline(text: string): Run[] {
   let code = 0xe000;
   while (text.includes(String.fromCharCode(code))) code++;
   const NOTE_MARK = String.fromCharCode(code);
-  const marked = readMarked(text.replace(NOTE, (_, body: string) => (notes.push(unescapeNote(body)), NOTE_MARK)));
+  // No note can start or end after the last "]]". Matching only up to it keeps an unclosed "[[" from scanning to
+  // the end of the text, which made a long paragraph of them take time growing with the square of its length.
+  const last = text.lastIndexOf("]]"), end = last < 0 ? 0 : last + 2;
+  const marked = readMarked(text.slice(0, end).replace(NOTE, (_, body: string) => (notes.push(unescapeNote(body)), NOTE_MARK)) + text.slice(end));
   const runs: Run[] = [];
   for (const run of marked) {
     run.text.split(NOTE_MARK).forEach((part, k) => {

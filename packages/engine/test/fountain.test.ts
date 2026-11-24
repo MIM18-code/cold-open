@@ -210,6 +210,14 @@ test("a very long run of backslashes reads quickly", () => {
   assert.ok(performance.now() - started < 2000, "the note match does not rescan the backslashes from every position");
 });
 
+test("a long paragraph of unclosed note brackets reads quickly", () => {
+  const brackets = "[[".repeat(200_000);
+  const started = performance.now();
+  const runs = readInline(`[[a]] ${brackets}`);
+  assert.ok(performance.now() - started < 3000, "an unclosed [[ does not scan to the end of the text");
+  assert.deepEqual(runs, [{ text: "a", note: true }, { text: ` ${brackets}` }]);
+});
+
 test("a standalone note with a blank line stays one note", () => {
   assert.equal(roundTrip([{ type: "note", runs: [{ text: "line1\n\nline2" }] }]), "[[line1\n  \nline2]]\n");
 });

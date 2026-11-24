@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  PAGE, fdxPaginationOptions, formatEighths, linesPerPage, pageCount, pageOf, paginate, parseFdx, sceneEighths,
+  PAGE, fdxPaginationOptions, formatEighths, linesPerPage, pageCount, pageOf, paginate, parseFdx, readStyle, sceneEighths, validateStyle,
   scriptPaginationOptions, wrap, type ElementType, type Line, type Page, type Paragraph, type Script,
 } from "../src/index.ts";
 
@@ -283,6 +283,27 @@ const FDX = `<?xml version="1.0" encoding="UTF-8"?>
 <PageLayout BottomMargin="36" BreakDialogueAndActionAtSentences="No" TopMargin="72" HeaderMargin="30"/>
 <MoresAndContinueds><DialogueBreaks AutomaticCharacterContinueds="No" BottomOfPage="Yes" DialogueBottom="(more)" DialogueTop="(cont'd)" TopOfNext="Yes"/><SceneBreaks SceneBottomOfPage="Yes" SceneTopOfNext="Yes" SceneBottom="(CONT.)" SceneTop="CONT:"/></MoresAndContinueds>
 </FinalDraft>`;
+
+test("margins that leave no room for text and a negative space before fall back to the defaults", () => {
+  for (const margin of [396, 400]) {
+    const parsed = parseFdx(FDX
+      .replace(`BottomMargin="36"`, `BottomMargin="${margin}"`).replace(`TopMargin="72"`, `TopMargin="${margin}"`)
+      .replace(`SpaceBefore="36"`, `SpaceBefore="-1200"`));
+    const options = scriptPaginationOptions(parsed);
+    assert.equal(options.page?.top, PAGE.top);
+    assert.equal(options.page?.bottom, PAGE.bottom);
+    assert.equal(options.page?.header, 30 / 72, "a valid margin is still read");
+    assert.equal(options.elements?.sceneHeading?.spaceBefore, undefined);
+    assert.ok(linesPerPage(options.page) > 0);
+    const pagination = paginate(parsed, options);
+    assert.ok(pagination.pages.every((page) => page.lines.every((line) => line.y >= 0)));
+    assert.ok([...sceneEighths(parsed, pagination).values()].every(Number.isFinite));
+    assert.doesNotThrow(() => validateStyle(readStyle(parsed)), "the layout dialog opens on values it would save");
+  }
+  // The same value on one paragraph.
+  const own = parseFdx(FDX.replace(`<Paragraph Type="Action">`, `<Paragraph Type="Action" SpaceBefore="-1200">`));
+  assert.ok(paginate(own, scriptPaginationOptions(own)).pages.every((page) => page.lines.every((line) => line.y >= 0)));
+});
 
 test("reads the layout an FDX file carries", () => {
   const parsed = parseFdx(FDX);

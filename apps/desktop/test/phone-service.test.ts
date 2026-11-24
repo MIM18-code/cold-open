@@ -67,12 +67,15 @@ test("window-owned inbox keys gate remembered devices, revocation and review, an
     await assert.rejects(async () => call(first, "phone:set-port", 8080), /Revoke remembered/);
     await assert.rejects(async () => call(first, "phone:set-port", 80), /1024/);
     await call(first, "phone:acknowledge", firstKey, item.id, "ignored", device.id);
+    const decided = new PhoneDevices(devices.path); await decided.load();
+    assert.equal(decided.decisions(device.id)[item.id]?.outcome, "ignored");
     await call(first, "phone:revoke", device.id);
     const saved = new PhoneDevices(devices.path); await saved.load();
     await call(first, "phone:set-port", 4457);
     assert.equal(settings.get("phone.port"), 4457);
     assert.equal(saved.device(device.id)?.revoked, true);
-    assert.equal(saved.decisions(device.id)[item.id]?.outcome, "ignored");
+    // Nothing reports outcomes to a revoked iPhone, so its receipts go with the revocation.
+    assert.deepEqual(saved.decisions(device.id), {});
   } finally {
     await Promise.all(quitting.map(fn => fn())); await rm(root, { recursive: true, force: true });
   }

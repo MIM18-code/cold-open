@@ -4,6 +4,13 @@
 .phone-note { margin: 0; color: var(--ink-2); font-size: var(--text-s); }
 .phone-setup { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); }
 .phone-setup-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* Closed, the hidden body still takes a grid gap under the summary. */
+.phone-setup-fold:not([open]) { display: block; }
+.phone-setup-fold > summary { cursor: pointer; }
+.phone-setup-fold > summary span { color: var(--ink-2); font-size: var(--text-s); }
+/* The summary already names the section. */
+.phone-setup-fold .phone-setup-head h3 { display: none; }
+.phone-setup-fold .phone-setup-head { justify-content: flex-end; }
 .setup-steps { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 10px; }
 .setup-steps li { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: start; }
 .setup-steps li > div { display: grid; gap: 6px; justify-items: start; min-width: 0; }

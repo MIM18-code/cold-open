@@ -130,6 +130,33 @@ test("canvas supports keyboard movement and list editing without moving screenpl
 finally {
     await close(r.electronApp, r.page);
 } });
+test("Save writes a beat's lane while it is still being typed", async () => { const r = await launch(); try {
+    await draft(r.page);
+    await runCommand(r.page, "canvas.open");
+    await r.page.getByRole("button", { name: "New beat", exact: true }).click();
+    await r.page.getByLabel("Project item name").fill("Opening image");
+    await r.page.getByRole("button", { name: "Keep beat", exact: true }).click();
+    await runCommand(r.page, "canvas.open");
+    await r.page.getByLabel("Lane for Opening image").fill("B story");
+    const path = join(r.userData, "lane.screenplay");
+    await r.electronApp.evaluate(({ dialog }, path) => { dialog.showSaveDialog = (async () => ({ canceled: false, filePath: path })) as any; }, path);
+    await runCommand(r.page, "file.save");
+    await expect.poll(() => existsSync(path)).toBe(true);
+    const lanes = await r.page.evaluate(() => [...(window as any).__app.session.doc.meta.entries()].filter(([key]: [string]) => key.startsWith("workbench.canvas.")).map(([, value]: [string, any]) => value.lane));
+    expect(lanes).toEqual(["B story"]);
+    // The field is still there to type in: Save did not take the caret out of it.
+    await expect(r.page.getByLabel("Lane for Opening image")).toBeFocused();
+    expect(await r.page.evaluate(() => (window as any).__app.session.dirty)).toBe(false);
+    // A lane changed elsewhere shows in the field the writer has clicked into but not typed in, and leaving the
+    // field does not put the old lane back.
+    await r.page.evaluate(() => { const app = (window as any).__app; const [key, value] = [...app.session.doc.meta.entries()].find(([k]: [string]) => k.startsWith("workbench.canvas."))!; app.session.doc.ydoc.transact(() => app.session.doc.meta.set(key, { ...value, lane: "C story", revision: "from-a-co-writer" }), "remote"); });
+    await expect(r.page.getByLabel("Lane for Opening image")).toHaveValue("C story");
+    await r.page.getByLabel("Lane for Opening image").blur();
+    expect(await r.page.evaluate(() => [...(window as any).__app.session.doc.meta.entries()].filter(([key]: [string]) => key.startsWith("workbench.canvas.")).map(([, value]: [string, any]) => value.lane))).toEqual(["C story"]);
+}
+finally {
+    await close(r.electronApp, r.page);
+} });
 test("scene duplicate preview creates a distinct scene and one Undo restores the whole draft", async () => { const r = await launch(); try {
     await draft(r.page);
     const before = await script(r.page);
@@ -220,12 +247,19 @@ test("native autosave updates an existing master but an external write pauses it
     await r.page.getByRole("button", { name: "Retry native autosave" }).click();
     await expect.poll(() => readFileSync(path).equals(before)).toBe(false);
     await expect.poll(() => r.page.evaluate(() => (window as any).__app.session.dirty)).toBe(false);
+    const saved = readFileSync(path);
     writeFileSync(path, "EXTERNAL FILE CHANGE");
     await r.page.evaluate(() => { const s = (window as any).__app.session; s.edit(() => s.doc.insertText("d", 0, "Really ")); });
     await r.page.getByRole("button", { name: "Retry native autosave" }).click();
     await expect(r.page.getByRole("dialog").getByRole("alert")).toContainText("FILE_CHANGED:");
     expect(readFileSync(path, "utf8")).toBe("EXTERNAL FILE CHANGE");
     expect(await r.page.evaluate(() => (window as any).__app.session.dirty)).toBe(true);
+    // The other app's change is undone and the writer saves by hand: autosave is no longer paused.
+    writeFileSync(path, saved);
+    await r.page.getByRole("button", { name: "Save / resolve file conflict…" }).click();
+    await expect.poll(() => r.page.evaluate(() => (window as any).__app.session.dirty)).toBe(false);
+    await expect(r.page.getByRole("dialog").getByRole("alert")).toHaveCount(0);
+    await expect(r.page.getByRole("button", { name: "Autosave paused · review" })).toHaveCount(0);
 }
 finally {
     await close(r.electronApp, r.page);

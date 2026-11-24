@@ -4,6 +4,8 @@ import { accessSync, constants, existsSync, realpathSync, statSync } from "node:
 import { isAbsolute, join } from "node:path";
 
 import { SETTING_DEFAULTS, SETTING_KEYS, SPEECH_ENGINES, type SpeechEngineName } from "../../shared/channels/dictation.ts";
+import { OWN_SIGNER, trustedProgram } from "../trusted-program.ts";
+import { helperMissingMessage } from "./errors.ts";
 
 export interface DictationConfig {
   engine: SpeechEngineName;
@@ -65,6 +67,36 @@ export function helperPathProblem(path: string): string | null {
     return `The speech helper at ${path} is not executable. Run "chmod +x" on it, or build it again.`;
   }
   return null;
+}
+
+export const UNSIGNED_HELPER = "The chosen speech helper is not signed by the maker of this copy of Cold Open, so it was not run. " +
+  "Clear the choice in Settings to use the built-in helper.";
+export const UNSIGNED_CHOICE = "That program is not signed by the maker of this copy of Cold Open, so it can't be the speech helper.";
+
+/**
+ * A granted helper as it may run: in a signed release, the resolved path of a file signed by the app's own team
+ * (trusted-program.ts), and only that path goes on to be run. Elsewhere a missing file is left for the caller to
+ * report as not found; a signed release refuses it here, so a file that appears after this check is never run.
+ */
+export async function trustedHelper(config: DictationConfig): Promise<DictationConfig> {
+  if (!config.helperGranted) return config;
+  const problem = helperPathProblem(config.helperPath);
+  if (problem) throw new Error(problem);
+  const path = await trustedProgram(config.helperPath, OWN_SIGNER);
+  if (!path) throw new Error(existsSync(config.helperPath) ? UNSIGNED_HELPER : helperMissingMessage(config.helperPath));
+  return { ...config, helperPath: path };
+}
+
+/** Why a file picked in the Choose dialog can't be kept as the speech helper, or null when it can. */
+export async function chosenHelperProblem(path: string): Promise<string | null> {
+  try {
+    const real = realpathSync(path);
+    if (!statSync(real).isFile()) throw new Error("not a file");
+    accessSync(real, constants.X_OK);
+  } catch {
+    return `${path} is not a program the app can run.`;
+  }
+  return (await trustedProgram(path, OWN_SIGNER)) ? null : UNSIGNED_CHOICE;
 }
 
 export function readConfig(values: Record<string, unknown>, lookup: HelperLookup): DictationConfig {

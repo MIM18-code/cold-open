@@ -7,7 +7,7 @@ import { returnKeyFlow } from "@screenplay/engine";
 // and drop) arrives as a transaction; its effect is diffed against the last drawing and replayed on the
 // engine, so nothing reaches the document any other way.
 import {
-  MARKS, plainText, type ElementType, type Mark, type Marks, type Paragraph, type Run, type ScreenplayDoc, type TextPosition,
+  cutRuns, MARKS, plainText, type ElementType, type Mark, type Marks, type Paragraph, type Run, type ScreenplayDoc, type TextPosition,
 } from "@screenplay/engine";
 import { Fragment, type Node as PMNode } from "prosemirror-model";
 import { EditorState, Selection as PMSelection, TextSelection, type Transaction } from "prosemirror-state";
@@ -190,6 +190,8 @@ export class EditorController implements EditorBridge {
     this.drawnDoc = this.view.state.doc;
     this.drawnLead = doc.lead();
     this.closeSmart();
+    // A Bold or Italic turned on for the next letters belongs to the script it was turned on in.
+    this.storedMarks = null;
 
     const onBody = () => this.sync();
     const offState = session.onState(() => {
@@ -271,6 +273,12 @@ export class EditorController implements EditorBridge {
     this.drawnState = null;
     const doc = this.session.doc;
     let next = doc.paragraphs();
+    // An undo, redo or co-writer's change to the line a SmartType list is open on can move or remove the text
+    // the list would replace. A change anywhere else leaves the list open.
+    if (!this.changing && this.smart) {
+      const id = this.smart.paragraphId, text = (list: readonly Paragraph[]) => { const found = list.find((p) => p.id === id); return found && plainText(found.runs); };
+      if (text(this.drawn) !== text(next)) this.closeSmart();
+    }
     if (!next.length) {
       if (!this.session.readOnly) {
         queueMicrotask(() => this.session.readOnly || doc.ydoc.transact(() => doc.paragraphs().length || doc.insertParagraph(0, { type: "action" }), "editor"));
@@ -855,12 +863,21 @@ export class EditorController implements EditorBridge {
   }
 
   private insertRuns(doc: ScreenplayDoc, at: TextPosition, runs: Run[]): TextPosition {
-    const type = doc.paragraphs()[doc.indexOf(at.paragraphId)]!.type;
+    const paragraph = doc.paragraphs()[doc.indexOf(at.paragraphId)]!, type = paragraph.type;
+    // Plain text pasted inside a note or a breakdown tag joins it, as typed text does.
+    const around: Partial<Run> = (at.offset > 0 ? cutRuns(paragraph.runs, at.offset - 1, at.offset)[0] : undefined) ?? {};
     let offset = at.offset;
     for (const run of runs) {
       const text = typedText(type, run.text);
-      const marks = Object.fromEntries(MARKS.map((mark) => [mark, !!run[mark]])) as Marks;
-      doc.insertText(at.paragraphId, offset, text, marks);
+      // Each run keeps its own formatting, as a paste of whole paragraphs does: bold and the like, notes, style
+      // and Final Draft extras (breakdown tags). One run's formatting never runs on into the next. A run with a
+      // note, style or extras of its own takes nothing from the text it lands in.
+      const attributes: Record<string, unknown> = Object.fromEntries(MARKS.filter((mark) => run[mark]).map((mark) => [mark, true]));
+      const from = run.note || run.styleExtra || Object.keys(run.fdx ?? {}).length ? run : around;
+      if (from.note) attributes.note = true;
+      if (from.styleExtra) attributes.styleExtra = from.styleExtra;
+      for (const [key, value] of Object.entries(from.fdx ?? {})) attributes[`fdx:${key}`] = value;
+      doc.insertFormatted(at.paragraphId, offset, text, attributes);
       offset += text.length;
     }
     return { paragraphId: at.paragraphId, offset };
@@ -1105,7 +1122,8 @@ export class EditorController implements EditorBridge {
     const range = this.range();
     if (!range) return;
     const selection = this.getSelection()!;
-    const shifts = new Map<string, number>();
+    // Where each changed paragraph's old offsets land once its parentheses are added or removed.
+    const shifts = new Map<string, (offset: number) => number>();
     this.change((doc) => {
       for (const { id, paragraph } of this.pieces(range)) {
         if (!range.collapsed && id === range.to.paragraphId && range.to.offset === 0 && id !== range.from.paragraphId) continue;
@@ -1113,15 +1131,17 @@ export class EditorController implements EditorBridge {
         const text = plainText(paragraph.runs);
         if (type === "parenthetical" && text.trim()) {
           if (!text.endsWith(")")) doc.insertText(id, text.length, ")");
-          if (!text.startsWith("(")) (doc.insertText(id, 0, "(", {}), shifts.set(id, 1));
+          if (!text.startsWith("(")) (doc.insertText(id, 0, "(", {}), shifts.set(id, (offset) => offset + 1));
         } else if (paragraph.type === "parenthetical" && unwrapParenthetical(text) !== text) {
-          doc.deleteText(id, text.length - 1, 1);
-          doc.deleteText(id, 0, 1);
-          shifts.set(id, -1);
+          // The parentheses themselves, inside any spaces around them.
+          const open = text.indexOf("("), close = text.lastIndexOf(")");
+          doc.deleteText(id, close, 1);
+          doc.deleteText(id, open, 1);
+          shifts.set(id, (offset) => offset - Number(offset > open) - Number(offset > close));
         }
         doc.setType(id, type);
       }
-      const shift = (at: Position) => ({ paragraphId: at.paragraphId, offset: Math.max(0, at.offset + (shifts.get(at.paragraphId) ?? 0)) });
+      const shift = (at: Position) => ({ paragraphId: at.paragraphId, offset: shifts.get(at.paragraphId)?.(at.offset) ?? at.offset });
       return { anchor: shift(selection.anchor), head: shift(selection.head) };
     });
     this.emitSelection();

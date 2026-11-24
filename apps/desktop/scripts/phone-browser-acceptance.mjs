@@ -18,10 +18,11 @@ const snapshot = { title: 'Phone acceptance fixture', revision: 'fixture:1', cue
   { id: 'cue-1', paragraphId: 'p1', speaker: 'MARA', heading: 'INT. KITCHEN - NIGHT', text: 'You said the door was locked.' },
   { id: 'cue-2', paragraphId: 'p2', speaker: 'ELI', heading: 'INT. KITCHEN - NIGHT', text: 'I said I locked it.' },
 ] };
-let failNext = true;
+let failNext = true, held = null;
 const writes = [], commands = [];
 const server = new PhoneServer(snapshot, command => commands.push(command), async item => {
   writes.push(item.id);
+  if (held) { const wait = held; held = null; wait.arrived(); await wait.release; throw new Error('Simulated full disk'); }
   if (failNext) { failNext = false; throw new Error('Simulated full disk'); }
   await store.append(key, item);
 });
@@ -91,22 +92,53 @@ try {
   assert.equal(writes[0], writes[1]);
   check('disk failures retain unsent text; a retry persists exactly once under the original receipt');
 
+  const passage = page.getByRole('combobox', { name: 'Reading passage' });
+  await passage.selectOption('1');
   await text.fill('Keep this pending note through a reading update.');
   server.publish({ ...snapshot, revision: 'fixture:2' });
   await page.getByRole('button', { name: 'Send to desktop inbox', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('shared reading changed');
-  await expect(text).not.toHaveValue('');
-  await page.getByRole('button', { name: 'Reload shared reading', exact: true }).click();
-  await expect(page.locator('#connection')).toContainText('fixture:2');
+  await expect(text).toHaveValue('');
+  await expect(page.getByRole('alert')).toBeEmpty();
+  await expect(passage).toHaveValue('1');
+  const updated = await store.list(key);
+  assert.equal(updated.length, 2); assert.equal(updated[1].paragraphId, 'p2'); assert.equal(updated[1].revision, 'fixture:2');
+  check('an edit elsewhere on the Mac neither refuses a note nor moves the reader off their passage');
+
+  await text.fill('This passage is about to change.');
+  const changed = { ...snapshot, revision: 'fixture:3', cues: [snapshot.cues[0], { ...snapshot.cues[1], text: 'I never had a key.' }] };
+  server.publish(changed);
   await page.getByRole('button', { name: 'Send to desktop inbox', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('attach it to a current passage');
-  await page.getByRole('combobox', { name: 'Reading passage' }).selectOption('1');
+  await expect(text).toHaveValue('This passage is about to change.');
+  await expect(passage).toHaveValue('1');
+  await expect(page.locator('#line')).toHaveText('I never had a key.');
+  assert.equal((await store.list(key)).length, 2);
   await page.getByRole('button', { name: 'Attach unsent text to current passage', exact: true }).click();
   await page.getByRole('button', { name: 'Send to desktop inbox', exact: true }).click();
   await expect(text).toHaveValue('');
-  const updated = await store.list(key);
-  assert.equal(updated.length, 2); assert.equal(updated[1].paragraphId, 'p2'); assert.equal(updated[1].revision, 'fixture:2');
-  check('stale reading notes require explicit retargeting; durable source references match the selected passage');
+  const retargeted = await store.list(key);
+  assert.equal(retargeted.length, 3); assert.equal(retargeted[2].revision, 'fixture:3'); assert.equal(retargeted[2].sourceText, 'I never had a key.');
+  check('a note on a passage whose words changed waits for the reader to attach it again');
+
+  // A Reload that lands while a send is in flight must not let the resend pass for words the reader never saw.
+  await passage.selectOption('1');
+  await text.fill('Written against the earlier words.');
+  let arrived, release;
+  held = { arrived: null, release: new Promise(resolve => { release = resolve; }) };
+  const reached = new Promise(resolve => { arrived = resolve; }); held.arrived = arrived;
+  await page.getByRole('button', { name: 'Send to desktop inbox', exact: true }).click();
+  await Promise.race([reached, new Promise((_, reject) => setTimeout(() => reject(new Error('The send never reached the Mac.')), 10000).unref())]);
+  server.publish({ ...changed, revision: 'fixture:3b', cues: [changed.cues[0], { ...changed.cues[1], text: 'I lost the key.' }] });
+  await page.getByRole('button', { name: 'Reload shared reading', exact: true }).click();
+  await expect(page.locator('#connection')).toContainText('fixture:3b');
+  release();
+  await expect(page.getByRole('alert')).toContainText('attach it to a current passage');
+  await expect(text).toHaveValue('Written against the earlier words.');
+  assert.equal((await store.list(key)).length, 3);
+  await page.getByRole('button', { name: 'Clear unsent text', exact: true }).click();
+  check('a reload during a send does not let the note land on words the reader never saw');
+
+  server.publish({ ...changed, revision: 'fixture:4' });
 
   await page.getByText('Control the Mac’s active table read', { exact: true }).click();
   await page.locator('[data-command="pause"]').click();

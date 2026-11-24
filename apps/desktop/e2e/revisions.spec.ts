@@ -363,6 +363,31 @@ test("Revision Mode follows the open document: a document opened in its place is
   await close(electronApp, page);
 });
 
+test("a read-only script cannot change Revision Mode, revision sets or locks", async () => {
+  const { electronApp, page } = await launch();
+  await page.waitForSelector(".editor-pm");
+  await load(page, 2);
+  const enabled = () => page.evaluate(() => {
+    const app = (window as any).__app;
+    return ["revisions.mode", "revisions.current", "revisions.newSet", "revisions.lockPages", "revisions.lockScenes"]
+      .filter((id) => { const command = app.commands.find((c: any) => c.id === id); return !command.enabled || command.enabled(app); });
+  });
+  expect(await enabled()).toHaveLength(5);
+  await page.evaluate(() => (window as any).__app.session.setReadOnly(true));
+  expect(await enabled()).toEqual([]);
+  await runCommand(page, "revisions.mode");
+  await page.waitForTimeout(200);
+  await expect(page.locator(".revisions-status")).toHaveCount(0);
+  // With Revision Mode already on, the status button shows it and opens nothing for a guest.
+  await page.evaluate(() => (window as any).__app.session.setReadOnly(false));
+  await runCommand(page, "revisions.mode");
+  await expect(page.locator(".revisions-status")).toHaveCount(1);
+  await page.evaluate(() => (window as any).__app.session.setReadOnly(true));
+  await page.locator(".revisions-status").click();
+  expect(await page.evaluate(() => (window as any).__app.ui.modal)).toBeNull();
+  await close(electronApp, page);
+});
+
 test("a number a merge duplicated is renumbered, and the writer can open the notice", async () => {
   const { electronApp, page } = await launch();
   const errors: string[] = [];

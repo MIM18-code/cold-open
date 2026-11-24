@@ -302,6 +302,27 @@ test("a refused or closed invite is reported in the dialog and leaves the guest'
   }
 });
 
+test("dismissing the Join dialog while it connects stops the join", async () => {
+  const guest = await launch();
+  try {
+    // Nothing listens on this port, so the join keeps trying until the dialog goes away.
+    const invite = "screenplay://join?host=127.0.0.1%3A9&room=AAAAAAAAAAAAAAAAAAAAAA&key=AAAAAAAAAAAAAAAAAAAAAA";
+    const joinEnabled = () => guest.page.evaluate(() => {
+      const app = (window as any).__app;
+      return app.commands.find((c: any) => c.id === "collab.join").enabled(app);
+    });
+    await join(guest.page, invite);
+    await expect(guest.page.locator(".collab-join-submit")).toHaveText("Connecting…");
+    expect(await joinEnabled()).toBe(false);
+    await guest.page.keyboard.press("Escape");
+    await expect(guest.page.locator(".collab-join-submit")).toHaveCount(0);
+    await expect.poll(joinEnabled, { timeout: 3_000 }).toBe(true);
+    await expectHidden(guest.electronApp);
+  } finally {
+    await quit(guest.electronApp);
+  }
+});
+
 test("when the host quits or opens another script, the guest's session ends and keeps the script", async () => {
   const host = await launch();
   const guest = await launch();

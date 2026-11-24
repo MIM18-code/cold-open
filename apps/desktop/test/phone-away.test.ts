@@ -60,6 +60,23 @@ test("Tailscale discovery validates MagicDNS and CGNAT and never interpolates a 
     { installed: false, running: false, magicDns: false, https: false });
 });
 
+test("a signed release runs only the Tailscale CLIs that carry Tailscale's signature", async () => {
+  const app = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+  // On a Mac with the standalone app, /usr/local/bin/tailscale is an unsigned shell script and Homebrew's is unsigned too.
+  const trust = async (path: string) => (path === app ? path : null);
+  const ran: string[] = [];
+  const status = JSON.stringify({ BackendState: "Running", Self: { DNSName: "mac.tail123.ts.net.", TailscaleIPs: ["100.114.165.59"] } });
+  const network = await tailscaleNetwork(async (file) => { ran.push(file); return status; }, trust);
+  assert.equal(network?.cli, app);
+  assert.deepEqual(ran, [app]);
+  assert.equal((await tailscaleCheck(async (file) => { ran.push(file); return status; }, trust)).installed, true);
+  assert.equal(await tailscaleCheck(async () => status, async () => null).then(r => r.installed), false);
+  assert.ok(ran.every(file => file === app));
+  // A network whose CLI is not trusted any more does not reach that CLI for a certificate.
+  await assert.rejects(tailscaleTls(tmpdir(), { address: "100.114.165.59", hostname: "mac.tail123.ts.net",
+    cli: "/usr/local/bin/tailscale", tailscale: true, name: "Tailscale" }, async () => assert.fail("ran an untrusted CLI"), trust), /Tailscale CLI/);
+});
+
 test("Tailscale cert uses validated argv and main-only temporary files, and fails with HTTPS enable instructions", async () => {
   const root = await mkdtemp(join(tmpdir(), "phone-tail-tls-"));
   try {

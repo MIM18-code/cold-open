@@ -105,8 +105,19 @@ export class PhoneDevices {
   revoke(id: string) {
     return this.serial(async () => {
       const device = this.state.devices.find(d => d.id === id);
-      if (device) { device.revoked = true; await this.save(); }
+      if (device) { device.revoked = true; this.pruneRevoked(); await this.save(); }
     });
+  }
+  /**
+   * A revoked iPhone stays on file so its link can be told it was revoked, but its receipts guard nothing: every
+   * way in (live link, iCloud folder, takes file) refuses it, and nothing reports outcomes to it any more.
+   */
+  private pruneRevoked() {
+    const revoked = new Set(this.state.devices.filter(d => d.revoked).map(d => d.id));
+    let pruned = false;
+    for (const [key, receipt] of Object.entries(this.state.receipts))
+      if (revoked.has(receipt.deviceId)) { delete this.state.receipts[key]; pruned = true; }
+    return pruned;
   }
   async receive(deviceId: string, scriptId: string, item: PhoneInbox, store: PhoneInboxStore): Promise<boolean> {
     return this.serial(async () => {
@@ -135,6 +146,9 @@ export class PhoneDevices {
         return matches.length === 1 ? matches[0]![1].deviceId : undefined;
       });
     }
+    // Older files kept revoked iPhones' receipts. Once they have attributed old inbox items, drop them. A failed
+    // write here must not stop the phone service starting: the next save writes the pruned state.
+    await this.serial(async () => { if (this.pruneRevoked()) await this.save().catch(() => {}); });
   }
   decisions(deviceId: string) {
     return Object.fromEntries(Object.entries(this.state.receipts)

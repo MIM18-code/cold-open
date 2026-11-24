@@ -9,6 +9,8 @@
 // (sealed-node.ts), Apple's CryptoKit on the iPhone (apps/mobile/src/link-crypto.ts). Everything else reads the provider from the keys.
 import * as string from "lib0/string";
 
+import { MESSAGE_SYNC } from "./protocol.ts";
+
 /**
  * The primitives the link needs, all synchronous. `seal` and `open` are AES-256-GCM with a 32-byte key, a 12-byte
  * nonce and a 16-byte tag: `seal` returns ciphertext followed by the tag, and `open` takes the same and throws when
@@ -398,12 +400,16 @@ export function sealedWebSocket(keys: LinkKeys, Raw: typeof WebSocket = globalTh
             this.tunnel = new Tunnel(keys, clientRandom, readHello(frame), "phone");
             raw.send(hello(clientRandom));
             raw.send(this.tunnel.seal(FRAME_JOIN, joinFrame(room, key)));
-            this.readyState = 1;
-            this.onopen?.();
             return;
           }
           const { type, payload } = this.tunnel.open(frame);
           if (type === FRAME_DATA) {
+            // The relay's first message to a joined peer is its sync step; a refusal starts with an auth message and
+            // ends with a sealed close. So the socket is open, as far as RelayClient knows, only from that sync step.
+            if (this.readyState === 0 && payload[0] === MESSAGE_SYNC) {
+              this.readyState = 1;
+              this.onopen?.();
+            }
             this.onmessage?.({ data: payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength) as ArrayBuffer });
           } else if (type === FRAME_CLOSE) {
             const notice = readJson(payload);

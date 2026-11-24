@@ -91,6 +91,52 @@ test("cast aliases are confirmed by the writer, stored per character, and recast
   } finally { await close(run.electronApp, run.page); }
 });
 
+test("retyping one cue to another character's name moves the line and keeps both voices", async () => {
+  const run = await launch();
+  try {
+    await run.electronApp.evaluate(({ ipcMain }) => {
+      const voices = ["Ava (Premium)", "Tom (Enhanced)"].map((id) => ({ id, label: id, language: "en-US" }));
+      ipcMain.removeHandler("table-read:status");
+      ipcMain.handle("table-read:status", () => ({ cacheBytes: 0, engines: [
+        { id: "system", label: "Apple Premium voices", tier: "Built in", ready: true, available: true, voices, note: "Fixture" },
+      ] }));
+    });
+    await run.page.evaluate(() => {
+      (window as any).__app.session.doc.load({ titlePage: [], paragraphs: [
+        { id: "s1", sceneId: "s1", type: "sceneHeading", runs: [{ text: "INT. DINER - NIGHT" }] },
+        { id: "a1", type: "character", runs: [{ text: "ALICE" }] },
+        { id: "ad1", type: "dialogue", runs: [{ text: "The door was open." }] },
+        { id: "b1", type: "character", runs: [{ text: "BOB" }] },
+        { id: "bd1", type: "dialogue", runs: [{ text: "Then close it." }] },
+        { id: "a2", type: "character", runs: [{ text: "ALICE" }] },
+        { id: "ad2", type: "dialogue", runs: [{ text: "I did." }] },
+      ] });
+    });
+    await runCommand(run.page, "tableRead.open");
+    const alice = run.page.getByLabel("Voice for ALICE", { exact: true });
+    const bob = run.page.getByLabel("Voice for BOB", { exact: true });
+    await alice.selectOption("Ava (Premium)");
+    await bob.selectOption("Tom (Enhanced)");
+    await expect(alice).toHaveValue("Ava (Premium)");
+    await expect(bob).toHaveValue("Tom (Enhanced)");
+
+    await run.page.evaluate(() => {
+      const app = (window as any).__app;
+      app.session.edit(() => {
+        app.session.doc.replaceText("a1", 0, 5, "BOB");
+        // A new role in the same edit shows when the cast list has caught up with it.
+        const at = app.session.doc.paragraphs().length;
+        app.session.doc.insertParagraph(at, { id: "c1", type: "character", runs: [{ text: "CAROL" }] });
+        app.session.doc.insertParagraph(at + 1, { id: "cd1", type: "dialogue", runs: [{ text: "Who left it open?" }] });
+      });
+    });
+    await expect(run.page.getByLabel("Voice for CAROL", { exact: true })).toBeVisible();
+    await expect(run.page.locator(".reader-cast-row").filter({ hasText: "BOB" })).toHaveCount(1);
+    await expect(alice).toHaveValue("Ava (Premium)");
+    await expect(bob).toHaveValue("Tom (Enhanced)");
+  } finally { await close(run.electronApp, run.page); }
+});
+
 test("writing-first navigation and full dialogue reports use the actual document", async () => {
   const run = await launch();
   try {

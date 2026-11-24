@@ -10,6 +10,7 @@ import { WebSocket as NodeSocket, WebSocketServer } from "ws";
 import * as Y from "yjs";
 
 import { RelayClient } from "../src/client.ts";
+import { CLOSE_DENIED } from "../src/protocol.ts";
 import { createRelay, type Relay } from "../src/relay.ts";
 import { hello, linkKeys, linkRoot, sealedPath, sealedWebSocket, type LinkKeys } from "../src/sealed.ts";
 import { nodeLinkCrypto } from "../src/sealed-node.ts";
@@ -51,9 +52,21 @@ async function sealedListener(extra: { wait?: boolean; limits?: Partial<Paramete
   return { keys, relay, url, wire };
 }
 
+/**
+ * Closing a socket that is still connecting fires an error. On the phone that event can go unheard; Node's ws emits
+ * it a tick later, and with no listener it is thrown. A sealed socket drops its listeners before closing, so a
+ * reader destroyed mid-reconnect at teardown crashed the test process. Listen here, as the phone needs no listener.
+ */
+class PhoneLikeSocket extends NodeSocket {
+  constructor(...args: ConstructorParameters<typeof NodeSocket>) {
+    super(...args);
+    this.on("error", () => {});
+  }
+}
+
 function reader(url: string, room: string, key: string, keys: LinkKeys | null) {
   const client = new RelayClient({ relay: url, room, key, doc: new Y.Doc(), readOnly: true, maxBackoff: 100,
-    ...(keys ? { WebSocket: sealedWebSocket(keys, NodeSocket as unknown as typeof WebSocket) } : {}) });
+    ...(keys ? { WebSocket: sealedWebSocket(keys, PhoneLikeSocket as unknown as typeof WebSocket) } : {}) });
   closers.push(() => client.destroy());
   return client;
 }
@@ -160,6 +173,27 @@ test("a reader believes a sealed close code and no other", async () => {
   const fooled = reader(`ws://127.0.0.1:${(forger.address() as AddressInfo).port}`, room, readKey, keys);
   await waitFor(() => closes >= 2, "the reader to try again after a forged close");
   assert.equal(fooled.status, "reconnecting");
+});
+
+test("a sealed socket reports open only once the Mac has accepted its join", async () => {
+  const { keys, relay, url } = await sealedListener();
+  const { room, readKey, key } = relay.createRoom();
+  const Sealed = sealedWebSocket(keys, NodeSocket as unknown as typeof WebSocket);
+  const watch = (roomKey: string) => {
+    const socket = new Sealed(`${url}/${room}?key=${roomKey}`), events: string[] = [];
+    socket.onopen = () => events.push("open");
+    socket.onmessage = () => events.push(socket.readyState === 1 ? "message" : "message before open");
+    const closed = new Promise<number>((resolve) => { socket.onclose = (event) => resolve(event.code); });
+    closers.push(() => socket.close());
+    return { events, closed };
+  };
+  // The writer key is refused on the reader listener: the phone must never have been told it was in.
+  const refused = watch(key);
+  assert.equal(await refused.closed, CLOSE_DENIED);
+  assert.deepEqual(refused.events.filter((e) => e === "open"), []);
+  const accepted = watch(readKey);
+  await waitFor(() => accepted.events.includes("message"), "the relay's first message");
+  assert.equal(accepted.events[0], "open");
 });
 
 test("a recorded handshake does not open a second connection", async () => {

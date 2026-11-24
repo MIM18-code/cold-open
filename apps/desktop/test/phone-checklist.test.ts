@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pairedForAway, setupChecklist, TAILSCALE_ADMIN_DNS, TAILSCALE_DOWNLOAD,
+import { checklistOpen, pairedForAway, setupChecklist, TAILSCALE_ADMIN_DNS, TAILSCALE_DOWNLOAD,
   type ChecklistInput } from "../src/renderer/features/phone/checklist.ts";
 
 const complete: ChecklistInput = {
@@ -68,4 +68,13 @@ test("the iPhone step says how to bring Connect through back while a pairing cod
   assert.match(detail("remembered"), /choose Pair another iPhone to bring Connect through back/);
   assert.match(detail("one-off"), /choose Stop sharing \/ revoke link to bring Connect through back/);
   assert.doesNotMatch(detail(), /pairing code is showing/);
+});
+
+test("Use from anywhere stays folded until a step is finished or an away pairing code is showing", () => {
+  const none: ChecklistInput = { tailscale: { installed: false, running: false, magicDns: false, https: false },
+    remembered: [{ lastSeen: 5 }], folderChosen: false };
+  assert.equal(checklistOpen(setupChecklist(none), false), false, "a writer who only pairs at home sees one row");
+  assert.equal(checklistOpen(setupChecklist(none), true), true, "a code for an away pairing is on screen");
+  assert.equal(checklistOpen(setupChecklist({ ...none, tailscale: { ...none.tailscale, installed: true } }), false), true);
+  assert.equal(checklistOpen(setupChecklist({ ...none, folderChosen: true }), false), true);
 });

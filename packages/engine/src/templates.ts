@@ -9,6 +9,7 @@ import { plainText, type ElementType, type Paragraph, type Script } from "./mode
 import { characterName } from "./reports.ts";
 import { writeStyle, type DocumentStyle } from "./styles.ts";
 import { storedFdxWithNotes } from "./script-notes.ts";
+import { storedFdx } from "./shapes.ts";
 import { isTemplateId, type TemplateId } from "./template-rules.ts";
 
 const BASE_RETURNS: DocumentStyle["returns"] = {
@@ -231,6 +232,14 @@ export function applyDocumentTemplate(doc: ScreenplayDoc, id: TemplateId, option
     if (id === "multiCamera" && options.underlineEntrances !== false) underlineEntrances(doc);
     if (id === "stage" && options.parenthesizeStageDirections) parenthesizeStageDirections(doc);
   });
+}
+
+/**
+ * Store a layout the writer edited without choosing a template. Only the style nodes of the stored extras change, so
+ * script notes keep their stored form and their anchors, and nothing toScript() projects is copied in.
+ */
+export function applyDocumentStyle(doc: ScreenplayDoc, style: DocumentStyle): void {
+  doc.meta.set("fdx", writeStyle({ titlePage: [], paragraphs: [], fdx: storedFdx(doc) }, style));
 }
 
 /** The template recorded on a document, if it still has one. */

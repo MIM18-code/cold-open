@@ -14,7 +14,7 @@ import { cacheProduction, cachedProduction, cacheRows, cachedRows, claimUnpaired
   saveNote, saveTake, UNPAIRED, type Passage } from "./store";
 import { isTailnet, reachStatus, pairingEnded, type ReachReason } from "./reach.ts";
 import { shareTakes } from "./share.ts";
-import { takesFile, takesFileName, takesBatch } from "./takes-file.ts";
+import { takesFile, takesFileName, takesBatch, unsentTakes } from "./takes-file.ts";
 
 const key = "inklot.pairing.v1";
 export function useRemote() {
@@ -26,6 +26,7 @@ export function useRemote() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const wake = useRef<() => void>(() => {});
+  const resendAfter = useRef<Take | undefined>(undefined);
   useEffect(() => {
     Keychain.getItemAsync(key).then(raw => { if (raw) setPair(decodePairing(raw, linkCrypto, Date.now(), true)); })
       .catch(() => setError("Could not restore the pairing. Scan the Mac again.")).finally(() => setReady(true));
@@ -175,8 +176,11 @@ export function useRemote() {
   }
   async function sendToMac() {
     if (!pair) throw new Error("Pair with your Mac first.");
-    const items = takesBatch(pair, listTakes());
+    const all = listTakes(), resending = !unsentTakes(pair, all).length;
+    const items = takesBatch(pair, all, resendAfter.current);
     if (!(await shareTakes(takesFileName(), await takesFile(pair, items, sha256)))) return 0;
+    // The next AirDrop again moves on to the takes after this batch; a cancelled share stays put.
+    if (resending) resendAfter.current = items.at(-1);
     // The Mac may have decided a resent take while the share sheet was open; keep its decision.
     const now = new Map(listTakes().map(t => [t.id, t.outcome]));
     for (const item of items) if (["pending", "saved"].includes(now.get(item.id) ?? "")) mark(item.id, "airdropped");

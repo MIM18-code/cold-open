@@ -123,6 +123,43 @@ test("pairing QR grants only a same-origin reader and revokes its room on Stop",
   } finally { client.destroy(); publisher.stop(); host.ydoc.destroy(); reader.ydoc.destroy(); }
 });
 
+test("the phone is sent presence again only when something it reads has changed", async () => {
+  const { parseInvite } = await import("@screenplay/relay/protocol");
+  const { RelayClient } = await import("@screenplay/relay/client");
+  const { ScreenplayDoc } = await import("@screenplay/engine");
+  const { publishToPhone } = await import("../src/renderer/features/phone/publisher.ts");
+  const { sealedWebSocket } = await import("@screenplay/relay/sealed");
+  const server = new PhoneServer(snapshot);
+  const info = await server.start("127.0.0.1");
+  const link = phoneLink(info.pairing);
+  const host = new ScreenplayDoc(), reader = new ScreenplayDoc();
+  const at = (offset: number) => ({ paragraphId: "p", offset });
+  let cursor = { anchor: at(0), head: at(3) }, writers = ["Co-writer"];
+  const production = { scenes: Array.from({ length: 200 }, (_, i) => ({ id: `s${i}`, heading: `INT. ROOM ${i} - DAY` })) } as any;
+  const publisher = publishToPhone(info.publisher, host, () => ({ title: "Synthetic", name: "Writer", cursor, writers, production }));
+  const client = new RelayClient({ ...parseInvite(link.invite), doc: reader.ydoc, WebSocket: sealedWebSocket(link.keys) });
+  let received = 0;
+  client.awareness.on("update", ({ added, updated }: { added: number[]; updated: number[] }) => {
+    if ([...added, ...updated].includes(host.ydoc.clientID)) received++;
+  });
+  try {
+    await client.whenSynced();
+    for (let i = 0; i < 80 && !client.awareness.getStates().has(host.ydoc.clientID); i++) await delay(5);
+    await delay(50);
+    const before = received;
+    // A co-writer's own cursor moving, or the selection's far end moving, changes nothing the phone reads.
+    cursor = { anchor: at(1), head: at(3) };
+    publisher.refresh(); publisher.refresh(); writers = ["Co-writer"]; publisher.refresh();
+    await delay(100);
+    assert.equal(received, before, "an unchanged presence is not sent again");
+    cursor = { anchor: at(1), head: at(4) };
+    publisher.refresh();
+    for (let i = 0; i < 80 && received === before; i++) await delay(5);
+    assert.equal(received, before + 1, "a moved caret still reaches the phone's follow mode");
+    assert.deepEqual(client.awareness.getStates().get(host.ydoc.clientID)?.cursor, { head: at(4) });
+  } finally { client.destroy(); publisher.stop(); await server.stop(); host.ydoc.destroy(); reader.ydoc.destroy(); }
+});
+
 test("live anchors and review outcomes require the pairing token and bounded content", async () => {
   const server = new PhoneServer(snapshot);
   const info = await server.start("127.0.0.1"), u = phoneLink(info.pairing);

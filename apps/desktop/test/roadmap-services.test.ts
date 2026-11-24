@@ -75,6 +75,9 @@ test("the opt-in Safari link requires its own token, rejects other origins, queu
         server.publish({ ...source, revision: "session:2" });
         assert.equal((await fetch(base + "/api/inbox", { method: "POST", headers, body: JSON.stringify({ ...body, id: "client-item-0002" }) })).status, 409);
         assert.equal(server.items().length, 1);
+        // A playback control names no passage, so an edit since the page loaded must not refuse it.
+        assert.equal((await fetch(base + "/api/command", { method: "POST", headers, body: JSON.stringify({ revision: "session:1", command: "resume" }) })).status, 200);
+        assert.deepEqual(commands, ["pause", "resume"]);
         server.acknowledge(body.id);
         assert.equal(server.items().length, 0);
     }

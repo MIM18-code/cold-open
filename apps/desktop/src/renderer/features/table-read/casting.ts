@@ -48,7 +48,11 @@ export function castForScript(script: Script, raw: unknown): { state: CastState;
     cueIds: binding.cueIds.length ? binding.cueIds : [binding.id],
   }));
   const registry = buildCharacterRegistry(script, stored);
-  return { state: { version: 1, narrator: previous.narrator, cast: reconcileCast(readRoles(script, registry.characters), previous.cast) }, registry };
+  const roles = readRoles(script, registry.characters);
+  // A character still in the script with nothing to say has no role. Its saved voice must not pass, through a
+  // cue it used to have, to the character that cue names now.
+  const speaking = new Set(roles.map((role) => role.id)), silent = new Set(registry.characters.map((identity) => identity.id).filter((id) => !speaking.has(id)));
+  return { state: { version: 1, narrator: previous.narrator, cast: reconcileCast(roles, previous.cast.filter((binding) => !silent.has(binding.id))) }, registry };
 }
 
 export function currentCast(script: Script, raw: unknown): CastState {

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { app, type Feature, type ModalProps } from "../../core/app.ts";
 import { useScript, useSessionState } from "../../core/hooks.ts";
 import { useCurrentPagination } from "../print/live.ts";
+import { renameStoredName } from "../table-read/cast-store.ts";
 import "./rename.css";
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -40,7 +41,11 @@ function RenameModal({ close, props }: ModalProps<{ name?: string } | undefined>
     const session = app.session;
     const fresh = planRename(session.script(), selected, name);
     if (!fresh.edits.length) return;
-    session.edit(() => applyTextEdits(session.doc, fresh.edits));
+    session.edit(() => {
+      // The Table Read cast follows the rename, so the character keeps its voice even when it has other names.
+      if (fresh.cues) renameStoredName(session.doc, session.script(), selected, fresh.upper);
+      applyTextEdits(session.doc, fresh.edits);
+    });
     app.toast(`Renamed ${selected} to ${fresh.upper}: ${plural(fresh.cues, "cue")}, ${plural(fresh.mentions, "mention")}.`, "success");
     close();
   };

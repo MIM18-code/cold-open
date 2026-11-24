@@ -331,6 +331,8 @@ test("an opened script shows its proofreading marks before any edit, and keeps t
 });
 
 test("Open Recent reaches a chosen script after a restart, and a page cannot add a file it was never given", async () => {
+  // Two launches of the app in one test: on a loaded Mac they alone can pass the default minute.
+  test.setTimeout(120_000);
   const dir = mkdtempSync(join(tmpdir(), "screenplay-file-"));
   const userData = mkdtempSync(join(tmpdir(), "screenplay-e2e-"));
   const script = join(dir, "Chosen.fountain");

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ScreenplayDoc, applyDocumentTemplate, captureScriptNotes, parseFdx, writeFdx, scriptNotes, changeScriptNote, lockPages, pageLocks, paginate, storedFdx, readStyle, writeStyle, templateStyle, plainText, moveScene, type Script } from "../src/index.ts";
+import { ScreenplayDoc, applyDocumentStyle, applyDocumentTemplate, captureScriptNotes, parseFdx, writeFdx, scriptNotes, changeScriptNote, lockPages, pageLocks, paginate, storedFdx, readStyle, writeStyle, templateStyle, plainText, moveScene, type Script } from "../src/index.ts";
 const fdx = `<FinalDraft DocumentType="Script" Template="No" Version="3"><Content><Paragraph Type="Scene Heading" id="s"><Text>INT. ROOM - DAY</Text></Paragraph><Paragraph Type="Action" id="a"><Text>A red door opens.</Text></Paragraph><Paragraph Type="Scene Heading" id="t"><Text>EXT. ROAD - NIGHT</Text></Paragraph><Paragraph Type="Action" id="b"><Text>She waits.</Text></Paragraph></Content><ScriptNotes Weird="kept"><ScriptNote Range="17,25" Color="#ffff00000000" Custom="yes"><Paragraph Alignment="Left"><Text Style="Bold">Check the door.</Text></Paragraph><Unknown Keep="yes"/></ScriptNote></ScriptNotes><UnknownDocument Keep="yes"/></FinalDraft>`;
 const make = () => ScreenplayDoc.fromScript(parseFdx(fdx));
 test("FDX note range is unchanged on round trip; content, formatting and unknown XML survive", () => {
@@ -200,4 +200,18 @@ test("applying a template keeps a ScriptNote on the words it covers after text w
   });
   assert.equal(covered(), before);
   doc.ydoc.destroy();
+});
+test("a layout-only change leaves script notes and their anchors as they are stored", () => {
+    const doc = make();
+    doc.insertText("a", 0, "Then ");
+    const notes = (value: unknown) => JSON.stringify((value as { after: { name: string }[] }).after.filter((node) => node.name === "ScriptNotes"));
+    const before = notes(doc.meta.get("fdx")), anchors = JSON.stringify(doc.meta.get("fdx.scriptNoteAnchors.v1"));
+    const style = readStyle(doc.toScript());
+    style.page.top = 1.5;
+    applyDocumentStyle(doc, style);
+    assert.equal(readStyle(doc.toScript()).page.top, 1.5);
+    assert.equal(notes(doc.meta.get("fdx")), before, "the stored note keeps its file range, not the range it has now");
+    assert.equal(JSON.stringify(doc.meta.get("fdx.scriptNoteAnchors.v1")), anchors);
+    assert.deepEqual(scriptNotes(doc)[0]?.from, { paragraphId: "a", offset: 6 }, "and still follows the text typed before it");
+    doc.ydoc.destroy();
 });

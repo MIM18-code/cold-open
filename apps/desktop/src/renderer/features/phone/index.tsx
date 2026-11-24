@@ -13,7 +13,7 @@ import { createRecord } from "../rewrite/records.ts";
 import { historyId } from "../history/index.tsx";
 import { draftElements } from "./draft.ts";
 import { acceptPhoneRecord, filePhoneNotes, phoneAttachment, phoneSceneAttachment } from "./receipts.ts";
-import { setupChecklist } from "./checklist.ts";
+import { checklistOpen, setupChecklist } from "./checklist.ts";
 import "./phone.css";
 import { phoneDocumentKey, phoneIdentity, watchPhoneDocumentKey } from "./identity.ts";
 import { getReader } from "../table-read/index.tsx";
@@ -296,18 +296,16 @@ function PhonePanel() {
         await run("phone:acknowledge", documentId, item.id, "ignored", item.deviceId);
     };
     const tail = status?.addresses.find(a => a.address === address)?.tailscale;
-    return <section className="roadmap-dialog phone-panel" aria-label="Phone companion">
-    <div className="panel-header"><h2>Phone companion</h2></div>
-    <p className="phone-lede">Read the script on your iPhone, and write, dictate or leave notes. Notes go straight into Notes. Writing and dictation arrive here for you to accept or ignore.</p>
-    {status && <section className="phone-setup" aria-label="Use from anywhere">
+    const steps = status && setupChecklist({ tailscale: status.tailscale, remembered: status.remembered,
+      showing: !status.active ? undefined : status.expiresAt ? "one-off" : "remembered",
+      folderChosen: status.folderChosen });
+    const setupBody = steps && <>
       <div className="phone-setup-head"><h3>Use from anywhere</h3>
         <button className="button" disabled={busy} onClick={() => void refresh(true)}>Check again</button></div>
       <p className="phone-note">Skip this if you only use the iPhone at home. Away from home, the iPhone reaches this Mac through Tailscale,
         a separate app that privately links your own devices over the internet.</p>
       <ol className="setup-steps">
-        {setupChecklist({ tailscale: status.tailscale, remembered: status.remembered,
-          showing: !status.active ? undefined : status.expiresAt ? "one-off" : "remembered",
-          folderChosen: status.folderChosen }).map(step => <li key={step.id}
+        {steps.map(step => <li key={step.id}
             className={step.done ? "done" : step.optional ? "optional" : "todo"}>
           <span className="setup-mark" role="img" aria-label={step.done ? "Done" : step.optional ? "Optional" : "To do"} />
           <div>
@@ -321,7 +319,16 @@ function PhonePanel() {
       <p className="phone-note">While you are away, this Mac has to stay awake, with Tailscale connected and Cold Open and
         this script open. Keep this Mac awake, below, stops it going to sleep on its own. If the iPhone can’t reach the Mac, what you write
         waits on it and sends once it can.</p>
-    </section>}
+    </>;
+    return <section className="roadmap-dialog phone-panel" aria-label="Phone companion">
+    <div className="panel-header"><h2>Phone companion</h2></div>
+    <p className="phone-lede">Read the script on your iPhone, and write, dictate or leave notes. Notes go straight into Notes. Writing and dictation arrive here for you to accept or ignore.</p>
+    {status && steps && (checklistOpen(steps, status.active && !!status.pairing && status.urlEncrypted) ? <section className="phone-setup" aria-label="Use from anywhere">
+      {setupBody}
+    </section> : <details className="phone-setup phone-setup-fold" aria-label="Use from anywhere">
+      <summary><strong>Use from anywhere</strong> <span>To use the iPhone away from home. Not needed at home.</span></summary>
+      {setupBody}
+    </details>)}
     {status && <>
       <label className="field"><span><input type="checkbox" aria-label="Keep this Mac awake while it shares with an iPhone"
         checked={status.keepAwake} disabled={busy} onChange={e => void run("phone:set-keep-awake", e.target.checked)} /> Keep this Mac awake while it shares with an iPhone</span></label>

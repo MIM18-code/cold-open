@@ -5,7 +5,7 @@ import * as Y from "yjs";
 import {
   ScreenplayDoc, addStructurePoint, addStructurePointPreset, clampPosition, formatPointPage, pageDelta, pagePosition,
   lockPages, pageLocks, paginate, parsePointPosition, pointOffset, pointPage, removeStructurePoint, revisionState, setRevisionState,
-  storyMap, structurePoints, updateStructurePoint, writeFdx, type Paragraph, type RevisionState,
+  storyMap, structurePoints, updateStructurePoint, writeFdx, type Paragraph, type RevisionState, type Script,
 } from "../src/index.ts";
 
 test("a target is a share of the script, and pages map both ways", () => {
@@ -165,6 +165,31 @@ test("the story map tiles the script in pages, in scene order", () => {
   const last = map.scenes.at(-1)!;
   assert.ok(Math.abs(last.start + last.length - map.pages) < 1e-9);
   assert.ok(Math.abs(map.scenes.reduce((total, scene) => total + scene.length, 0) - map.pages) < 1e-9);
+});
+
+test("a heading that holds only a note starts where its scene's first printed paragraph does", () => {
+  const paragraphs: Paragraph[] = [];
+  for (let i = 0; i < 4; i++) {
+    paragraphs.push({ id: `h${i}`, type: "sceneHeading", sceneId: `s${i}`, runs: i === 2 ? [{ text: "fix this", note: true }] : [{ text: `INT. ROOM ${i} - DAY` }] });
+    for (let j = 0; j < 6; j++) paragraphs.push({ id: `a${i}_${j}`, type: "action", runs: [{ text: "Words ".repeat(50) }] });
+  }
+  const script = { titlePage: [], paragraphs };
+  const pagination = paginate(script);
+  assert.equal(pagination.positions.get("h2"), undefined);
+  const scenes = storyMap(script, pagination).scenes;
+  assert.equal(scenes.length, 4);
+  for (let i = 1; i < scenes.length; i++) assert.ok(scenes[i]!.start > scenes[i - 1]!.start, `scene ${i} starts after scene ${i - 1}`);
+  assert.ok(scenes.every((scene) => scene.length > 0));
+  const first = pagination.positions.get("a2_0")!;
+  assert.equal(scenes[2]!.page, pagination.pages[first.page]!.number);
+
+  // A note-only heading with nothing printed after it sits where the scene before it starts, page label included.
+  const ending: Script = { titlePage: [], paragraphs: [...paragraphs, { id: "h4", type: "sceneHeading", sceneId: "s4", runs: [{ text: "later", note: true }] }] };
+  const paged = paginate(ending), last = storyMap(ending, paged).scenes;
+  assert.ok(paged.positions.get("h3")!.page > 0);
+  assert.equal(last[4]!.start, last[3]!.start);
+  assert.equal(last[4]!.page, last[3]!.page);
+  assert.notEqual(last[4]!.page, last[0]!.page);
 });
 
 test("a scene block carries its scene color and the revision on its pages", () => {

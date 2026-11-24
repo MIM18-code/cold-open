@@ -1,7 +1,7 @@
 // Built-in dictation continues in the editor; the panel holds takes that need review.
 import { useEffect, useState } from "react";
 import { app, type Feature } from "../../core/app.ts";
-import { useEditor, useSessionState } from "../../core/hooks.ts";
+import { useApp, useEditor, useSessionState } from "../../core/hooks.ts";
 import { hasSelection } from "../format-draft/target.ts";
 import { formatAccelerator } from "../../shell/Shell.tsx";
 import { DictationPanel, MicIcon, SHORTCUT } from "./Panel.tsx";
@@ -20,8 +20,13 @@ function ToolbarButton() {
     update();
     return editor?.onSelectionChange(update);
   }, [editor]);
+  const onScript = useApp(a => a.ui.view === "script");
   const recording = phase === "recording";
   const busy = phase === "working";
+  // Both buttons act on the script page, and Brainstorm has its own Dictate. Off the script, a take that is
+  // recording keeps its Stop button, and one being worked on keeps only its progress.
+  if (!onScript && !recording) return busy ? <div className="dictation-toolbar-group" role="group" aria-label="Dictation">
+    <span className="dictation-toolbar-status" role="status">{stage}…</span></div> : null;
   return (
     <div className="dictation-toolbar-group" role="group" aria-label="Dictation">
     <button className="button" disabled={!editor || readOnly || recording || busy} onMouseDown={event => event.preventDefault()}

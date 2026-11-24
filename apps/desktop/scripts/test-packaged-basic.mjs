@@ -9,7 +9,7 @@
 // with Chromium's page debugger switched on.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,6 +45,25 @@ const pdfText = path => {
   check(result.status === 0, `PDFKit extraction failed: ${result.error ?? result.stderr}`);
   return result.stdout;
 };
+
+// A profile whose settings start local AI at launch, with a script planted where the app keeps its own Ollama
+// download. A signed release must skip it (src/main/trusted-program.ts); an unsigned build runs it as before. With
+// `link`, the planted ollama is a symlink to a script elsewhere in the profile, so the check follows it and still
+// refuses. A symlink to a path under /System/Volumes/Data once passed as a system program that way.
+const ollamaVersion = /const VERSION = "([^"]+)"/.exec(fileText(join(here, '../src/main/models/local-runtime.ts')))[1];
+const plantOllama = (profile, link = false) => {
+  const folder = join(output(profile), 'local-ai', `ollama-${ollamaVersion}`), marker = output(`${profile}-ran`);
+  mkdirSync(folder, { recursive: true });
+  const script = link ? join(output(profile), 'elsewhere', 'ollama') : join(folder, 'ollama');
+  mkdirSync(dirname(script), { recursive: true });
+  writeFileSync(script, `#!/bin/sh\n: > ${JSON.stringify(marker)}\n`, { mode: 0o755 });
+  if (link) symlinkSync(script, join(folder, 'ollama'));
+  writeFileSync(join(output(profile), 'settings.json'), JSON.stringify({ 'grants.startLocalAI': true }));
+  return marker;
+};
+// The app starts no Ollama when one already answers, so the planted script would not run either way.
+const ollamaAnswers = () => fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(2000) }).then(() => true, () => false);
+const OLLAMA_SKIP = 'SKIP planted Ollama check: a server already answers on 127.0.0.1:11434. Quit Ollama to run it.';
 
 function verifyModelAndInference() {
   check(existsSync(binary) && existsSync(helper), `Packaged app or speech helper is missing: ${appPath}`);
@@ -164,6 +183,24 @@ async function sealedChecks() {
     check(byPipe.exit?.code === 1, `The sealed app did not refuse --remote-debugging-pipe: ${byPipe.describe()}`);
   } finally { clearInterval(asking); if (!byPipe.exit) byPipe.child.kill('SIGKILL'); }
   console.log('PASS sealed app quits before --remote-debugging-port or --remote-debugging-pipe can reach its page');
+
+  if (await ollamaAnswers()) console.log(OLLAMA_SKIP);
+  else {
+    for (const [profile, link] of [['ollama-profile', false], ['ollama-link-profile', true]]) {
+      const marker = plantOllama(profile, link);
+      const planted = start(profile, []);
+      try {
+        for (let i = 0; i < 120 && !planted.exit && !rendering(planted); i++) await sleep(250);
+        check(!planted.exit && rendering(planted), `The sealed app did not open its window with local AI set to start: ${planted.describe()}`);
+        await sleep(5000);
+        check(!existsSync(marker), `The sealed app ran an unsigned program planted at local-ai/ollama-*/ollama in its profile${link ? ' through a symlink' : ''}`);
+        planted.child.kill('SIGTERM');
+        await Promise.race([planted.exited, sleep(15000)]);
+        check(planted.exit?.code === 0, `The sealed app did not quit cleanly with local AI set to start: ${planted.describe()}`);
+      } finally { if (!planted.exit) planted.child.kill('SIGKILL'); }
+    }
+    console.log('PASS sealed app skips an unsigned Ollama planted in its profile, directly or through a symlink');
+  }
 }
 
 async function main() {
@@ -300,6 +337,17 @@ async function main() {
     assert.equal(status.helperPath, helper, 'The packaged app chose the speech helper named by SCREENPLAY_SPEECH_HELPER');
     await close();
     console.log('PASS packaged app ignores SCREENPLAY_SPEECH_HELPER');
+
+    // The control for the sealed check: this ad hoc build is not sealed, so it runs the planted Ollama as before.
+    if (await ollamaAnswers()) console.log(OLLAMA_SKIP);
+    else {
+      const ran = plantOllama('ollama-profile');
+      p = await open('ollama-profile');
+      for (let i = 0; i < 40 && !existsSync(ran); i++) await new Promise(r => setTimeout(r, 250));
+      check(existsSync(ran), 'The unsealed packaged app did not start local AI from its profile, so the sealed check proves nothing');
+      await close();
+      console.log('PASS unsealed packaged app still starts the Ollama in its profile');
+    }
     console.log('PASS packaged basic gate');
   } finally {
     // A failed assertion may leave an unsaved test document; quit only this test process.

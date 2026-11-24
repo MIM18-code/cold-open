@@ -200,7 +200,7 @@ function RevisionStatus() {
   const set = currentRevisionSet(state);
   if (!state.tracking && !locked) return null;
   return (
-    <button type="button" className="revisions-status" title="Revisions" onClick={() => app.openModal("revisions.manage")}>
+    <button type="button" className="revisions-status" title="Revisions" onClick={() => void app.runCommand("revisions.current")}>
       {state.tracking && set ? <><span className="revisions-swatch" style={{ background: set.color }} />{revisionLabel(set)}</> : null}
       {locked ? <span>{state.tracking ? "· " : ""}Pages locked</span> : null}
     </button>
@@ -261,34 +261,36 @@ function startMarks(target: App): () => void {
 }
 
 const state = (a: App) => revisionState(a.session.doc);
+// Production settings change the shared document, which a read-only guest may not do.
+const writable = (a: App) => !a.session.readOnly;
 
 const feature: Feature = {
   id: "revisions",
   commands: [
     { id: "revisions.moveConflicts", label: "Scene Move Conflicts…", menu: "Production", group: "locking", run: (a) => a.openModal("revisions.moveConflicts") },
     { id: "revisions.numberConflicts", label: "Scene Number Conflicts…", menu: "Production", group: "locking", run: (a) => a.openModal("revisions.numberConflicts") },
-    { id: "revisions.mode", label: "Revision Mode", menu: "Production", group: "revisions", run: (a) => toggleTracking(a), checked: (a) => state(a).tracking },
-    { id: "revisions.current", label: "Current Revision…", menu: "Production", group: "revisions", run: (a) => a.openModal("revisions.manage") },
-    { id: "revisions.newSet", label: "New Revision Set…", menu: "Production", group: "revisions", run: (a) => a.openModal("revisions.manage", { mode: "new" }) },
+    { id: "revisions.mode", label: "Revision Mode", menu: "Production", group: "revisions", enabled: writable, run: (a) => toggleTracking(a), checked: (a) => state(a).tracking },
+    { id: "revisions.current", label: "Current Revision…", menu: "Production", group: "revisions", enabled: writable, run: (a) => a.openModal("revisions.manage") },
+    { id: "revisions.newSet", label: "New Revision Set…", menu: "Production", group: "revisions", enabled: writable, run: (a) => a.openModal("revisions.manage", { mode: "new" }) },
     {
       id: "revisions.clear", label: "Clear Revision Marks…", menu: "Production", group: "revisions",
-      enabled: (a) => state(a).sets.length > 0, run: (a) => a.openModal("revisions.manage", { mode: "clear" }),
+      enabled: (a) => writable(a) && state(a).sets.length > 0, run: (a) => a.openModal("revisions.manage", { mode: "clear" }),
     },
     {
       id: "revisions.showMarks", label: "Show Revision Marks", menu: "Production", group: "revisions",
       checked: (a) => state(a).showMarks, run: (a) => change(a, (current) => ({ showMarks: !current.showMarks })),
     },
-    { id: "revisions.lockPages", label: "Lock Pages", menu: "Production", group: "locking", run: (a) => lockScriptPages(a) },
+    { id: "revisions.lockPages", label: "Lock Pages", menu: "Production", group: "locking", enabled: writable, run: (a) => lockScriptPages(a) },
     {
       id: "revisions.unlockPages", label: "Unlock Pages", menu: "Production", group: "locking",
-      enabled: (a) => !!pageLocks(a.session.doc)?.length,
+      enabled: (a) => writable(a) && !!pageLocks(a.session.doc)?.length,
       run: (a) => {
         settle(a, () => unlockPages(a.session.doc));
         a.toast("Unlocked the pages. Pages number 1 to N again.", "info");
       },
     },
     {
-      id: "revisions.lockScenes", label: "Lock Scene Numbers", menu: "Production", group: "locking",
+      id: "revisions.lockScenes", label: "Lock Scene Numbers", menu: "Production", group: "locking", enabled: writable,
       checked: (a) => sceneNumbersLocked(a.session.doc),
       run: (a) => {
         const locked = !sceneNumbersLocked(a.session.doc);

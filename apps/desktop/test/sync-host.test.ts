@@ -5,6 +5,7 @@ import type { NetworkInterfaceInfo } from "node:os";
 import { test } from "node:test";
 
 import { ScreenplayDoc, newId } from "@screenplay/engine";
+import { createRelay, type Relay } from "@screenplay/relay";
 import { RelayClient } from "@screenplay/relay/client";
 import { parseInvite } from "@screenplay/relay/protocol";
 import { Awareness } from "y-protocols/awareness";
@@ -220,4 +221,108 @@ test("awareness carries presence between two clients through the hosted relay", 
   awarenessA.destroy();
   awarenessB.destroy();
   await host.close();
+});
+
+/** A host whose relays are recorded, with an optional gate that holds each bind until it is released. */
+function recordingHost(gate?: Promise<void>) {
+  const relays: Relay[] = [];
+  const host = new Host("127.0.0.1", {
+    createRelay: async (options) => {
+      await gate;
+      const relay = await createRelay(options);
+      relays.push(relay);
+      return relay;
+    },
+  });
+  return { host, relays };
+}
+
+test("a window that closes while sharing is starting gets no room and leaves no relay listening", async () => {
+  const { host, relays } = recordingHost();
+  const starting = host.start(1); // not awaited: the relay is still starting
+  await host.stop(1); // the window closed
+  await assert.rejects(starting, /stopped before it started/);
+  assert.equal(host.isHosting(1), false);
+  assert.equal(relays.length, 1);
+  assert.equal(await portOpen(relays[0]!.port), false, "the relay that start bound is closed");
+  // A later start is a fresh one, and stopping it closes its relay.
+  const info = await host.start(1);
+  const port = Number(new URL(info.relay).port);
+  assert.equal(await portOpen(port), true);
+  await host.stop(1);
+  assert.equal(await portOpen(port), false);
+});
+
+test("a window that stops and shares again before the relay is up shares on the second try", async (t) => {
+  const { host, relays } = recordingHost();
+  t.after(() => host.close());
+  const first = host.start(1);
+  const stopped = host.stop(1);
+  const second = host.start(1);
+  await assert.rejects(first, /stopped before it started/);
+  await stopped;
+  const info = await second;
+  assert.equal(host.isHosting(1), true);
+  assert.equal(await portOpen(Number(new URL(info.relay).port)), true);
+  assert.equal(relays.length, 1);
+});
+
+test("closing the host during the first bind refuses the start and closes the relay it bound", async (t) => {
+  let release!: () => void;
+  const { host, relays } = recordingHost(new Promise<void>((resolve) => { release = resolve; }));
+  t.after(() => host.close());
+  const first = host.start(1);
+  const closing = host.close(); // the app is quitting
+  const late = host.start(2); // asked after the close began: it binds a relay of its own
+  release();
+  await assert.rejects(first, /stopped before it started/);
+  await closing;
+  const info = await late;
+  assert.equal(relays.length, 2);
+  const port = Number(new URL(info.relay).port);
+  const kept = relays.find((relay) => relay.port === port)!, dropped = relays.find((relay) => relay !== kept)!;
+  assert.equal(await portOpen(dropped.port), false, "the relay taken by close() is closed");
+  assert.equal(await portOpen(port), true, "the later start's relay is listening");
+  await host.stop(2);
+  assert.equal(await portOpen(port), false);
+});
+
+test("one window stopping mid-start does not take the relay from another window that is starting", async (t) => {
+  const host = new Host("127.0.0.1");
+  t.after(() => host.close());
+  const first = host.start(1), second = host.start(2);
+  await host.stop(1);
+  await assert.rejects(first, /stopped before it started/);
+  const info = await second;
+  const port = Number(new URL(info.relay).port);
+  assert.equal(await portOpen(port), true, "the second window's relay is up");
+  const doc = new ScreenplayDoc();
+  const client = new RelayClient({ relay: info.relay, room: info.room, key: info.key, doc: doc.ydoc });
+  await client.whenSynced();
+  client.destroy();
+  await host.stop(2);
+  assert.equal(await portOpen(port), false);
+});
+
+test("the last sharing window stopping does not close the relay under a window that is starting", async (t) => {
+  const host = new Host("127.0.0.1");
+  t.after(() => host.close());
+  await host.start(1);
+  const second = host.start(2); // waiting for the relay when window 1 stops
+  await host.stop(1);
+  const info = await second;
+  const port = Number(new URL(info.relay).port);
+  assert.equal(await portOpen(port), true, "the relay window 2 was given is still listening");
+  await host.stop(2);
+  assert.equal(await portOpen(port), false);
+});
+
+test("closing the host refuses a start that was still waiting for the relay", async () => {
+  const host = new Host("127.0.0.1");
+  const info = await host.start(1);
+  const starting = host.start(2);
+  await host.close(); // the app is quitting
+  await assert.rejects(starting, /stopped before it started/);
+  assert.equal(host.isHosting(2), false);
+  assert.equal(await portOpen(Number(new URL(info.relay).port)), false);
 });

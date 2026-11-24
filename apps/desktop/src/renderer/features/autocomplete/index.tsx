@@ -5,6 +5,7 @@ import { plainText, type Paragraph } from "@screenplay/engine";
 import { AI_CHANNELS, type AiStatus, type ProviderId } from "../../../shared/channels/ai.ts";
 import { app, type Feature } from "../../core/app.ts";
 import type { EditorBridge } from "../../core/editor-bridge.ts";
+import { inOtherTextField } from "../../core/keyboard.ts";
 import { desktop, messageBox } from "../../core/platform.ts";
 import { AiClientError, runAi, type AiRun } from "../assistant/client.ts";
 import { preferredProvider, providerName } from "../assistant/provider.ts";
@@ -104,7 +105,8 @@ const feature: Feature = {
   id: "autocomplete",
   commands: [{
     id: "ai.completeSentence", label: "Complete Sentence", menu: "Edit", group: "ai", accelerator: "CmdOrCtrl+Enter",
-    enabled: () => mode() !== "off" && !!app.editor && !app.session.readOnly,
+    // ⌘Return also finishes a quick note or other text field, and the main process sends it to any enabled command.
+    enabled: () => mode() !== "off" && !!app.editor && !app.session.readOnly && !app.ui.modal && !inOtherTextField(),
     run: () => complete(false),
   }],
   activate(a) {
