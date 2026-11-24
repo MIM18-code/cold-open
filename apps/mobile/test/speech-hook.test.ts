@@ -7,12 +7,13 @@ import { resolve } from "node:path";
 // checked against what the recognizer does and does not answer.
 const root = resolve(import.meta.dirname, "..");
 const stubs: Record<string, string> = {
-  react: `let slots = [], cursor = 0;
-    export function begin() { cursor = 0; }
-    export function unmount() { for (const s of slots) if (s && s.effect) s.cleanup?.(); slots = []; cursor = 0; }
-    export function useState(value) { const i = cursor++;
-      if (!(i in slots)) slots[i] = typeof value === "function" ? value() : value;
-      return [slots[i], next => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }]; }
+  react: `let screens = {}, slots = [], cursor = 0;
+    export function begin(screen = 0) { slots = screens[screen] ??= []; cursor = 0; }
+    export function unmount(screen = 0) { for (const s of screens[screen] ?? []) if (s && s.effect) s.cleanup?.();
+      screens[screen] = []; slots = screens[screen]; cursor = 0; }
+    export function useState(value) { const i = cursor++, own = slots;
+      if (!(i in own)) own[i] = typeof value === "function" ? value() : value;
+      return [own[i], next => { own[i] = typeof next === "function" ? next(own[i]) : next; }]; }
     export function useRef(value) { return useState(() => ({ current: value }))[0]; }
     export function useEffect(fn, deps) { const i = cursor++, old = slots[i];
       if (old && deps.every((d, k) => d === old.deps[k])) return;
@@ -37,7 +38,7 @@ const result = await build({ stdin: { contents: `export { useSpeech } from "./sr
 });
 const hook = await import("data:text/javascript;base64," + Buffer.from(result.outputFiles[0]!.text).toString("base64"));
 const flush = () => new Promise(r => setImmediate(r));
-const render = () => { hook.begin(); return hook.useSpeech(() => {}, () => {}); };
+const render = (screen = 0) => { hook.begin(screen); return hook.useSpeech(() => {}, () => {}); };
 function fresh() {
   hook.unmount(); hook.recognizer.calls.length = 0; hook.recognizer.starts.length = 0;
   hook.recognizer.startFails.length = 0; hook.recognizer.auths.length = 0; hook.recognizer.deferAuth = false;
@@ -138,4 +139,23 @@ test("a failed start after release does not leave a give-up timer that cancels t
   assert.equal(render().phase, "listening");
   assert.equal(hook.recognizer.calls.includes("cancel"), false);
   hook.unmount();
+});
+
+test("a start that answers after its screen closed does not stop the recognizer a new screen started", async () => {
+  fresh();
+  void render().start();
+  await flush();
+  hook.unmount();
+  render(1);
+  void render(1).start();
+  await flush();
+  assert.equal(hook.recognizer.starts.length, 2);
+  const before = hook.recognizer.calls.length;
+  hook.recognizer.starts[0]();
+  await flush();
+  assert.deepEqual(hook.recognizer.calls.slice(before), [], "the closed screen leaves the new take alone");
+  hook.recognizer.starts[1]();
+  await flush();
+  assert.equal(render(1).phase, "listening");
+  hook.unmount(1);
 });

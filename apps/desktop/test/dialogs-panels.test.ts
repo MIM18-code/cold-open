@@ -110,6 +110,7 @@ function load(javascript = components, script = SCRIPT) {
       },
       flushPending() {}, refreshMenu() {}, toast(message: string) { fixture.toasts.push(message); },
       setting: (_key: string, fallback: unknown) => fallback, onSession: () => () => {}, subscribe: () => () => {},
+      ui: { modal: null as unknown },
     },
   };
   const slots: unknown[] = [];
@@ -195,6 +196,30 @@ test("Export Sides shows a failed save and cannot start twice", async () => {
   assert.match(text(all(render(Sides, props), (e) => e.props.role === "alert")), /disk is full/);
 });
 
+test("a slow Sides export leaves alone a dialog the writer opened after it", async () => {
+  const { api, fixture, render } = load();
+  let finish = (_path: string) => {};
+  fixture.invoke = (channel) => channel === CHANNELS.saveDialog ? new Promise((resolve) => (finish = resolve)) : Promise.resolve();
+  fixture.app.ui.modal = { id: "reports.sides", props: undefined };
+  const Sides = modal(api.reports, "reports.sides");
+  const closed: boolean[] = [];
+  const props = { close: () => closed.push(true) };
+  button(render(Sides, props), "Select all").props.onClick();
+  button(render(Sides, props), "Export…").props.onClick();
+  // The writer closes Export Sides and opens Reports before the save returns.
+  fixture.app.ui.modal = { id: "reports.main", props: undefined };
+  finish("/Volumes/Slow/Dialogs sides.fdx");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.match(fixture.toasts.join("\n"), /Exported 1 scene to Dialogs sides\.fdx/);
+  assert.deepEqual(closed, []);
+  // With Export Sides still open, a finished save closes it as before.
+  fixture.app.ui.modal = { id: "reports.sides", props: undefined };
+  button(render(Sides, props), "Export…").props.onClick();
+  finish("/Volumes/Slow/Dialogs sides.fdx");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(closed, [true]);
+});
+
 test("Rename Character preselects the cue's name without its inline note", () => {
   const { api, render } = load();
   const tree = render(modal(api.rename, "rename.main"), { close() {}, props: undefined });
@@ -207,6 +232,31 @@ test("Show Revision Marks is off for a read-only guest, as the other revision co
   assert.equal(showMarks.enabled?.(fixture.app) ?? true, true);
   session.setReadOnly(true);
   assert.equal(showMarks.enabled?.(fixture.app) ?? true, false);
+});
+
+test("a Revisions dialog left open stops writing when the writer becomes a read-only guest", () => {
+  const { api, session, render } = load();
+  session.doc.ydoc.transact(() => engine.updateRevisionState(session.doc, (state) => {
+    const set = engine.newRevisionSet(state);
+    return { sets: [set], currentSetId: set.id };
+  }));
+  const Revisions = modal(api.revisions, "revisions.manage");
+  // The new-set form is a component of its own; render it in place so its Create button can be checked.
+  const open = () => {
+    const tree = render(Revisions, { close() {}, props: { mode: "new" } });
+    const form = all(tree, (e) => typeof e.type === "function")[0]!;
+    return [tree, (form.type as Component)(form.props)];
+  };
+  const writers = (tree: unknown) => [
+    ...all(tree, (e) => e.type === "input" && ["tracking", "showMarks", "current"].includes(e.props.name)),
+    ...all(tree, (e) => e.type === "button" && e.props.type === "submit"),
+    // The two Clear buttons never wrote for a guest, but they threw with nothing shown; they are off as well.
+    ...all(tree, (e) => e.type === "button" && typeof e.props.children === "string" && e.props.children.startsWith("Clear")),
+  ];
+  assert.equal(writers(open()).length, 6);
+  assert.equal(writers(open()).filter((e) => e.props.disabled).length, 0);
+  session.setReadOnly(true);
+  assert.equal(writers(open()).filter((e) => !e.props.disabled).length, 0);
 });
 
 test("the assistant follows the editor's selection, not only app updates", () => {

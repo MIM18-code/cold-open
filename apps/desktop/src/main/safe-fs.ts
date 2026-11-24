@@ -140,13 +140,43 @@ export async function readChosenFile(path: string, maximum?: number): Promise<Ui
 
 /**
  * Append to an existing regular file without following a link. False when the file is not there; throws
- * UnsafeFileError for a link, a special file, or a file with a second name.
+ * UnsafeFileError for a link, a special file, or a file with a second name. With `expected`, also false, writing
+ * nothing, unless the file opened is that one (device and inode) at exactly that size: for a caller that has just
+ * repaired the file and must not append to whatever replaced it since.
  */
-export async function appendRegular(path: string, data: Uint8Array): Promise<boolean> {
+export async function appendRegular(path: string, data: Uint8Array, expected?: { dev: number; ino: number; size: number }): Promise<boolean> {
   const handle = await openRegular(path, constants.O_WRONLY | constants.O_APPEND, false);
   if (!handle) return false;
   try {
+    if (expected) {
+      const info = await handle.stat();
+      if (info.dev !== expected.dev || info.ino !== expected.ino || info.size !== expected.size) return false;
+    }
     await handle.writeFile(data);
+    if (expected) {
+      // Replaced while this was writing: the data went to the old file, and the one at the path now lacks it.
+      const now = lstatSync(path, { throwIfNoEntry: false });
+      if (!now || now.dev !== expected.dev || now.ino !== expected.ino) return false;
+    }
+  } finally {
+    await handle.close();
+  }
+  return true;
+}
+
+/**
+ * Cut an existing regular file back to its first `length` bytes without following a link. It only ever shortens,
+ * so it needs no room for new data. False when the file is not there, is no longer the file `expected` names (its
+ * device and inode, from an earlier open), or is shorter than `length`; throws UnsafeFileError for a link, a special
+ * file, or a file with a second name.
+ */
+export async function truncateRegular(path: string, length: number, expected: { dev: number; ino: number }): Promise<boolean> {
+  const handle = await openRegular(path, constants.O_WRONLY, false);
+  if (!handle) return false;
+  try {
+    const info = await handle.stat();
+    if (info.dev !== expected.dev || info.ino !== expected.ino || info.size < length) return false;
+    await handle.truncate(length);
   } finally {
     await handle.close();
   }

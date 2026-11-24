@@ -19,7 +19,7 @@ import { basename, dirname, extname, join } from "node:path";
 
 import * as Y from "yjs";
 
-import { UnsafeFileError, appendRegular, isRealDirectory, openForRead, randomSuffix, writeNewFile } from "../safe-fs.ts";
+import { UnsafeFileError, appendRegular, isRealDirectory, openForRead, randomSuffix, truncateRegular, writeNewFile } from "../safe-fs.ts";
 import { LOG_EXTENSION, MAX_LOG_BYTES, encodeHeader, encodeRecords, generationOf, parseLog } from "./folder-log.ts";
 
 export function syncFolderFor(docPath: string): string {
@@ -74,6 +74,13 @@ export class FolderSync {
   private compactedBytes = 0;
   /** An append failed partway, so our log may end in a torn record that would hide anything appended after it. */
   private tornTail = false;
+  /** The generation of the log this device last wrote or read as its own. A copy from before a rewrite has another. */
+  private ownGeneration: string | null = null;
+  /**
+   * The records at the front of a failed append that did reach the log whole, in order. The caller sends the same
+   * batch again, and these are skipped: writing them twice would need room a full disk may not have.
+   */
+  private landed: Uint8Array[] = [];
   /** Changes in our own log that the document passed to start() lacked. */
   private ownMissing: Uint8Array | null = null;
   private watcher: FSWatcher | undefined;
@@ -401,6 +408,7 @@ export class FolderSync {
     const intact = bytes && parsed && !parsed.invalid && parsed.end === bytes.length && own.length === records.length;
     if (intact) {
       this.ownBytes = bytes.length;
+      this.ownGeneration = parsed.generation;
       // A log that is already one merged record counts as the last rewrite, so a merged log past the limit is not
       // rewritten on the first append after every start. A log of several records keeps 0: otherwise each restart
       // would move the threshold up and a log reopened often would never compact.
@@ -419,17 +427,32 @@ export class FolderSync {
       await this.rewrite(updates);
       return;
     }
+    // Readers stop at a torn record, so a retry appended behind it would be unreadable. Cut the torn bytes off, which
+    // needs no free space (the disk is often full by now); if that cannot be done, write a clean log instead.
+    let repaired: Awaited<ReturnType<FolderSync["cutTornTail"]>> = null;
     if (this.tornTail) {
-      // Readers stop at a torn record, so a retry appended behind it would be unreadable: write a clean log instead.
-      await this.rewrite([mergeAll([...this.ownRecords, ...updates])]);
-      return;
+      repaired = await this.cutTornTail().catch(() => null);
+      if (!repaired) {
+        await this.rewrite([mergeAll([...this.ownRecords, ...updates])]);
+        return;
+      }
     }
+    // The front of a batch that failed before may already be in the log. The same records come again, so skip the
+    // ones known to be there: the retry then needs room only for what is missing.
+    let skip = 0;
+    while (skip < this.landed.length && skip < updates.length && sameBytes(updates[skip]!, this.landed[skip]!)) skip++;
+    updates = updates.slice(skip);
     await this.checkFolder();
     const records = encodeRecords(updates);
     let appended: boolean;
     try {
-      appended = await appendRegular(this.ownLog, records);
-      if (appended) this.ownRecords.push(...updates);
+      // After a repair, only into the file that was repaired, at the length it was cut to: a copy that sync put in
+      // its place since may still end in the torn record. Anything else counts as not appended, and is rewritten.
+      appended = await appendRegular(this.ownLog, records, repaired?.file);
+      if (appended) {
+        this.ownRecords.push(...updates);
+        this.landed = [];
+      }
     } catch (error) {
       if (!isUnsafe(error)) {
         this.tornTail = true;
@@ -439,8 +462,11 @@ export class FolderSync {
       appended = false;
     }
     if (!appended) {
-      // Our log was removed, or replaced by a link, a special file or a second name for another file: start a new
-      // log rather than write through it, holding what the old one held too.
+      // Our log was removed, or replaced by a link, a special file, a second name for another file, or (after a
+      // repair) another copy: start a new log rather than write through it, holding what the old one held too.
+      // Whatever is at the path is not known to end cleanly, so if this rewrite fails the next append must repair
+      // or rewrite first, and not append behind it.
+      this.tornTail = true;
       await this.rewrite(this.ownRecords.length ? [mergeAll([...this.ownRecords, ...updates])] : updates);
       if (this.refused.has(basename(this.ownLog))) this.requestScan();
       return;
@@ -453,6 +479,49 @@ export class FolderSync {
     if (this.ownBytes > Math.max(this.options.compactBytes ?? 1024 * 1024, 2 * this.compactedBytes)) {
       await this.compact().catch((error) => this.options.onError?.(error));
     }
+  }
+
+  /**
+   * Cut our log back to the end of its last whole record, dropping the part of a record a failed append left. Whole
+   * records that append did write stay: another Mac may already have read past them, and in a log nobody has
+   * tampered with its offset then never lands inside the next record. Null, changing nothing, when the log is not one this device can repair: gone, a link,
+   * replaced since it was read, of another generation or shorter than what this device last wrote (an older copy
+   * synced back in). Otherwise the file that was repaired and the length it now has.
+   */
+  private async cutTornTail(): Promise<{ file: { dev: number; ino: number; size: number } } | null> {
+    await this.checkFolder();
+    const name = basename(this.ownLog);
+    let opened;
+    try {
+      opened = await openForRead(this.ownLog);
+    } catch (error) {
+      if (!isUnsafe(error)) throw error;
+      this.refuse(name);
+      return null;
+    }
+    if (!opened) return null;
+    let bytes: Uint8Array;
+    try {
+      if (this.tooLarge(name, opened.info.size)) return null;
+      bytes = await opened.readFirst(opened.info.size);
+      if (!(await this.stillHere(name, opened.info))) {
+        this.refuse(name);
+        return null;
+      }
+    } finally {
+      await opened.close();
+    }
+    const parsed = parseLog(bytes);
+    if (parsed.invalid || parsed.generation !== this.ownGeneration || parsed.end < this.ownBytes) return null;
+    if (parsed.end < bytes.length && !(await truncateRegular(this.ownLog, parsed.end, opened.info))) return null;
+    // Whole records the failed append wrote are in the log, so they count as written from here on, and the retry
+    // of that batch skips them.
+    const landed = parseLog(bytes, this.ownBytes).records;
+    this.ownRecords.push(...landed);
+    this.landed.push(...landed);
+    this.ownBytes = parsed.end;
+    this.tornTail = false;
+    return { file: { dev: opened.info.dev, ino: opened.info.ino, size: parsed.end } };
   }
 
   private async compact(): Promise<void> {
@@ -490,14 +559,18 @@ export class FolderSync {
       throw error;
     }
     this.ownBytes = out.length;
+    this.ownGeneration = generationOf(out);
     this.compactedBytes = out.length;
     this.ownRecords = [...updates];
     this.tornTail = false;
+    this.landed = [];
   }
 }
 
+const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((byte, i) => byte === b[i]);
+
 /** Whether a record is a Yjs update. A valid checksum does not show that: anyone who can write the folder can make one. */
-function isUpdate(record: Uint8Array): boolean {
+export function isUpdate(record: Uint8Array): boolean {
   try {
     Y.decodeUpdate(record);
     return true;

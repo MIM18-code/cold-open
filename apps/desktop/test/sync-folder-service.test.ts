@@ -161,7 +161,9 @@ test("edits from an append that failed are kept and written, in order, on the ne
   await call(SYNC.folderAppend, path, subscription, script.type(12, " Then more."));
   await quit();
   assert.equal(readLog(ctx, path), "Start. Kept. Then more.");
-  assert.deepEqual(written, [1], "the kept edit and the new one go out together, once");
+  // One write of two records: the kept one exactly as it was first sent, so FolderSync can tell whether it already
+  // reached the log, then the new one.
+  assert.deepEqual(written, [2], "the kept edit and the new one go out together, once");
   await call(SYNC.folderStop, path, subscription);
 });
 
@@ -194,6 +196,49 @@ test("the last window closing retries its final write a few times, and quit does
   await open.quit();
   assert.equal(readLog(open.ctx, kept), "Start. At quit.");
   await open.call(SYNC.folderStop, kept, two.subscription);
+});
+
+test("one change that is not a Yjs update is dropped and reported, and the good changes in its batch are still written", async (t) => {
+  const { ctx, call, errors, quit } = fakeContext();
+  registerFolderSync(ctx);
+  const path = join(temp, "Malformed.screenplay");
+  const script = typing("Start.");
+  const { subscription } = await call(SYNC.folderStart, path, script.state) as { subscription: string };
+  const written: number[] = [];
+  const append = FolderSync.prototype.append;
+  t.mock.method(FolderSync.prototype, "append", function (this: FolderSync, updates: Uint8Array[]) {
+    if (updates.length) written.push(updates.length);
+    return append.call(this, updates);
+  });
+  // A compromised page sends bytes that are not an update between two real edits, in the same batch.
+  await call(SYNC.folderAppend, path, subscription, script.type(6, " Before."));
+  await call(SYNC.folderAppend, path, subscription, new Uint8Array([1, 2, 3]));
+  await call(SYNC.folderAppend, path, subscription, script.type(14, " After."));
+  // Flushed with the window still open, so it hears about the skipped change.
+  await quit();
+  await call(SYNC.folderStop, path, subscription);
+  assert.equal(readLog(ctx, path), "Start. Before. After.");
+  const log = readFileSync(join(temp, "Malformed.screenplay-sync", `${ctx.settings.get("sync.deviceId")}.ylog`));
+  for (const record of parseLog(new Uint8Array(log)).records) assert.doesNotThrow(() => Y.decodeUpdate(record));
+  assert.deepEqual(written, [2], "written once, with nothing left over to retry");
+  assert.equal(errors.length, 1);
+  assert.match(errors[0]!, /not a script change/);
+});
+
+test("a change that is not a Yjs update is dropped and reported when it is the only one in its batch", async () => {
+  const { ctx, call, errors, quit } = fakeContext();
+  registerFolderSync(ctx);
+  const path = join(temp, "Lone.screenplay");
+  const script = typing("Start.");
+  const { subscription } = await call(SYNC.folderStart, path, script.state) as { subscription: string };
+  await call(SYNC.folderAppend, path, subscription, new Uint8Array([1, 2, 3]));
+  await quit();
+  await call(SYNC.folderStop, path, subscription);
+  assert.equal(readLog(ctx, path), "Start.");
+  const log = readFileSync(join(temp, "Lone.screenplay-sync", `${ctx.settings.get("sync.deviceId")}.ylog`));
+  for (const record of parseLog(new Uint8Array(log)).records) assert.doesNotThrow(() => Y.decodeUpdate(record));
+  assert.equal(errors.length, 1);
+  assert.match(errors[0]!, /not a script change/);
 });
 
 test("a sync folder replaced by a link reports one error and does not spin a retry loop", async (t) => {

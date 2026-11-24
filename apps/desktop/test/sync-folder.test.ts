@@ -1,7 +1,7 @@
 // Folder sync: the log format, and two documents syncing through folders with a fake cloud that delivers files
 // late, in pieces, and more than once.
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -582,6 +582,131 @@ test("an append cut off mid-record is retried so that other devices can read it,
   await a.append([edit]);
   await b.sync.scan();
   assert.match(b.text(), /Edit\./);
+  await a.stop();
+  await b.sync.stop();
+});
+
+test("a copy put back during the retry, then a rewrite with no room, still ends in a log every reader can follow", async (t) => {
+  const folder = freshDir();
+  const own = join(folder, "device-aaaa.ylog");
+  const a = new FolderSync({ folder, deviceId: "device-aaaa", watch: false, rescanMs: 60_000, onUpdates: () => undefined });
+  await a.start();
+  await a.append([typed("Base ")]);
+  const probe = await open(own, "r");
+  const handle = Object.getPrototypeOf(probe) as { writeFile: (data: Uint8Array) => Promise<void> };
+  await probe.close();
+  const write = handle.writeFile;
+  const edit = typed("Edit ");
+  const full = t.mock.method(handle, "writeFile", async function (this: unknown, data: Uint8Array) {
+    await write.call(this, data.subarray(0, 6));
+    throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+  });
+  await assert.rejects(a.append([edit]), /ENOSPC/);
+  full.mock.restore();
+  // The cloud service holds a copy of the log as it is now, torn record and all, and puts it back while the retry
+  // is writing. The retry notices and goes to write a clean log, and the disk has no room for one.
+  const torn = readFileSync(own);
+  const swap = t.mock.method(handle, "writeFile", async function (this: unknown, data: Uint8Array) {
+    await write.call(this, data);
+    writeFileSync(join(folder, "put-back"), torn);
+    renameSync(join(folder, "put-back"), own);
+  });
+  const rewrite = (a as unknown as { rewrite: (updates: Uint8Array[]) => Promise<void> }).rewrite.bind(a);
+  (a as unknown as { rewrite: () => Promise<void> }).rewrite = () => Promise.reject(Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" }));
+  await assert.rejects(a.append([edit]), /ENOSPC/);
+  swap.mock.restore();
+  (a as unknown as { rewrite: typeof rewrite }).rewrite = rewrite;
+  // Room again. The copy at the path still ends in the torn record: the retry must not be appended behind it.
+  await a.append([edit]);
+  await a.append([typed("After ")]);
+  const parsed = parseLog(new Uint8Array(readFileSync(own)));
+  assert.equal(parsed.end, readFileSync(own).length, "no torn bytes are left");
+  const b = device(folder, "device-bbbb");
+  (await b.sync.start()).forEach((update) => Y.applyUpdate(b.doc, update, REMOTE));
+  for (const word of ["Base", "Edit", "After"]) assert.match(b.text(), new RegExp(word));
+  await a.stop();
+  await b.sync.stop();
+});
+
+test("an older copy of the log put back before the retry is rewritten, not repaired", async (t) => {
+  const folder = freshDir();
+  const own = join(folder, "device-aaaa.ylog");
+  const a = new FolderSync({ folder, deviceId: "device-aaaa", watch: false, rescanMs: 60_000, onUpdates: () => undefined });
+  await a.start();
+  for (const word of ["One ", "Two ", "Three ", "Four ", "Five ", "Six "]) await a.append([typed(word)]);
+  // A copy from before the log was compacted: another generation, and larger than the compacted log.
+  const older = readFileSync(own);
+  await (a as unknown as { compact: () => Promise<void> }).compact();
+  await a.append([typed("Kept ")]);
+  assert.ok(older.length > readFileSync(own).length);
+  const probe = await open(own, "r");
+  const handle = Object.getPrototypeOf(probe) as { writeFile: (data: Uint8Array) => Promise<void> };
+  await probe.close();
+  const write = handle.writeFile;
+  const last = typed("Last ");
+  const full = t.mock.method(handle, "writeFile", async function (this: unknown, data: Uint8Array) {
+    await write.call(this, data.subarray(0, 6));
+    throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+  });
+  await assert.rejects(a.append([last]), /ENOSPC/);
+  full.mock.restore();
+  // The cloud service puts the older copy back. It parses, and it is longer than what this device last wrote.
+  writeFileSync(own, older);
+  await a.append([last]);
+  const b = device(folder, "device-bbbb");
+  (await b.sync.start()).forEach((update) => Y.applyUpdate(b.doc, update, REMOTE));
+  for (const word of ["One", "Six", "Kept", "Last"]) assert.match(b.text(), new RegExp(word));
+  await a.stop();
+  await b.sync.stop();
+});
+
+test("the retry after an append cut off mid-record repairs the log in place, with no room for a clean copy", async (t) => {
+  const folder = freshDir();
+  const own = join(folder, "device-aaaa.ylog");
+  const a = new FolderSync({ folder, deviceId: "device-aaaa", watch: false, rescanMs: 60_000, onUpdates: () => undefined });
+  await a.start();
+  await a.append([typed("Base ")]);
+  const generation = readFileSync(own).subarray(0, HEADER_BYTES).toString("hex");
+  const b = device(folder, "device-bbbb");
+  (await b.sync.start()).forEach((update) => Y.applyUpdate(b.doc, update, REMOTE));
+  // The disk fills partway through a batch of two records: the first lands whole, then six bytes of the second.
+  const probe = await open(own, "r");
+  const handle = Object.getPrototypeOf(probe) as { writeFile: (data: Uint8Array) => Promise<void> };
+  await probe.close();
+  const write = handle.writeFile;
+  const first = typed("First ");
+  const second = typed("Second ");
+  const full = t.mock.method(handle, "writeFile", async function (this: unknown, data: Uint8Array) {
+    await write.call(this, data.subarray(0, encodeRecords([first]).length + 6));
+    throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+  });
+  await assert.rejects(a.append([first, second]), /ENOSPC/);
+  full.mock.restore();
+  // Another Mac reads the log now, and moves past the whole record.
+  await b.sync.scan();
+  assert.match(b.text(), /First/);
+  // The disk is still nearly full: a whole new copy of the log does not fit, but the retry must still land.
+  (a as unknown as { rewrite: () => Promise<void> }).rewrite = () => Promise.reject(new Error("ENOSPC: no space left on device"));
+  const afterFailure = readFileSync(own).length;
+  // The disk still has no room for the second record: the retry fails again, after writing six bytes of it.
+  const again = t.mock.method(handle, "writeFile", async function (this: unknown, data: Uint8Array) {
+    assert.equal(data.length, encodeRecords([second]).length, "the retry sends only the record the log lacks");
+    await write.call(this, data.subarray(0, 6));
+    throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+  });
+  await assert.rejects(a.append([first, second]), /ENOSPC/);
+  again.mock.restore();
+  assert.equal(readFileSync(own).length, afterFailure, "the first torn piece was cut before the second was written");
+  // Room at last. The first record landed whole two tries ago and is still skipped, so the retry writes the second
+  // alone: it needs no more room than that one record.
+  await a.append([first, second]);
+  assert.equal(readFileSync(own).length, afterFailure - 6 + encodeRecords([second]).length);
+  await a.append([typed("Third ")]);
+  assert.equal(readFileSync(own).subarray(0, HEADER_BYTES).toString("hex"), generation, "repaired in place, not rewritten");
+  const parsed = parseLog(new Uint8Array(readFileSync(own)));
+  assert.equal(parsed.end, readFileSync(own).length, "no torn bytes are left");
+  await b.sync.scan();
+  for (const word of ["Base", "First", "Second", "Third"]) assert.match(b.text(), new RegExp(word));
   await a.stop();
   await b.sync.stop();
 });

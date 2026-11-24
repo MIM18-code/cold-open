@@ -10,7 +10,7 @@ import * as Y from "yjs";
 import { DEVICE_ID_SETTING, FOLDER_SYNC_SETTING, SYNC, type FolderStartResult } from "../../shared/channels/sync.ts";
 import type { ServiceContext } from "../context.ts";
 import { UnsafeFileError } from "../safe-fs.ts";
-import { FolderSync, hasSyncFolder, syncFolderFor } from "./folder-sync.ts";
+import { FolderSync, hasSyncFolder, isUpdate, syncFolderFor } from "./folder-sync.ts";
 
 const FLUSH_DELAY = 250;
 const RETRY_DELAY = 5000;
@@ -24,6 +24,11 @@ interface Entry {
   /** Subscription ID → the window that holds it. */
   subscribers: Map<string, WebContents>;
   pending: Uint8Array[];
+  /**
+   * The records of an append that failed, kept as they were so the retry sends the same ones: FolderSync skips any
+   * that reached the log before the failure, and on a full disk the retry then needs room only for the rest.
+   */
+  retry: Uint8Array[];
   timer: ReturnType<typeof setTimeout> | undefined;
   /** The last flush, which the next one waits for. */
   flushing: Promise<void>;
@@ -57,23 +62,38 @@ export function registerFolderSync(ctx: ServiceContext): void {
     entry.timer = undefined;
     // One flush at a time, so changes kept from a failed append go out ahead of later ones.
     const run = entry.flushing.catch(() => undefined).then(async () => {
+      const kept = entry.retry.splice(0);
       const updates = entry.pending.splice(0);
-      if (!updates.length) return entry.sync.append([]);
-      let merged: Uint8Array;
-      try {
-        merged = updates.length === 1 ? updates[0]! : Y.mergeUpdates(updates);
-      } catch (error) {
-        sendAll(entry, SYNC.folderError, error instanceof Error ? error.message : String(error));
-        throw error;
+      if (!kept.length && !updates.length) return entry.sync.append([]);
+      let records = updates;
+      if (updates.length > 1) {
+        try {
+          records = [Y.mergeUpdates(updates)];
+        } catch {
+          // Written apart, below.
+        }
       }
+      if (records === updates) {
+        // One update on its own, or a batch that will not merge. One bad update (only a compromised page sends one)
+        // must not reach the log, where every other Mac would warn about it, or cost the good ones beside it. Drop
+        // what is not an update and write the rest as records of their own: readers apply records one at a time, so
+        // one that decodes but still will not merge costs only itself. Nothing is kept to retry, so this never repeats.
+        records = updates.filter(isUpdate);
+        const dropped = updates.length - records.length;
+        if (dropped) {
+          sendAll(entry, SYNC.folderError, `Folder sync skipped ${dropped === 1 ? "a change from this window that is not a script change" : `${dropped} changes from this window that are not script changes`}. `
+            + "The other changes still sync.");
+        }
+      }
+      records = [...kept, ...records];
       try {
-        await entry.sync.append([merged]);
+        await entry.sync.append(records);
       } catch (error) {
         // A broken sync folder (replaced by a link or non-directory) never recovers until sync restarts.
         if (error instanceof UnsafeFileError) throw error;
-        // Keep the changes for the next flush, and try again. FolderSync writes a clean log first if the failed
-        // append left part of a record behind, so the retry is readable.
-        entry.pending.unshift(merged);
+        // Keep the records for the next flush, and try again. FolderSync repairs the log first if the failed append
+        // left part of a record behind, so the retry is readable.
+        entry.retry = records;
         if (entries.get(entry.path) === entry) entry.timer ??= setTimeout(() => void flush(entry).catch(() => undefined), RETRY_DELAY);
         throw error;
       }
@@ -153,7 +173,7 @@ export function registerFolderSync(ctx: ServiceContext): void {
       onUpdates: (updates) => created && sendAll(created, SYNC.folderUpdates, updates),
       onError: (error) => created && sendAll(created, SYNC.folderError, error instanceof Error ? error.message : String(error)),
     });
-    const created: Entry = { path, sync, started: sync.start(state), subscribers: new Map([[subscription, contents]]), pending: [], timer: undefined, flushing: Promise.resolve() };
+    const created: Entry = { path, sync, started: sync.start(state), subscribers: new Map([[subscription, contents]]), pending: [], retry: [], timer: undefined, flushing: Promise.resolve() };
     entries.set(path, created);
     try {
       return { folder: sync.folder, deviceId: sync.deviceId, subscription, updates: await created.started };
@@ -168,7 +188,7 @@ export function registerFolderSync(ctx: ServiceContext): void {
     const entry = entries.get(path);
     if (!entry || entry.subscribers.get(subscription) !== event.sender || !(update instanceof Uint8Array)) return;
     entry.pending.push(update);
-    // FolderSync reports append failures through onError; flush reports merge errors directly.
+    // FolderSync reports append failures through onError; flush reports skipped changes directly.
     entry.timer ??= setTimeout(() => void flush(entry).catch(() => undefined), FLUSH_DELAY);
     for (const contents of windowsOf(entry)) if (contents !== event.sender) contents.send(SYNC.folderUpdates, path, [update]);
   });

@@ -147,7 +147,7 @@ A file is a header followed by zero or more records.
 
 - Append records for local changes. The desktop app batches changes for 250 ms and merges them (`Y.mergeUpdates`) into one record.
 - On start, the device appends whatever its document has that its log lacks (`Y.diffUpdate` against the log's merged state vector), so edits made while sync was off still reach the other Macs.
-- If its own log ends in a torn record (a crash mid-append), or holds a record that is not a Yjs update, the device rewrites the log before appending, so readers are never stuck behind it.
+- If its own log ends in a torn record (a crash mid-append), or holds a record that is not a Yjs update, the device rewrites the log before appending, so readers are never stuck behind it. After its own append fails partway, the desktop app first truncates the log back to the end of its last whole record, keeping the generation (this needs no free space), and rewrites if that cannot be done or the log is not the one it last wrote. It cuts only bytes after the last whole record, so a reader of an untampered log never has an offset inside a later one.
 - **Compaction:** past 1 MB the device rewrites its log as a single merged record under a new random generation, written to a temporary file and renamed into place.
 - Temporary files get a random name (`.<deviceId>.ylog.<random>.tmp`) and are created with `O_CREAT | O_EXCL`, so a file or link someone put at a guessable name is never written through.
 

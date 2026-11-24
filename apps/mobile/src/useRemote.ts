@@ -29,6 +29,9 @@ export function useRemote() {
   // Tied to the pairing that shared it, so a share that finishes after pairing again cannot move the new position.
   const resendAfter = useRef<{ pair: Pairing; take: Take | undefined } | undefined>(undefined);
   const resendFrom = (p: Pairing) => resendAfter.current?.pair === p ? resendAfter.current.take : undefined;
+  // The pairing on screen now, so a share that finishes after pairing again leaves the new pairing's position alone.
+  const current = useRef(pair);
+  current.current = pair;
   useEffect(() => {
     Keychain.getItemAsync(key).then(raw => { if (raw) setPair(decodePairing(raw, linkCrypto, Date.now(), true)); })
       .catch(() => setError("Could not restore the pairing. Scan the Mac again.")).finally(() => setReady(true));
@@ -184,7 +187,7 @@ export function useRemote() {
     const items = takesBatch(pair, all, resendFrom(pair));
     if (!(await shareTakes(takesFileName(), await takesFile(pair, items, sha256)))) return 0;
     // The next AirDrop again moves on to the takes after this batch; a cancelled share stays put.
-    if (resending) resendAfter.current = { pair, take: items.at(-1) };
+    if (resending && current.current === pair) resendAfter.current = { pair, take: items.at(-1) };
     // The Mac may have decided a resent take while the share sheet was open; keep its decision.
     const now = new Map(listTakes().map(t => [t.id, t.outcome]));
     for (const item of items) if (["pending", "saved"].includes(now.get(item.id) ?? "")) mark(item.id, "airdropped");

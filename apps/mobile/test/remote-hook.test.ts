@@ -204,3 +204,27 @@ test("a resend that finishes after pairing with a different script does not move
   assert.equal(JSON.parse(hook.shared.at(-1)).takes[0].id, "receipt-older0000");
   hook.unmount();
 });
+
+test("a resend that finishes after the new pairing has shared does not replace the new pairing's position", async t => {
+  t.mock.method(globalThis, "fetch", async () => { throw new TypeError("Network request failed"); });
+  await paired();
+  const start = Date.now(), other = "s".repeat(22);
+  const take = (id: string, inRoom: string, created: number) => ({ id, room: inRoom, kind: "note", text: "Lamp.",
+    paragraphId: "p", sourceText: "", scene: "Scene 1", created, outcome: "airdropped" });
+  for (let i = 0; i < 150; i++) hook.takes.push(take(`receipt-${String(i).padStart(9, "0")}`, room, start + i));
+  let close = () => {};
+  hook.sheet.gate = new Promise<void>(ok => { close = ok; });
+  const sending = render().sendToMac();
+  await flush();
+  hook.sheet.gate = undefined;
+  for (let i = 0; i < 150; i++) hook.takes.push(take(`other-${String(i).padStart(9, "0")}`, other, start + i));
+  await render().scan(remembered.replace(room, other));
+  render(); await flush();
+  assert.equal(await render().sendToMac(), 100);
+  assert.equal(JSON.parse(hook.shared.at(-1)).takes[0].id, "other-000000000");
+  close();
+  assert.equal(await sending, 100);
+  assert.equal(await render().sendToMac(), 50, "the new pairing moves on to its next batch");
+  assert.equal(JSON.parse(hook.shared.at(-1)).takes[0].id, "other-000000100");
+  hook.unmount();
+});

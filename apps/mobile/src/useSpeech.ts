@@ -13,6 +13,9 @@ const speech = requireNativeModule<Speech>("InklotLocalSpeech");
 // How long to wait for the recognizer's last words after Stop before giving up on them.
 const FINISH_LIMIT = 5000;
 export type SpeechPhase = "idle" | "starting" | "listening" | "finishing";
+// Every screen shares one recognizer. Presses are numbered across all screens, and `newest` is the press that last
+// started it, so a start that answers late for a closed screen cannot stop the recognizer a new screen has started.
+let presses = 0, newest = 0;
 
 /** On-device dictation. `begin` runs as a take starts; `heard` gets the take's whole transcript so far.
  * Events reach only the screen that started the take, so a hidden screen never receives another's words. */
@@ -47,17 +50,17 @@ export function useSpeech(begin: () => void, heard: (text: string) => void) {
     if (held.current || active.current) return;
     clearTimeout(stall.current);
     held.current = true; setError(""); setPhase("starting");
-    const mine = ++run.current;
+    const mine = run.current = ++presses;
     try {
       if (!(await speech.authorize())) throw new Error("Allow microphone and speech access in Settings.");
       // A release and a new press during authorization: the new press owns `held` and starts the recognizer itself.
       if (mine !== run.current || !mounted.current || !held.current) return;
       handlers.current.begin();
-      active.current = true; startedBy.current = mine;
+      active.current = true; startedBy.current = mine; newest = mine;
       await speech.start();
-      // Stop a recognizer that started late for an abandoned press, unless a newer press has started its own.
-      if (mine !== run.current) { if (startedBy.current === mine) speech.finish(); return; }
-      if (!mounted.current || !held.current) { speech.finish(); return; }
+      // Stop a recognizer that started late for an abandoned press, unless a newer press on any screen started its own.
+      if (mine !== run.current) { if (newest === mine) speech.finish(); return; }
+      if (!mounted.current || !held.current) { if (newest === mine) speech.finish(); return; }
       setPhase("listening");
     } catch (e) {
       if (mine !== run.current) return;

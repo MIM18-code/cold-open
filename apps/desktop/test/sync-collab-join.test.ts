@@ -133,6 +133,32 @@ test("a second Share while the first is starting does not start a second client"
   await collab.stop();
 });
 
+test("Join while Share is starting is refused and leaves Share to finish", async (t) => {
+  const room = randomId(), key = randomId();
+  const info: HostInfo = { relay: "ws://127.0.0.1:1", room, key, lan: true, tailscale: null, address: "127.0.0.1:1",
+    invite: formatInvite({ relay: "ws://127.0.0.1:1", room, key, readOnly: false }),
+    readOnlyInvite: formatInvite({ relay: "ws://127.0.0.1:1", room, key: readKeyFor(key), readOnly: true }) };
+  const bridge = (globalThis as any).window.desktop;
+  const invoke = bridge.invoke;
+  t.mock.method(bridge, "invoke", async (channel: string, ...args: unknown[]) => {
+    if (channel !== SYNC.hostStart) return invoke(channel, ...args);
+    await wait(20);
+    return info;
+  });
+  const app = fakeApp(DocumentSession.untitled());
+  const own = app.session;
+  const collab = new CollabController(app);
+  t.after(() => collab.stop());
+  const sharing = collab.share();
+  // The writer uses Join before the host is up.
+  const joining = collab.join(formatInvite({ relay: "ws://127.0.0.1:1", room: randomId(), key: randomId(), readOnly: false }));
+  assert.equal(collab.state.mode, "idle");
+  await assert.rejects(joining, /Sharing is still starting/);
+  await sharing;
+  assert.equal(collab.state.mode, "host");
+  assert.equal(app.session, own);
+});
+
 test("typing while Join waits keeps the window's script; the shared one opens in a new window", async () => {
   const { shareScript, invite } = await hostedRoom();
   const own = DocumentSession.untitled();

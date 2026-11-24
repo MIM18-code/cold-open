@@ -3,13 +3,14 @@
 // FIFO. The main process's file access (grants.ts, safe-fs.ts) must never follow such a swap or hang on it.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 
 import { PathGrants } from "../src/main/grants.ts";
-import { UnsafeFileError, appendRegular, openForRead, readChosenFile, readRegular, replaceFile, writeNewFile } from "../src/main/safe-fs.ts";
+import { UnsafeFileError, appendRegular, openForRead, readChosenFile, readRegular, replaceFile, truncateRegular, writeNewFile } from "../src/main/safe-fs.ts";
 
 const temp = mkdtempSync(join(tmpdir(), "screenplay-shared-files-"));
 after(() => rmSync(temp, { recursive: true, force: true }));
@@ -124,6 +125,72 @@ test("reads refuse FIFOs at once, and the no-follow helpers refuse links", async
   assert.equal(readFileSync(secret, "utf8"), "SECRET PAGES");
   assert.equal(await readRegular(join(shared, "missing.ylog")), null);
   assert.equal(await appendRegular(join(shared, "missing.ylog"), new Uint8Array([1])), false);
+});
+
+test("truncating cuts only the file that was read, and never a link, a second name, a FIFO or a file swapped in", async () => {
+  const { shared, secret } = layout();
+  const log = join(shared, "device.ylog");
+  writeFileSync(log, "0123456789");
+  const id = () => { const info = statSync(log); return { dev: info.dev, ino: info.ino }; };
+  assert.equal(await truncateRegular(log, 6, id()), true);
+  assert.equal(readFileSync(log, "utf8"), "012345");
+  // It only shortens: a file that is already shorter is left as it is.
+  assert.equal(await truncateRegular(log, 9, id()), false);
+  assert.equal(readFileSync(log, "utf8"), "012345");
+  assert.equal(await truncateRegular(join(shared, "missing.ylog"), 2, id()), false);
+
+  // Another file put at the path since the read: not the one the length was worked out for.
+  const read = id();
+  rmSync(log);
+  writeFileSync(join(shared, "holder"), "keeps the old inode number from being reused");
+  writeFileSync(log, "ANOTHER FILE");
+  assert.equal(await truncateRegular(log, 3, read), false);
+  assert.equal(readFileSync(log, "utf8"), "ANOTHER FILE");
+
+  // A link to a file outside the folder, a second name for one, and a FIFO are refused before anything is cut.
+  rmSync(log);
+  symlinkSync(secret, log);
+  const outside = statSync(secret);
+  await assert.rejects(truncateRegular(log, 2, { dev: outside.dev, ino: outside.ino }), UnsafeFileError);
+  rmSync(log);
+  linkSync(secret, log);
+  await assert.rejects(truncateRegular(log, 2, { dev: outside.dev, ino: outside.ino }), UnsafeFileError);
+  rmSync(log);
+  execFileSync("mkfifo", [log]);
+  await assert.rejects(truncateRegular(log, 0, read), UnsafeFileError);
+  assert.equal(readFileSync(secret, "utf8"), "SECRET PAGES");
+});
+
+test("an append that names the file it expects writes nothing to another file or another length", async (t) => {
+  const { shared } = layout();
+  const log = join(shared, "device.ylog");
+  writeFileSync(log, "0123");
+  const info = statSync(log);
+  const data = new TextEncoder().encode("45");
+  assert.equal(await appendRegular(log, data, { dev: info.dev, ino: info.ino, size: 3 }), false, "not the length it was cut to");
+  assert.equal(readFileSync(log, "utf8"), "0123");
+  assert.equal(await appendRegular(log, data, { dev: info.dev, ino: info.ino, size: 4 }), true);
+  assert.equal(readFileSync(log, "utf8"), "012345");
+  rmSync(log);
+  writeFileSync(join(shared, "holder"), "keeps the old inode number from being reused");
+  writeFileSync(log, "012345");
+  assert.equal(await appendRegular(log, data, { dev: info.dev, ino: info.ino, size: 6 }), false, "another file at the path");
+  assert.equal(readFileSync(log, "utf8"), "012345");
+
+  // Replaced while the append is writing: the bytes went to the old file, so it does not count as appended.
+  const now = statSync(log);
+  const probe = await open(log, "r");
+  const handle = Object.getPrototypeOf(probe) as { writeFile: (data: Uint8Array) => Promise<void> };
+  await probe.close();
+  const write = handle.writeFile;
+  const swap = t.mock.method(handle, "writeFile", async function (this: unknown, bytes: Uint8Array) {
+    await write.call(this, bytes);
+    writeFileSync(join(shared, "copy.ylog"), "A COPY SYNC PUT BACK");
+    renameSync(join(shared, "copy.ylog"), log);
+  });
+  assert.equal(await appendRegular(log, data, { dev: now.dev, ino: now.ino, size: 6 }), false);
+  swap.mock.restore();
+  assert.equal(readFileSync(log, "utf8"), "A COPY SYNC PUT BACK");
 });
 
 test("a capped read refuses a file that grew past its limit after its size was checked", async () => {

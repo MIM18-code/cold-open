@@ -248,6 +248,8 @@ function SidesModal({ close }: ModalProps) {
     saving.current = true;
     setBusy(true);
     setError("");
+    // The writer can close this dialog and open another while the save dialog or a slow disk keeps us waiting.
+    const opened = app.ui.modal;
     try {
       app.flushPending();
       const sides = sidesScript(session.script(), chosen);
@@ -257,7 +259,7 @@ function SidesModal({ close }: ModalProps) {
       const path = await saveText("Export Sides", `${session.name} sides.${format}`, [{ name: label, extensions: [format] }], text);
       if (!path) return;
       app.toast(`Exported ${chosen.size} scene${chosen.size === 1 ? "" : "s"} to ${path.split("/").pop()}`, "success");
-      close();
+      if (app.ui.modal === opened) close();
     } catch (e) {
       setError(`Couldn't export the sides: ${e instanceof Error ? e.message : String(e)}`);
     } finally {

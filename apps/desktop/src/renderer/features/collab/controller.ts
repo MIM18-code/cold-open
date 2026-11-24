@@ -197,6 +197,8 @@ export class CollabController {
   async join(text: string): Promise<void> {
     const invite = parseInvite(text);
     if (this.state.mode !== "idle") throw new Error("Leave the current session first.");
+    // The mode stays idle until Share has connected; joining then would leave Share connecting over the guest.
+    if (this.starting) throw new Error("Sharing is still starting. Wait for it to finish, then stop sharing before you join.");
     if (!this.app.session.pristine) {
       if (!isDesktop) throw new Error("Start a new script first, then join.");
       const choice = await messageBox({

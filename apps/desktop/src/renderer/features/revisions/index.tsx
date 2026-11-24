@@ -9,7 +9,7 @@ import {
 import { useMemo, useState, useSyncExternalStore } from "react";
 
 import { app, type App, type Feature, type ModalProps } from "../../core/app.ts";
-import { useSession } from "../../core/hooks.ts";
+import { useSession, useSessionState } from "../../core/hooks.ts";
 import type { DocumentSession } from "../../core/session.ts";
 import { paginateForPrint, readPrintSettings } from "../print/options.ts";
 import { revisionDecorations, revisionStyles } from "./marks.ts";
@@ -120,7 +120,7 @@ function omitSceneAtCaret(target: App): void {
 /** Colors for the picker: White, the first round and the second. */
 const COLOR_CHOICES = Array.from({ length: 17 }, (_, index) => revisionColor(index));
 
-function NewSetForm({ state, onCreate }: { state: RevisionState; onCreate: (set: RevisionSet) => void }) {
+function NewSetForm({ state, readOnly, onCreate }: { state: RevisionState; readOnly: boolean; onCreate: (set: RevisionSet) => void }) {
   const suggested = useMemo(() => newRevisionSet(state), [state]);
   const [color, setColor] = useState(COLOR_CHOICES.findIndex((choice) => choice.value === suggested.color && suggested.name.startsWith(choice.name)));
   const [name, setName] = useState(suggested.name);
@@ -157,7 +157,7 @@ function NewSetForm({ state, onCreate }: { state: RevisionState; onCreate: (set:
         <input name="mark" value={mark} maxLength={2} onChange={(event) => setMark(event.target.value)} />
       </label>
       <div className="modal-actions" style={{ gridColumn: "1 / -1", marginTop: 0 }}>
-        <button type="submit" className="button primary">Create revision set</button>
+        <button type="submit" className="button primary" disabled={readOnly}>Create revision set</button>
       </div>
     </form>
   );
@@ -165,6 +165,8 @@ function NewSetForm({ state, onCreate }: { state: RevisionState; onCreate: (set:
 
 function RevisionsModal({ close, props }: ModalProps<{ mode?: "new" | "clear" } | undefined>) {
   const state = useRevisionState();
+  // A dialog left open while the writer joins as a read-only guest must stop writing, as the commands do.
+  const { readOnly } = useSessionState();
   const [adding, setAdding] = useState(props?.mode === "new" || !state.sets.length);
   const clear = (setId: string | null) => {
     const count = app.session.edit(() => clearRevisionMarks(app.session.doc, setId));
@@ -174,11 +176,11 @@ function RevisionsModal({ close, props }: ModalProps<{ mode?: "new" | "clear" } 
     <div className="revisions-form">
       <div className="revisions-checks">
         <label className="revisions-check">
-          <input type="checkbox" name="tracking" checked={state.tracking} onChange={() => toggleTracking(app)} />
+          <input type="checkbox" name="tracking" checked={state.tracking} disabled={readOnly} onChange={() => toggleTracking(app)} />
           <span>Revision Mode</span>
         </label>
         <label className="revisions-check">
-          <input type="checkbox" name="showMarks" checked={state.showMarks} onChange={(event) => change(app, () => ({ showMarks: event.target.checked }))} />
+          <input type="checkbox" name="showMarks" checked={state.showMarks} disabled={readOnly} onChange={(event) => change(app, () => ({ showMarks: event.target.checked }))} />
           <span>Show revision marks</span>
         </label>
       </div>
@@ -186,21 +188,21 @@ function RevisionsModal({ close, props }: ModalProps<{ mode?: "new" | "clear" } 
         <ul className="revisions-list">
           {state.sets.map((set) => (
             <li key={set.id} className={`revisions-row${set.id === state.currentSetId ? " current" : ""}`} data-set={set.id}>
-              <input type="radio" name="current" aria-label={`Use ${set.name}`} checked={set.id === state.currentSetId}
+              <input type="radio" name="current" aria-label={`Use ${set.name}`} checked={set.id === state.currentSetId} disabled={readOnly}
                 onChange={() => change(app, () => ({ currentSetId: set.id }))} />
               <span className="revisions-swatch" style={{ background: set.color }} />
               <span className="revisions-row-name">{revisionLabel(set)}</span>
               <span className="revisions-row-meta">{set.mark}</span>
-              <button type="button" className="button" onClick={() => clear(set.id)}>Clear marks</button>
+              <button type="button" className="button" disabled={readOnly} onClick={() => clear(set.id)}>Clear marks</button>
             </li>
           ))}
         </ul>
       ) : <p className="revisions-empty">No revision sets yet.</p>}
       {adding
-        ? <NewSetForm state={state} onCreate={(set) => (addSet(app, set), setAdding(false))} />
+        ? <NewSetForm state={state} readOnly={readOnly} onCreate={(set) => (addSet(app, set), setAdding(false))} />
         : <button type="button" className="button" onClick={() => setAdding(true)}>New revision set…</button>}
       <div className="modal-actions">
-        {state.sets.length ? <button type="button" className="button" onClick={() => clear(null)}>Clear all marks</button> : null}
+        {state.sets.length ? <button type="button" className="button" disabled={readOnly} onClick={() => clear(null)}>Clear all marks</button> : null}
         <button type="button" className="button primary" autoFocus={!adding} onClick={close}>Done</button>
       </div>
     </div>
