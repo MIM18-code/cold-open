@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { AiError, MAX_ANSWER, type ChatRequest, buildRequest, listModels, pickOllamaModel, readDelta, streamChat } from "../src/main/ai/providers.ts";
+import { AiError, DEFAULT_MODELS, MAX_ANSWER, MODEL_LINES, type ChatRequest, buildRequest, listModels, newestModel, pickOllamaModel, readDelta, streamChat } from "../src/main/ai/providers.ts";
 import { MAX_LINE, MAX_STREAM_BYTES, readLines, readSse } from "../src/main/ai/stream.ts";
 
 const request: ChatRequest = {
@@ -261,4 +261,35 @@ test("a body that never ends a line, or an answer that never ends, is stopped", 
       async () => streamOf(Array.from({ length: thoughtCount }, () => thought)), noSignal, () => undefined),
     (error: unknown) => error instanceof AiError && /more data than one answer can hold/.test(error.message),
   );
+});
+
+test("every built-in model matches its own line, so the picker can always fall back to it", () => {
+  for (const [provider, tiers] of Object.entries(DEFAULT_MODELS) as [keyof typeof DEFAULT_MODELS, Record<"fast" | "smart", string>][]) {
+    for (const tier of ["fast", "smart"] as const) {
+      assert.match(tiers[tier], MODEL_LINES[provider][tier], `${provider} ${tier}`);
+      assert.equal(newestModel(provider, tier, []), tiers[tier]);
+    }
+  }
+});
+
+test("the automatic pick is the newest listed model in the tier's line, never older than the built-in", () => {
+  // Anthropic: short names and dated snapshots; old-style IDs are a different line.
+  assert.equal(newestModel("anthropic", "fast", ["claude-haiku-4-5-20251001", "claude-3-5-haiku-20241022", "claude-sonnet-6-0"]), "claude-haiku-5-5");
+  assert.equal(newestModel("anthropic", "fast", ["claude-haiku-5-6-20261201", "claude-haiku-5-5"]), "claude-haiku-5-6-20261201");
+  assert.equal(newestModel("anthropic", "fast", ["claude-haiku-5-6-20261201", "claude-haiku-5-6"]), "claude-haiku-5-6", "the undated ID wins at the same version");
+  assert.equal(newestModel("anthropic", "fast", ["claude-haiku-5-6-20261201", "claude-haiku-5-6-20261215"]), "claude-haiku-5-6-20261215", "then the later date");
+  assert.equal(newestModel("anthropic", "smart", ["claude-sonnet-6-20270101", "claude-sonnet-5-9", "claude-haiku-7-0", "claude-opus-6-0"]), "claude-sonnet-6-20270101", "a dated ID with no minor");
+  assert.equal(newestModel("anthropic", "smart", ["claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022"]), "claude-sonnet-5-5");
+  // OpenAI: the exact suffix only.
+  assert.equal(newestModel("openai", "smart", ["gpt-6.3-sol-healthcare", "gpt-6.3-sol-2026-12-01", "gpt-6.3-sol-mini", "gpt-6.1-sol", "gpt-6.3-luna"]), "gpt-6.2-sol");
+  assert.equal(newestModel("openai", "smart", ["gpt-6.9-sol", "gpt-6.10-sol", "gpt-6.2-sol"]), "gpt-6.10-sol", "versions compare as numbers");
+  assert.equal(newestModel("openai", "smart", ["gpt-7-sol", "gpt-6.10-sol"]), "gpt-7-sol");
+  assert.equal(newestModel("openai", "fast", ["gpt-6.1-luna", "gpt-6.2-sol", "gpt-6.5-luna-pro"]), "gpt-6.1-luna");
+  assert.equal(newestModel("openai", "fast", ["gpt-5.9-luna"]), "gpt-6-luna", "a missing minor is 0, and older listed models lose to the built-in");
+  // Google: Flash and Hydrogen are one line, both tiers.
+  for (const tier of ["fast", "smart"] as const) {
+    assert.equal(newestModel("google", tier, ["gemini-3.8-flash", "gemini-4.1-hydrogen-lite", "gemini-4.1-hydrogen-preview", "gemini-flash-latest", "gemini-4.1-hydrogen-tts", "gemini-4.1-flash-image"]), "gemini-4-hydrogen");
+    assert.equal(newestModel("google", tier, ["gemini-4-hydrogen", "gemini-4.1-hydrogen"]), "gemini-4.1-hydrogen");
+    assert.equal(newestModel("google", tier, ["gemini-4.1-hydrogen", "gemini-4.2-flash"]), "gemini-4.2-flash");
+  }
 });

@@ -4,8 +4,8 @@ import { FINDING_KINDS, FINDING_KIND_LABELS } from "@screenplay/engine";
 import { useCallback, useEffect, useState } from "react";
 
 import {
-  AI_CHANNELS, AI_SETTINGS, CHATGPT_USAGE_URL, DEFAULT_OLLAMA_ENDPOINT, KEYED_PROVIDERS, PROVIDERS, PROVIDER_LABELS,
-  type AiStatus, type AiTestResult, type BacklotInfo, type KeyedProvider, type ProviderId,
+  AI_CHANNELS, AI_SETTINGS, CHATGPT_USAGE_URL, DEFAULT_MODELS, DEFAULT_OLLAMA_ENDPOINT, KEYED_PROVIDERS, PROVIDERS, PROVIDER_LABELS,
+  type AiModelList, type AiStatus, type AiTier, type AiTestResult, type BacklotInfo, type KeyedProvider, type ProviderId,
 } from "../../../shared/channels/ai.ts";
 import { CHANNELS } from "../../../shared/api.ts";
 import { useSetting } from "../../core/hooks.ts";
@@ -191,6 +191,7 @@ export function AiSettings() {
   const [entries, setEntries] = useState<{ id: string; label: string }[]>([]);
   const [chatgptModel, setChatgptModel] = useSetting<string>(AI_SETTINGS.model("chatgpt"), "");
   const [suggested, setSuggested] = useState<string | undefined>();
+  const [automatic, setAutomatic] = useState<Record<AiTier, string> | undefined>();
   const [result, setResult] = useState<AiTestResult | null>(null);
   const [testing, setTesting] = useState(false);
 
@@ -201,14 +202,18 @@ export function AiSettings() {
     setResult(null);
     setModels([]);
     setEntries([]);
+    setAutomatic(undefined);
     let current = true;
     const needsKey = (KEYED_PROVIDERS as readonly string[]).includes(provider);
     if ((needsKey && !keySet) || (provider === "chatgpt" && (!status?.chatgpt.planUsageGranted || status.chatgpt.paused))) return;
-    void desktop.invoke<{ models: string[]; suggested?: string; entries?: { id: string; label: string }[] }>(AI_CHANNELS.models, provider).then((r) => {
-      if (current) { setModels(r.models); setSuggested(r.suggested); setEntries(r.entries ?? []); }
+    void desktop.invoke<AiModelList>(AI_CHANNELS.models, provider).then((r) => {
+      if (current) { setModels(r.models); setSuggested(r.suggested); setEntries(r.entries ?? []); setAutomatic(r.automatic); }
     }, () => undefined);
     return () => { current = false; };
   }, [provider, endpoint, keySet, status?.chatgpt.signedIn, status?.chatgpt.planUsageGranted, status?.chatgpt.activeProfile, status?.chatgpt.paused]);
+
+  // What a blank Model field uses: the main process's pick from the key's list, else the built-in names.
+  const auto = (KEYED_PROVIDERS as readonly string[]).includes(provider) ? automatic ?? DEFAULT_MODELS[provider as KeyedProvider] : undefined;
 
   const test = async () => {
     setTesting(true);
@@ -246,8 +251,8 @@ export function AiSettings() {
           {entries.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
         </select>
       </label> : provider !== "ollama" ? <TextSetting label="Model" name={AI_SETTINGS.model(provider)} list="ai-models"
-        placeholder="Default for this provider"
-        hint={provider === "anthropic" ? "Default: Haiku for proofreading, Sonnet for questions." : undefined} /> : null}
+        placeholder={auto && auto.fast === auto.smart ? `Automatic: ${auto.fast}` : "Automatic"}
+        hint={auto && auto.fast !== auto.smart ? `Blank means automatic: ${auto.fast} for proofreading, ${auto.smart} for questions.` : undefined} /> : null}
 
       <div className="ai-settings-row">
         <button className="button" disabled={testing} onClick={() => void test()}>{testing ? "Testing" : "Test connection"}</button>

@@ -29,6 +29,9 @@ function runnerWith(settings: Record<string, unknown>, fetchFn: (url: string, in
   return { keys, runner: new AiRunner({ setting: (key) => settings[key] as never, keys, fetch: fetchFn }) };
 }
 
+const ANTHROPIC_OK = `data: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: "ok" } })}\n\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`;
+const OPENAI_OK = `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "ok" })}\n\ndata: ${JSON.stringify({ type: "response.completed" })}\n\n`;
+
 const request = (extra: Partial<AiRequest> = {}): AiRequest => ({ id: "r1", tier: "smart", system: "SYSTEM", messages: [{ role: "user", content: "hello" }], ...extra });
 
 function collect(): { events: AiEvent[]; emit: (e: AiEvent) => void; finished: Promise<AiEvent> } {
@@ -136,8 +139,10 @@ test("Ollama: picks the best installed model, streams events and finishes", asyn
 test("a model chosen in Settings wins, and the tier picks Anthropic's model", async () => {
   const seen: any[] = [];
   const fetchFn = async (url: string, init: RequestInit) => {
+    // The automatic pick lists the models first; this key lists nothing newer than the built-in.
+    if (init.method === "GET") return new Response(JSON.stringify({ data: [] }));
     seen.push({ url, headers: init.headers, body: JSON.parse(String(init.body)) });
-    return new Response(`data: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: "ok" } })}\n\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`);
+    return new Response(ANTHROPIC_OK);
   };
   const { runner } = runnerWith({ "ai.provider": "anthropic" }, fetchFn);
   runner.setKey("anthropic", "sk-ant-x");
@@ -313,4 +318,136 @@ test("a request from the renderer is validated and its length capped", async () 
   await runner.start("w", request({ maxTokens: 1e9 }), sink.emit);
   await sink.finished;
   assert.equal(bodies[0].options.num_predict, 16000);
+});
+
+/** A keyed provider whose list request and chat requests are answered by the given functions, with every call logged. */
+function keyed(provider: "anthropic" | "openai" | "google", list: (signal: AbortSignal) => Promise<Response>, chat: (model: string) => Response, settings: Record<string, unknown> = {}) {
+  const lists: string[] = [];
+  const models: string[] = [];
+  const { runner } = runnerWith({ "ai.provider": provider, ...settings }, async (url, init) => {
+    if (init.method === "GET") { lists.push(url); return list(init.signal!); }
+    const model = JSON.parse(String(init.body)).model;
+    models.push(model);
+    return chat(model);
+  });
+  runner.setKey(provider, "test-key");
+  const ask = async (extra: Partial<AiRequest> = {}) => {
+    const sink = collect();
+    const started = await runner.start("w", request({ id: `r${Math.random()}`, ...extra }), sink.emit);
+    return { started, end: await sink.finished, events: sink.events };
+  };
+  return { runner, lists, models, ask };
+}
+
+const listing = (...ids: string[]) => async () => new Response(JSON.stringify({ data: ids.map((id) => ({ id })) }));
+
+test("with no model chosen, the newest listed model in the line is used, and the list is cached", async () => {
+  const { lists, models, ask, runner } = keyed("anthropic", listing("claude-sonnet-5-6", "claude-haiku-4-5-20251001", "claude-opus-6-0"), () => new Response(ANTHROPIC_OK));
+  const smart = await ask({ tier: "smart" });
+  assert.equal(smart.started.model, "claude-sonnet-5-6");
+  assert.equal(smart.end.type, "done");
+  await ask({ tier: "fast" });
+  assert.deepEqual(models, ["claude-sonnet-5-6", "claude-haiku-5-5"]);
+  assert.equal(lists.length, 1);
+  assert.ok(lists.every((url) => url.startsWith("https://api.anthropic.com/v1/models")));
+  // The Settings list says what Automatic means, and refreshes the same cache.
+  assert.deepEqual((await runner.models("anthropic")).automatic, { fast: "claude-haiku-5-5", smart: "claude-sonnet-5-6" });
+  assert.equal(lists.length, 2);
+  await ask();
+  assert.equal(lists.length, 2);
+});
+
+test("a failed list gives the built-in model and is not retried for a few minutes", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+  const { lists, models, ask } = keyed("openai", async () => new Response("{}", { status: 500 }), () => new Response(OPENAI_OK));
+  assert.equal((await ask()).started.model, "gpt-6.2-sol");
+  assert.equal((await ask()).end.type, "done");
+  assert.deepEqual([lists.length, models], [1, ["gpt-6.2-sol", "gpt-6.2-sol"]]);
+  t.mock.timers.tick(5 * 60_000 + 1);
+  await ask();
+  assert.equal(lists.length, 2);
+});
+
+test("a slow list gives the built-in model after a few seconds", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { ask } = keyed("google", (signal) => new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+    () => new Response(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }] })}\n\n`));
+  const pending = ask();
+  t.mock.timers.tick(4000);
+  const { started, end } = await pending;
+  assert.equal(started.model, "gemini-4-hydrogen");
+  assert.equal(end.type, "done");
+});
+
+test("cancelling while the list loads reports a cancelled request", async () => {
+  const { runner } = keyed("google", (signal) => new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))), () => new Response("{}"));
+  const started = runner.start("w", request(), () => undefined);
+  runner.cancel("w", "r1");
+  await assert.rejects(started, (error: AiError) => error.code === "cancelled");
+});
+
+test("concurrent requests share one list request, and a chosen model makes none", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const { lists, ask } = keyed("openai", async () => { await gate; return listing("gpt-6.3-sol")(); }, () => new Response(OPENAI_OK));
+  const both = Promise.all([ask(), ask()]);
+  release();
+  assert.deepEqual((await both).map((r) => r.started.model), ["gpt-6.3-sol", "gpt-6.3-sol"]);
+  assert.equal(lists.length, 1);
+  const chosen = keyed("openai", listing("gpt-6.3-sol"), () => new Response(OPENAI_OK), { "ai.model.openai": "gpt-6.1-sol" });
+  assert.equal((await chosen.ask()).started.model, "gpt-6.1-sol");
+  assert.deepEqual([chosen.lists.length, chosen.models], [0, ["gpt-6.1-sol"]]);
+});
+
+test("a newer pick the provider refuses is retried once with the built-in, and not picked again", async () => {
+  const refuse = (model: string) => model === "gpt-6.3-sol" ? new Response(JSON.stringify({ error: { message: "Unsupported parameter: 'max_output_tokens'." } }), { status: 400 }) : new Response(OPENAI_OK);
+  const { models, ask, runner } = keyed("openai", listing("gpt-6.3-sol"), refuse);
+  const first = await ask();
+  assert.equal(first.started.model, "gpt-6.3-sol", "start reports the pick; the retry happens after");
+  assert.deepEqual(first.end, { id: first.end.id, type: "done", text: "ok" });
+  assert.deepEqual(models, ["gpt-6.3-sol", "gpt-6.2-sol"]);
+  const second = await ask();
+  assert.equal(second.started.model, "gpt-6.2-sol");
+  assert.deepEqual(models, ["gpt-6.3-sol", "gpt-6.2-sol", "gpt-6.2-sol"]);
+  assert.equal((await runner.models("openai")).automatic?.smart, "gpt-6.2-sol");
+});
+
+test("a request both models refuse does not count against the newer pick", async () => {
+  let refuse = true;
+  const { models, ask } = keyed("openai", listing("gpt-6.3-sol"), () => refuse ? new Response(JSON.stringify({ error: { message: "Input is too long." } }), { status: 400 }) : new Response(OPENAI_OK));
+  assert.equal((await ask()).end.type, "error");
+  refuse = false;
+  assert.equal((await ask()).started.model, "gpt-6.3-sol");
+  assert.deepEqual(models, ["gpt-6.3-sol", "gpt-6.2-sol", "gpt-6.3-sol"]);
+});
+
+test("a newer pick that is down is answered by the built-in", async () => {
+  for (const message of ["The model is unavailable.", "The model is overloaded."]) {
+    const { models, ask } = keyed("openai", listing("gpt-6.3-sol"), (model) => model === "gpt-6.3-sol" ? new Response(JSON.stringify({ error: { message } }), { status: 503 }) : new Response(OPENAI_OK));
+    assert.equal((await ask()).end.type, "done", message);
+    assert.deepEqual(models, ["gpt-6.3-sol", "gpt-6.2-sol"], message);
+  }
+});
+
+test("a tool turn refused on the newer pick is retried with the built-in", async () => {
+  const tools = [{ name: "list_scenes", description: "List scenes", parameters: { type: "object", properties: {} } }];
+  const { models, ask } = keyed("anthropic", listing("claude-sonnet-5-6"), (model) => model === "claude-sonnet-5-6"
+    ? new Response(JSON.stringify({ error: { message: "model not found" } }), { status: 404 })
+    : new Response(JSON.stringify({ content: [{ type: "text", text: "Answer." }], stop_reason: "end_turn" })));
+  const { end } = await ask({ tools });
+  assert.deepEqual([end.type, models], ["done", ["claude-sonnet-5-6", "claude-sonnet-5-5"]]);
+});
+
+test("a key, limit or mid-stream failure on the newer pick is not retried", async () => {
+  const cases: [() => Response, string][] = [
+    [() => new Response(JSON.stringify({ error: { message: "Incorrect API key." } }), { status: 401 }), "unauthorized"],
+    [() => new Response(JSON.stringify({ error: { message: "Slow down." } }), { status: 429 }), "rate-limited"],
+    [() => new Response(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Half" })}\n\ndata: ${JSON.stringify({ type: "response.failed", response: { error: { message: "Stopped." } } })}\n\n`), "failed"],
+  ];
+  for (const [answer, code] of cases) {
+    const { models, ask } = keyed("openai", listing("gpt-6.3-sol"), answer);
+    const { end } = await ask();
+    assert.equal((end as { code: string }).code, code);
+    assert.deepEqual(models, ["gpt-6.3-sol"], code);
+  }
 });

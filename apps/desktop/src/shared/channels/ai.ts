@@ -55,6 +55,23 @@ export const AI_SETTINGS = {
 
 export const DEFAULT_OLLAMA_ENDPOINT = "http://127.0.0.1:11434";
 
+/** Built-in models, checked on 2026-11-24 against OpenAI's and Google's live lists and Anthropic's models page. With a
+ * key, the newest model in the same line replaces them (newestModel in main/ai/providers.ts); they stay the floor and
+ * the fallback. */
+export const DEFAULT_MODELS: Record<KeyedProvider, Record<AiTier, string>> = {
+  anthropic: { fast: "claude-haiku-5-5", smart: "claude-sonnet-5-5" },
+  google: { fast: "gemini-4-hydrogen", smart: "gemini-4-hydrogen" },
+  openai: { fast: "gpt-6-luna", smart: "gpt-6.2-sol" },
+};
+
+/** The ai:models reply. `automatic` is what a keyed provider uses per tier when no model is chosen. */
+export interface AiModelList {
+  models: string[];
+  suggested?: string;
+  entries?: { id: string; label: string }[];
+  automatic?: Record<AiTier, string>;
+}
+
 export interface LocalAiSetup {
   installed: boolean;
   running: boolean;

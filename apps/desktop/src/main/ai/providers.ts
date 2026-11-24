@@ -1,7 +1,7 @@
 // The HTTP providers: Ollama, Anthropic, Google and OpenAI. Plain fetch, no SDKs. Each provider has a request
 // builder and a parser for one streamed event, both pure so tests can run them against canned responses.
 import { randomUUID } from "node:crypto";
-import type { AiErrorCode, AiMessage, AiTier, AiTool, AiTurn, ProviderId } from "../../shared/channels/ai.ts";
+import { DEFAULT_MODELS, type AiErrorCode, type AiMessage, type AiTier, type AiTool, type AiTurn, type KeyedProvider, type ProviderId } from "../../shared/channels/ai.ts";
 import { type SseEvent, StreamLimitError, readLines, readSse } from "./stream.ts";
 import { readCalls, record, readResponseTurn, responseInput, responseTools, toolParseError } from "./tool-calls.ts";
 import { boundedJson } from "./chatgpt-http.ts";
@@ -12,18 +12,48 @@ export type HttpProvider = Exclude<ProviderId, "chatgpt">;
 
 export class AiError extends Error {
   readonly code: AiErrorCode;
-  constructor(code: AiErrorCode, message: string) {
+  /** The HTTP status when the provider answered with an error, so a refused model can be told from a dropped line. */
+  readonly status?: number;
+  constructor(code: AiErrorCode, message: string, status?: number) {
     super(message);
     this.code = code;
+    if (status !== undefined) this.status = status;
   }
 }
 
-/** Defaults, overridable in Settings. Anthropic and Google IDs are from the product brief; OpenAI IDs are unchecked against a live key. */
-export const DEFAULT_MODELS: Record<Exclude<ProviderId, "ollama" | "chatgpt">, Record<AiTier, string>> = {
-  anthropic: { fast: "claude-haiku-5-5", smart: "claude-sonnet-5-5" },
-  google: { fast: "gemini-3.8-flash", smart: "gemini-3.8-flash" },
-  openai: { fast: "gpt-6-luna", smart: "gpt-6.1-sol" },
+export { DEFAULT_MODELS };
+
+/** Each tier's model line, by the ID shapes in the live lists. Google renamed Flash to Hydrogen at version 4. */
+export const MODEL_LINES: Record<KeyedProvider, Record<AiTier, RegExp>> = {
+  // An optional 8-digit snapshot date; the minor stops at three digits so a date is never read as one.
+  anthropic: { fast: /^claude-haiku-(\d{1,3})(?:-(\d{1,3}))?(?:-(\d{8}))?$/, smart: /^claude-sonnet-(\d{1,3})(?:-(\d{1,3}))?(?:-(\d{8}))?$/ },
+  google: { fast: /^gemini-(\d+)(?:\.(\d+))?-(?:flash|hydrogen)$/, smart: /^gemini-(\d+)(?:\.(\d+))?-(?:flash|hydrogen)$/ },
+  openai: { fast: /^gpt-(\d+)(?:\.(\d+))?-luna$/, smart: /^gpt-(\d+)(?:\.(\d+))?-sol$/ },
 };
+
+/** Sort key: major, minor, then an undated ID over a dated one, then the later date. */
+function modelVersion(match: readonly (string | undefined)[]): number[] {
+  const date = match[3];
+  return [Number(match[1]), Number(match[2] ?? 0), date ? 0 : 1, Number(date ?? 0)];
+}
+
+/** The newest model in the tier's line among the listed IDs and the built-in, so never older than the built-in. */
+export function newestModel(provider: KeyedProvider, tier: AiTier, listed: readonly string[]): string {
+  const line = MODEL_LINES[provider][tier];
+  let best = DEFAULT_MODELS[provider][tier];
+  let bestVersion = modelVersion(best.match(line) ?? ["", "0"]);
+  for (const id of listed) {
+    const match = id.match(line);
+    if (!match) continue;
+    const version = modelVersion(match);
+    const index = version.findIndex((part, i) => part !== bestVersion[i]);
+    if (index >= 0 && version[index]! > bestVersion[index]!) {
+      best = id;
+      bestVersion = version;
+    }
+  }
+  return best;
+}
 
 /** Ollama models worth using for proofreading and questions, best first. */
 const OLLAMA_PREFERENCE = [/^qwen3\.5/, /^gemma4/, /^qwen3/, /^gemma3/, /^llama3\.[123]/, /^phi4/, /^mistral/];
@@ -326,7 +356,7 @@ async function failureOf(response: Response, name: string): Promise<AiError> {
   }
   const code = classify(detail, response.status);
   const base = code === "unauthorized" ? `${name} did not accept the API key.` : code === "rate-limited" ? `${name} says the usage limit was reached.` : `${name} returned ${response.status}.`;
-  return new AiError(code, detail ? `${base} ${detail}` : base);
+  return new AiError(code, detail ? `${base} ${detail}` : base, response.status);
 }
 
 const NAMES: Record<HttpProvider, string> = { ollama: "Ollama", anthropic: "Anthropic", google: "Google", openai: "OpenAI" };

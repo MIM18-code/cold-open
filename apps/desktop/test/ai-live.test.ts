@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { DEFAULT_MODELS, listModels, streamChat, type HttpProvider } from "../src/main/ai/providers.ts";
+import { listModels, newestModel, streamChat, type HttpProvider } from "../src/main/ai/providers.ts";
 
 const LIVE = process.env.SCREENPLAY_LIVE_AI === "1";
 
@@ -26,13 +26,6 @@ const KEYS: Record<Exclude<HttpProvider, "ollama">, () => string | undefined> = 
 
 const PROMPT = { system: "Answer with one word.", messages: [{ role: "user" as const, content: "What color is a clear daytime sky?" }] };
 
-/** OpenAI's small model: the default if the account lists it, else the newest small one it does list. */
-function pickOpenAi(models: string[]): string {
-  if (models.includes(DEFAULT_MODELS.openai.fast)) return DEFAULT_MODELS.openai.fast;
-  const small = models.filter((id) => /(mini|nano|luna)/.test(id) && !/(audio|realtime|transcribe|tts|search|image)/.test(id)).sort().reverse();
-  return small[0] ?? models[0]!;
-}
-
 for (const provider of ["google", "anthropic", "openai"] as const) {
   test(`live: ${provider} lists models and streams a short answer`, { skip: !LIVE && "set SCREENPLAY_LIVE_AI=1", timeout: 120_000 }, async (t) => {
     const apiKey = KEYS[provider]();
@@ -41,13 +34,17 @@ for (const provider of ["google", "anthropic", "openai"] as const) {
     const signal = new AbortController().signal;
     const models = (await listModels(provider, config, fetch, signal)).map((m) => m.id);
     assert.ok(models.length > 0, "the key lists models");
-    const model = provider === "openai" ? pickOpenAi(models) : DEFAULT_MODELS[provider].fast;
-    if (provider !== "openai") assert.ok(models.includes(model), `${model} is offered (${models.length} models listed)`);
-    let streamed = "";
-    const started = Date.now();
-    const text = await streamChat(provider, { model, tier: "fast", ...PROMPT, maxTokens: 1024, json: false }, config, fetch, signal, (piece) => (streamed += piece));
-    console.log(`  ${provider} ${model}: "${text.trim()}" in ${Date.now() - started} ms`);
-    assert.equal(text, streamed);
-    assert.match(text, /blue/i);
+    // The models the app would pick with no model chosen, one request each.
+    for (const tier of ["fast", "smart"] as const) {
+      const model = newestModel(provider, tier, models);
+      if (tier === "smart" && model === newestModel(provider, "fast", models)) continue;
+      assert.ok(models.includes(model), `${model} is offered (${models.length} models listed)`);
+      let streamed = "";
+      const started = Date.now();
+      const text = await streamChat(provider, { model, tier, ...PROMPT, maxTokens: 1024, json: false }, config, fetch, signal, (piece) => (streamed += piece));
+      console.log(`  ${provider} ${model}: "${text.trim()}" in ${Date.now() - started} ms`);
+      assert.equal(text, streamed);
+      assert.match(text, /blue/i);
+    }
   });
 }

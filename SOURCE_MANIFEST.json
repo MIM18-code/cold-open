@@ -89,7 +89,7 @@
   },
   {
     "path": "apps/desktop/e2e/editor.spec.ts",
-    "sha256": "7dd95fe28e074c601c447ccb1307ea9274275e80936e484d569f61a55e54f837"
+    "sha256": "e0ea67a294249db4282f14caf7739af3dd2bccfd90f9bc80750d0660ac0de9d8"
   },
   {
     "path": "apps/desktop/e2e/fakes.ts",
@@ -205,7 +205,7 @@
   },
   {
     "path": "apps/desktop/package.json",
-    "sha256": "a8669684e3a2b1f5cb4bcb01e83ddb49127a7cb3a89a2f1ba81c379cc5cb6d79"
+    "sha256": "5e8b91c2d8d8b3b1669a3d1e991feab2786cd575410a570c3dd5fa86e64b22b7"
   },
   {
     "path": "apps/desktop/playwright.config.ts",
@@ -305,11 +305,11 @@
   },
   {
     "path": "apps/desktop/src/main/ai/providers.ts",
-    "sha256": "6f2e8af7abf9af8e66aefea6396259dff9eddb94461679883af835b5a2ef8211"
+    "sha256": "3ebba3470b4caf947d3085b6230dbfc91d0d84b3089e3809d5f360c422c842d9"
   },
   {
     "path": "apps/desktop/src/main/ai/runner.ts",
-    "sha256": "8a20c8c2eb91b46d6c2f728520833435c164ecf9df86c82779c57831419047b1"
+    "sha256": "2e349a150ee6113bded94407d4f88d9b2afb3b09eb407433b9e368784504491f"
   },
   {
     "path": "apps/desktop/src/main/ai/stream.ts",
@@ -669,7 +669,7 @@
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/Settings.tsx",
-    "sha256": "ac36446cab755970a084bd578af17c520afd9e08f6a2eee711a6b6f51c52c493"
+    "sha256": "f4005d02b9dd93a20b7595546cc1c865001fe63f45b65fc491ae393c20d804ba"
   },
   {
     "path": "apps/desktop/src/renderer/features/assistant/Setup.tsx",
@@ -1469,7 +1469,7 @@
   },
   {
     "path": "apps/desktop/src/shared/channels/ai.ts",
-    "sha256": "1bc5005ba24aaf8dfe9ac32ebc40d90a13a8604de3066aef72086fa65445d377"
+    "sha256": "5f6a12de009c2dfe5fb7260ee1ec3b4df839fc2841d821a1ba8d0392143bf067"
   },
   {
     "path": "apps/desktop/src/shared/channels/backlot.ts",
@@ -1529,7 +1529,7 @@
   },
   {
     "path": "apps/desktop/test/ai-live.test.ts",
-    "sha256": "224deb3747e4e22e7673de0fa049275add8b3bd7762824a7e1511d88936320e8"
+    "sha256": "cf27ba2d01eda7d304d48744e209e6ea702dc8b09428d4f1b0fa49d85d2153b4"
   },
   {
     "path": "apps/desktop/test/ai-local-setup.test.ts",
@@ -1541,11 +1541,11 @@
   },
   {
     "path": "apps/desktop/test/ai-providers.test.ts",
-    "sha256": "59217806b5d3d077990d22022b9ef9b4492ba147e2990480c63586d8fe5b9797"
+    "sha256": "b3ac139fb7823e37f9b5cfac02f2a8f308b8b551c34d3340dccdb658cb45d0eb"
   },
   {
     "path": "apps/desktop/test/ai-runner.test.ts",
-    "sha256": "cfc7313fe1e02dc4ea54b3ed35938f21ff05a3a3c5a5faade8683bd7f122b2d5"
+    "sha256": "36a791421351a708cf41cffa456aa900e8352994a6e5bd7653dcbe5bbbc33ae8"
   },
   {
     "path": "apps/desktop/test/ai-setup-download.test.ts",
@@ -2785,7 +2785,7 @@
   },
   {
     "path": "package-lock.json",
-    "sha256": "744f94fe70a274d8f1986cade70f050c17629f936af1ae04b1e398493c862337"
+    "sha256": "e07a27ad43f4446b808fcaf6bf20a60021084467c9fb9f1b308b7284bc8744c6"
   },
   {
     "path": "package.json",
