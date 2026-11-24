@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { HISTORY_LIMITS, type HistoryEntry, type HistoryRecord } from "../../shared/channels/history.ts";
@@ -35,7 +36,7 @@ export class HistoryStore {
     const bytes = await this.bytes(join(folder, "index.json"), 256_000);
     if (!bytes) return { version: 1, entries: [] };
     const value = JSON.parse(new TextDecoder().decode(bytes)) as Index;
-    if (value.version !== 1 || !Array.isArray(value.entries) || value.entries.length > HISTORY_LIMITS.entries || value.entries.some((e) =>
+    if (!value || value.version !== 1 || !Array.isArray(value.entries) || value.entries.length > HISTORY_LIMITS.entries || value.entries.some((e) =>
       !e || !validId(e.id) || typeof e.label !== "string" || e.label.length > 160 || !Number.isFinite(Date.parse(e.at)) ||
       !Number.isInteger(e.bytes) || e.bytes < 12 || e.bytes > HISTORY_LIMITS.snapshotBytes || typeof e.named !== "boolean" ||
       !/^[a-f0-9]{64}$/.test(e.hash) || !/^[a-f0-9]{64}$/.test(e.stateHash))) {
@@ -54,6 +55,8 @@ export class HistoryStore {
   }
   async list(key: string): Promise<HistoryEntry[]> {
     await this.queues.get(key)?.catch(() => undefined);
+    // A script with no history yet has no folder, and looking must not make one.
+    if (validId(key) && !existsSync(join(this.root, key))) return [];
     return (await this.index(await this.folder(key))).entries.map(({ stateHash: _, ...entry }) => entry);
   }
   async record(request: HistoryRecord): Promise<HistoryEntry> {
@@ -65,7 +68,8 @@ export class HistoryStore {
     if (end >= data.length || end > 65548) throw new Error("The snapshot header is invalid.");
     const header = JSON.parse(new TextDecoder().decode(data.subarray(12, end)));
     if (header.format !== 1 || typeof header.schema !== "number") throw new Error("The snapshot header is invalid.");
-    return this.serialize(request.documentId, async () => {
+    // The state hash is for spotting an unchanged draft here; like list, the renderer gets the entry without it.
+    return this.serialize(request.documentId, async (): Promise<StoredEntry> => {
       const folder = await this.folder(request.documentId), index = await this.index(folder);
       const stateHash = sha(data.subarray(end));
       if (!request.named && index.entries[0]?.stateHash === stateHash) return index.entries[0];
@@ -85,16 +89,18 @@ export class HistoryStore {
       // Publish the safe index before removing only obsolete automatic snapshots.
       for (const old of removed) await rm(join(folder, `${old.id}.screenplay`), { force: true }).catch(() => undefined);
       return entry;
-    });
+    }).then(({ stateHash: _, ...entry }) => entry);
   }
   async read(key: string, id: string): Promise<Uint8Array> {
     if (!validId(id)) throw new Error("Invalid snapshot identifier.");
-    await this.queues.get(key)?.catch(() => undefined);
-    const folder = await this.folder(key), entry = (await this.index(folder)).entries.find((e) => e.id === id);
-    if (!entry) throw new Error("This snapshot is no longer in history.");
-    const data = await this.bytes(join(folder, `${id}.screenplay`), HISTORY_LIMITS.snapshotBytes);
-    if (!data || data.length !== entry.bytes || sha(data) !== entry.hash) throw new Error("This snapshot failed its integrity check; the current draft was not changed.");
-    return data;
+    // In the queue, so a record that prunes or a removal cannot take the file between the index and the file read.
+    return this.serialize(key, async () => {
+      const folder = await this.folder(key), entry = (await this.index(folder)).entries.find((e) => e.id === id);
+      if (!entry) throw new Error("This snapshot is no longer in history.");
+      const data = await this.bytes(join(folder, `${id}.screenplay`), HISTORY_LIMITS.snapshotBytes);
+      if (!data || data.length !== entry.bytes || sha(data) !== entry.hash) throw new Error("This snapshot failed its integrity check; the current draft was not changed.");
+      return data;
+    });
   }
   async remove(key: string, id: string): Promise<void> {
     if (!validId(id)) throw new Error("Invalid snapshot identifier.");

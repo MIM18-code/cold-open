@@ -2,7 +2,7 @@ import type { Script } from "./model.ts";
 import type { Pagination } from "./pagination.ts";
 import { sceneBlocks, sceneSummaries } from "./structure.ts";
 import { isOmitted } from "./revisions.ts";
-import { tagDefinitions } from "./tags.ts";
+import { printedTagPlacements, tagDefinitions } from "./tags.ts";
 
 export const BACKLOT_BASELINE = "backlot.handoffBaseline";
 export interface ProductionScene {
@@ -35,10 +35,7 @@ export function productionSnapshot(script: Script, pagination?: Pagination): Pro
   const blocks = sceneBlocks(script.paragraphs);
   return { version: 1, scenes: sceneSummaries(script, { pagination }).map((scene, i) => {
     const block = blocks[i]!, tags = new Map<string, ProductionScene["tags"][number]>();
-    for (const p of script.paragraphs.slice(block.start, block.end)) for (const run of p.runs) {
-      if (run.note) continue;
-      const number = run.fdx?.TagNumber;
-      if (!number) continue;
+    for (const p of script.paragraphs.slice(block.start, block.end)) for (const { number } of printedTagPlacements(p)) {
       const d = definitions.get(number);
       const tag = d ? { id: d.id || `number:${number}`, category: d.category, label: d.label }
         : { id: `number:${number}`, category: "Unresolved category", label: number };

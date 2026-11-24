@@ -4,7 +4,7 @@ import test from "node:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PhoneDevices } from "../src/main/phone/devices.ts";
+import { dropOldDecided, type Receipt, PhoneDevices } from "../src/main/phone/devices.ts";
 import { PhoneInboxStore } from "../src/main/phone/inbox.ts";
 import { PhoneServer } from "../src/main/phone/server.ts";
 import type { PhoneHost } from "../src/main/phone/host.ts";
@@ -116,6 +116,7 @@ test("revoking an iPhone drops its receipts from the saved file and keeps the ot
     await devices.revoke(gone.device.id);
     const saved = JSON.parse(await readFile(path, "utf8"));
     assert.deepEqual(Object.values(saved.receipts).map((r: any) => r.deviceId), [kept.device.id]);
+    assert.equal(typeof (Object.values(saved.receipts)[0] as any).at, "number", "a receipt records when its item arrived");
     assert.equal(saved.devices.find((d: any) => d.id === gone.device.id)?.revoked, true, "the revoked iPhone stays on file to be refused");
     // The kept iPhone's receipt still stops a resent take being added twice.
     assert.equal(await devices.receive(kept.device.id, scriptId, item, store), false);
@@ -137,4 +138,20 @@ test("revoking an iPhone drops its receipts from the saved file and keeps the ot
     await writeFile(folder, "not a folder");
     await blocked.migrateInbox(store);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("past the cap, one iPhone's oldest decided receipts go and nothing else does", () => {
+  const receipts: Record<string, Receipt> = {};
+  const add = (key: string, receipt: Partial<Receipt>) => { receipts[key] = { deviceId: "a", scriptId: "s", signature: key, ...receipt }; };
+  add("undated-decided", { outcome: "accepted" });
+  add("old-decided", { outcome: "ignored", at: 10 });
+  add("old-waiting", { at: 5 });
+  add("new-decided", { outcome: "accepted", at: 30 });
+  add("new-waiting", { at: 40 });
+  add("other-phone", { deviceId: "b", outcome: "accepted", at: 1 });
+  dropOldDecided(receipts, "a", 3);
+  // Five for this iPhone, three kept: the two oldest decided go. Waiting ones and the other iPhone's stay.
+  assert.deepEqual(Object.keys(receipts).sort(), ["new-decided", "new-waiting", "old-waiting", "other-phone"]);
+  dropOldDecided(receipts, "a", 1);
+  assert.deepEqual(Object.keys(receipts).sort(), ["new-waiting", "old-waiting", "other-phone"], "an undecided receipt is never dropped");
 });

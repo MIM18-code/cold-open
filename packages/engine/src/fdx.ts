@@ -345,11 +345,17 @@ export function parseFdx(source: string, options: FdxReadOptions = {}): Script {
 
   const reader = new Reader(options.warnings);
   const paragraphs: Paragraph[] = [];
-  const queue = elements(content.children);
-  for (let node = queue.shift(); node; node = queue.shift()) {
+  const frames: { nodes: XmlNode[]; at: number }[] = [{ nodes: elements(content.children), at: 0 }];
+  while (frames.length) {
+    const top = frames.at(-1)!;
+    if (top.at >= top.nodes.length) {
+      frames.pop();
+      continue;
+    }
+    const node = top.nodes[top.at++]!;
     if (node.name !== "Paragraph") {
       // A wrapper some tools put around the paragraphs: read what is inside it.
-      if (node.name === "Paragraphs") queue.unshift(...elements(node.children));
+      if (node.name === "Paragraphs") frames.push({ nodes: elements(node.children), at: 0 });
       options.warnings?.push(node.name === "Paragraphs" ? "Read paragraphs from inside a <Paragraphs> wrapper." : `Skipped <${node.name}> inside Content.`);
       continue;
     }

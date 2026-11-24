@@ -477,6 +477,7 @@ export function register(ctx: ServiceContext,
                 if (session.deviceId === device.id) { sessions.delete(windowId); inboxTargets.delete(windowId); }
             }
         } finally { syncAwake(); }
+        if (!devices.all().some(d => !d.revoked && !outdatedPhone(d))) connectionError = "";
         ctx.broadcast("phone:sharing-changed");
     });
     ctx.handle("phone:resume", async (event, key: unknown, input: unknown) => {
@@ -526,8 +527,11 @@ export function register(ctx: ServiceContext,
     const restoreHosts = async () => {
         const before = connectionError;
         let started = false;
+        // One message for the pass: the first iPhone that could not resume. A later one that did must not hide it.
+        let failed = "";
         // An iPhone paired on home Wi-Fi by an earlier version gets no listener: it must be paired again.
-        for (const device of devices.all().filter(d => !d.revoked && !outdatedPhone(d))) {
+        const active = devices.all().filter(d => !d.revoked && !outdatedPhone(d));
+        for (const device of active) {
             try {
                 if (hosts.has(`${device.address}:${device.hostname ? "https" : "http"}`)) continue;
                 let tls;
@@ -539,9 +543,12 @@ export function register(ctx: ServiceContext,
                 }
                 await hostFor(device.address, device.hostname ?? device.address, tls);
                 started = true;
-                connectionError = "";
-            } catch (e) { connectionError = String(e); }
+            } catch (e) { failed ||= String(e); }
         }
+        // A pass that tried nothing leaves the message alone while remembered iPhones exist: it may be a certificate
+        // renewal's, set elsewhere. Once no active remembered iPhone remains, clear it.
+        if (failed) connectionError = failed;
+        else if (started || !active.length) connectionError = "";
         return started || connectionError !== before;
     };
     const restore = ready.then(async () => { await startFolder(); await restoreHosts(); })

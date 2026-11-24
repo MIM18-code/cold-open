@@ -173,11 +173,12 @@ test("rejects things that are not FDX", () => {
 
 test("repairs files other tools wrote badly, and says so", () => {
   const warnings: string[] = [];
-  const script = parseFdx(`<FinalDraft><Content><Paragraphs>
+  // Paragraphs before and after the wrapper: what is inside it is read in place, not after its siblings.
+  const script = parseFdx(`<FinalDraft><Content><Paragraph Type="Action"><Text>Before the wrapper</Text></Paragraph><Paragraphs>
     <Paragraph Type="Action">Bare text, no Text element</Paragraph>
     <Paragraph Type="Action"><Text Style="++++">Empty style flags</Text></Paragraph>
-  </Paragraphs><Bogus/></Content></FinalDraft>`, { warnings });
-  assert.deepEqual(script.paragraphs.map((p) => plainText(p.runs)), ["Bare text, no Text element", "Empty style flags"]);
+  </Paragraphs><Bogus/><Paragraph Type="Action"><Text>After the wrapper</Text></Paragraph></Content></FinalDraft>`, { warnings });
+  assert.deepEqual(script.paragraphs.map((p) => plainText(p.runs)), ["Before the wrapper", "Bare text, no Text element", "Empty style flags", "After the wrapper"]);
   assert.equal(warnings.length, 3);
   assert.match(writeFdx(script), /<Text Style="\+\+\+\+">Empty style flags<\/Text>/);
 });

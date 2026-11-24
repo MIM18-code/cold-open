@@ -303,7 +303,37 @@ test("move records with holes or undefined in their spans are not records", () =
   sparse.length = 3;
   assert.equal(isMoveKnowledge({ sv: "", at: 1, spans: [sparse], chars: [] }), false);
   assert.equal(isMoveKnowledge({ sv: "", at: 1, spans: [[1, undefined, 2]], chars: [] }), false);
+  assert.equal(isMoveKnowledge({ sv: "", at: 1, spans: [[1, 2, 0]], chars: [] }), false);
+  assert.equal(isMoveKnowledge({ sv: "", at: 1, spans: [], chars: [[1, 2, 0]] }), false);
   assert.equal(isMoveKnowledge({ sv: "", at: 1, spans: [[1, 2, 3]], chars: [] }), true);
+});
+
+test("stranded-move detection still finds typing when a remote move record's spans arrive unsorted", () => {
+  const doc = ScreenplayDoc.fromScript({
+    titlePage: [],
+    paragraphs: ["a", "b", "c", "d"].flatMap((id) => [
+      { id, sceneId: id, type: "sceneHeading" as const, runs: [{ text: `INT. ${id} - DAY` }] },
+      { id: `${id}t`, type: "action" as const, runs: [{ text: "abcdef" }] },
+    ]),
+  });
+  const peer = ScreenplayDoc.fromUpdate(doc.encodeState());
+  const mover = ScreenplayDoc.fromUpdate(doc.encodeState());
+  peer.insertText("dt", 3, "XYZ");
+  const notices: unknown[] = [];
+  peer.body.observe((_event, transaction) => notices.push(...strandedByMove(peer, transaction)));
+  const writeMeta = mover.meta.set.bind(mover.meta);
+  mover.meta.set = ((key: string, value: unknown) => {
+    if (key.startsWith("move.") && Array.isArray(value)) {
+      return writeMeta(key, value.map((rec) => ({ ...rec, spans: [...rec.spans].reverse(), chars: [...rec.chars].reverse() })));
+    }
+    return writeMeta(key, value);
+  }) as typeof mover.meta.set;
+  moveScenes(mover, ["b", "d"], "a");
+  const rec = (mover.meta.get(`move.${mover.ydoc.clientID}`) as { spans: unknown[] }[]).at(-1)!;
+  assert.ok(rec.spans.length >= 2, "disjoint move produces multiple spans for one client");
+  peer.applyUpdate(mover.encodeState(), "net");
+  assert.equal(notices.length, 1);
+  doc.ydoc.destroy(); peer.ydoc.destroy(); mover.ydoc.destroy();
 });
 
 test("a project tag with a malformed category number cannot break toScript", () => {

@@ -183,7 +183,9 @@ export class RelayClient {
       this.setStatus("denied");
       return;
     } else if (this.refused || code === CLOSE_DENIED || code === CLOSE_BAD_MESSAGE) {
-      this.reason ||= reason || "The relay refused the key.";
+      // The relay's refusal message, when it sent one for this connection, says why. A reason left by an earlier
+      // close must not stand in for this one.
+      this.reason = (this.refused ? this.reason : "") || reason || "The relay refused the key.";
       this.setStatus("denied");
       return;
     }

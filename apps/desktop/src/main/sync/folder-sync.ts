@@ -72,6 +72,8 @@ export class FolderSync {
   private ownRecords: Uint8Array[] = [];
   /** Size of our log right after the last rewrite; compaction waits until the log has grown well past it. */
   private compactedBytes = 0;
+  /** An append failed partway, so our log may end in a torn record that would hide anything appended after it. */
+  private tornTail = false;
   /** Changes in our own log that the document passed to start() lacked. */
   private ownMissing: Uint8Array | null = null;
   private watcher: FSWatcher | undefined;
@@ -417,6 +419,11 @@ export class FolderSync {
       await this.rewrite(updates);
       return;
     }
+    if (this.tornTail) {
+      // Readers stop at a torn record, so a retry appended behind it would be unreadable: write a clean log instead.
+      await this.rewrite([mergeAll([...this.ownRecords, ...updates])]);
+      return;
+    }
     await this.checkFolder();
     const records = encodeRecords(updates);
     let appended: boolean;
@@ -424,7 +431,10 @@ export class FolderSync {
       appended = await appendRegular(this.ownLog, records);
       if (appended) this.ownRecords.push(...updates);
     } catch (error) {
-      if (!isUnsafe(error)) throw error;
+      if (!isUnsafe(error)) {
+        this.tornTail = true;
+        throw error;
+      }
       this.refuse(basename(this.ownLog));
       appended = false;
     }
@@ -438,7 +448,11 @@ export class FolderSync {
     this.ownBytes += records.length;
     // A merged log can itself be larger than the limit (a long script with history), so leave room to grow
     // instead of rewriting the whole file, and making every other device re-read it, on each append.
-    if (this.ownBytes > Math.max(this.options.compactBytes ?? 1024 * 1024, 2 * this.compactedBytes)) await this.compact();
+    // The changes are in the log by now, so a failed compaction is only reported: failing the append would have
+    // the caller write them a second time.
+    if (this.ownBytes > Math.max(this.options.compactBytes ?? 1024 * 1024, 2 * this.compactedBytes)) {
+      await this.compact().catch((error) => this.options.onError?.(error));
+    }
   }
 
   private async compact(): Promise<void> {
@@ -478,6 +492,7 @@ export class FolderSync {
     this.ownBytes = out.length;
     this.compactedBytes = out.length;
     this.ownRecords = [...updates];
+    this.tornTail = false;
   }
 }
 

@@ -1,4 +1,4 @@
-import { tagDefinitions } from "./tags.ts";
+import { printedTagPlacements, tagDefinitions } from "./tags.ts";
 import { fdxPositionAt } from "./fdx.ts";
 // Detailed writing reports over the same paragraph IDs and printed page numbers as the editor.
 import { NON_PRINTING, type ElementType, type Script, type XmlNode } from "./model.ts";
@@ -99,14 +99,9 @@ export function tagReport(script: Script, pagination: Pagination): TagOccurrence
   const definitions = new Map(tagDefinitions(script).map(d => [d.number, d]));
   const places = locations(script, pagination), result: TagOccurrence[] = [];
   for (const p of script.paragraphs) {
-    let last: TagOccurrence | undefined;
-    for (const run of p.runs) {
-      const number = run.fdx?.TagNumber;
-      if (!number || run.note || !run.text) { last = undefined; continue; }
-      if (last?.number === number) { last.text += run.text; continue; }
+    for (const { number, text } of printedTagPlacements(p)) {
       const definition = definitions.get(number);
-      last = { ...places.get(p.id)!, number, label: definition?.label || `Tag ${number}`, category: definition?.category || "Unresolved category", resolved: !!definition?.category, text: run.text };
-      result.push(last);
+      result.push({ ...places.get(p.id)!, number, label: definition?.label || `Tag ${number}`, category: definition?.category || "Unresolved category", resolved: !!definition?.category, text });
     }
   }
   return result;

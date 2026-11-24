@@ -7,7 +7,7 @@ import {
   newId, ScreenplayDoc, SCENE_COLORS, addSection, moveScene, moveScenes, moveSection, numberScenes, outlineOf, parseFdx,
   parseFountain, parseSceneHeading, plainText, removeSceneNumbers, removeSection, sceneBlocks, sceneColor, sceneSummaries,
   sceneEndAnchor, sceneSynopsis, sectionEndAnchor, setSectionSynopsis, sectionStartAnchor, setSceneColor, setSceneSynopsis, setSectionTitle, writeFdx,
-  compareSceneNumbers, lockedSceneNumbers, sceneNumberBetween, sceneNumbersLocked, setSceneNumbersLocked,
+  compareSceneNumbers, lockedSceneLetters, lockedSceneNumbers, sceneNumberBetween, sceneNumbersLocked, setSceneNumbersLocked,
   type Paragraph, type Run,
 } from "../src/index.ts";
 
@@ -358,6 +358,9 @@ test("locked scene numbers: Number Scenes keeps every number and gives new scene
   assert.deepEqual(lockedSceneNumbers(["1", undefined, "2", undefined, undefined, "3"]), ["1", "1A", "2", "2A", "2B", "3"]);
   assert.deepEqual(lockedSceneNumbers([undefined, "1", "1A", undefined, "2"]), ["A1", "1", "1A", "1B", "2"]);
   assert.deepEqual(lockedSceneNumbers(["12", undefined, "12A"]), ["12", "12AA", "12A"]);
+  assert.deepEqual(lockedSceneNumbers(["1", "", undefined, "2"]), ["1", "", "1A", "2"]);
+  assert.deepEqual(lockedSceneNumbers(["1", "   ", undefined, "2"]), ["1", "   ", "1A", "2"]);
+  assert.deepEqual(lockedSceneNumbers([undefined, "", "1"]), ["A1", "", "1"]);
   assert.deepEqual(lockedSceneNumbers([undefined, undefined]), [undefined, undefined], "nothing to keep: no numbers yet");
   assert.equal(sceneNumberBetween("12A", "12B"), "12AA");
   assert.ok(compareSceneNumbers("12A", "12B") < 0 && compareSceneNumbers("A1", "1") < 0 && compareSceneNumbers("9", "10") < 0);
@@ -377,6 +380,20 @@ test("locked scene numbers: Number Scenes keeps every number and gives new scene
   setSceneNumbersLocked(doc, false);
   assert.equal(numberScenes(doc), 7);
   assert.deepEqual(doc.scenes().map((s) => s.number), ["1", "2", "3", "4", "5", "6", "7"]);
+});
+
+test("locked scene letters normalize case when picking a new letter", () => {
+  assert.deepEqual(lockedSceneLetters(["a", undefined, "b"]), ["a", "AA", "b"]);
+  assert.deepEqual(lockedSceneLetters(["A", undefined, "b", "aa"]), ["A", "AB", "b", "aa"]);
+  assert.deepEqual(lockedSceneLetters(["A", undefined, "aa"]), ["A", "AAA", "aa"]);
+  assert.deepEqual(lockedSceneLetters([undefined, "a"]), ["AA", "a"]);
+});
+
+test("locked scene letters ignore blank scene numbers", () => {
+  assert.deepEqual(lockedSceneLetters(["B", "", undefined, "C"]), ["B", "", "BA", "C"]);
+  assert.deepEqual(lockedSceneLetters(["B", "   ", undefined, "C"]), ["B", "   ", "BA", "C"]);
+  assert.deepEqual(lockedSceneLetters(["", undefined]), ["", undefined]);
+  assert.deepEqual(lockedSceneLetters(["A", undefined, "", "C"]), ["A", "AA", "", "C"]);
 });
 
 test("a 3,000-paragraph script moves, summarizes and numbers quickly", () => {

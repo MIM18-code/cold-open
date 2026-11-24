@@ -8,7 +8,7 @@ import { type ReactNode, type KeyboardEvent, useEffect, useState } from "react";
 import { CHANNELS, NATIVE_EXTENSION, type OpenedFile } from "../../../shared/api.ts";
 import { app, type Feature } from "../../core/app.ts";
 import { useScript, useSession } from "../../core/hooks.ts";
-import type { Decoration } from "../../core/editor-bridge.ts";
+import type { Decoration, EditorBridge } from "../../core/editor-bridge.ts";
 import { desktop } from "../../core/platform.ts";
 import "./compare.css";
 import { scriptFromFile } from "./load.ts";
@@ -36,7 +36,9 @@ interface Result {
 // The last comparison stays for the open document, so the dialog reopens where the writer left it. It is made
 // again against the script as it is now whenever it is shown or highlighted.
 let last: Result | null = null;
-let highlighted = false;
+// The editor the highlights were drawn in. A view switch replaces the editor, and the new one has none.
+let highlightedIn: EditorBridge | null = null;
+const highlighted = () => !!highlightedIn && highlightedIn === app.editor;
 
 /** The result compared against `script`: the same object when it already is, otherwise compared again. */
 function against(result: Result, script: Script): Result {
@@ -64,7 +66,7 @@ export function decorationsFor(comparison: Comparison): Decoration[] {
 
 function setHighlights(on: boolean, comparison?: Comparison): void {
   app.editor?.setDecorations("compare", on && comparison ? decorationsFor(comparison) : []);
-  highlighted = on && !!app.editor;
+  highlightedIn = on ? app.editor : null;
   app.refreshMenu();
   app.emit();
 }
@@ -183,7 +185,7 @@ function CompareModal() {
       last = next;
       setResult(next);
       setOpen(defaultOpen(next.comparison));
-      if (highlighted) setHighlights(true, next.comparison);
+      if (highlighted()) setHighlights(true, next.comparison);
     } catch (reason) {
       setError(`Couldn't read that file: ${reason instanceof Error ? reason.message : String(reason)}`);
     } finally {
@@ -258,15 +260,18 @@ const feature: Feature = {
   id: "compare",
   commands: [
     { id: "compare.open", label: "Compare Drafts…", menu: "Tools", group: "reports", run: (a) => a.openModal("compare.main") },
-    { id: "compare.clear", label: "Clear Compare Highlights", menu: "Tools", group: "reports", enabled: () => highlighted, run: () => setHighlights(false) },
+    { id: "compare.clear", label: "Clear Compare Highlights", menu: "Tools", group: "reports", enabled: highlighted, run: () => setHighlights(false) },
   ],
   modals: [{ id: "compare.main", title: "Compare Drafts", width: "wide", component: CompareModal }],
   activate(a) {
     // Highlights belong to the document they were made for.
-    return a.onSession(() => {
+    const offSession = a.onSession(() => {
       last = null;
-      if (highlighted) setHighlights(false);
+      if (highlighted()) setHighlights(false);
     });
+    // Forget an editor that is gone, rather than keep it alive.
+    const offEditor = a.subscribe(() => { if (highlightedIn && highlightedIn !== a.editor) highlightedIn = null; });
+    return () => { offSession(); offEditor(); };
   },
 };
 

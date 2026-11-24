@@ -4,7 +4,7 @@
 import {
   clearRevisionMarks, currentRevisionSet, fdxExtras, isOmitted, lockPages, newRevisionSet, omitScene, omittedParagraphs, pageLocks,
   revisionColor, revisionDate, revisionLabel, revisionState, sceneNumbersLocked, setSceneNumbersLocked, unlockPages, unomitScene,
-  updateRevisionState, type Paragraph, type RevisionSet, type RevisionState, type Scene,
+  updateRevisionState, type Paragraph, type RevisionSet, type RevisionState, type Scene, type ScreenplayDoc,
 } from "@screenplay/engine";
 import { useMemo, useState, useSyncExternalStore } from "react";
 
@@ -84,12 +84,27 @@ function sceneAtCaret(target: App): Scene | undefined {
   return target.session.doc.scenes().find((scene) => scene.paragraphIds.includes(id));
 }
 
-/** The OMITTED heading of the scene at the caret, when it keeps text to restore. */
+/**
+ * The OMITTED heading of the scene at the caret, when it keeps text to restore or stands in for a heading that was
+ * retyped as another element and is still in the script.
+ */
 function omittedAtCaret(target: App): string | undefined {
   const scene = sceneAtCaret(target);
   if (!scene) return undefined;
-  const heading = target.session.doc.paragraph(scene.headingId);
-  return isOmitted(heading) && omittedParagraphs(heading).length ? heading.id : undefined;
+  const doc = target.session.doc;
+  const heading = doc.paragraph(scene.headingId);
+  return isOmitted(heading) && (omittedParagraphs(heading).length || retypedLine(doc, heading)) ? heading.id : undefined;
+}
+
+/**
+ * The line an OMITTED heading that kept no paragraphs stands in for: a heading retyped as another element is still
+ * in the script, and the placeholder carries its scene ID (its paragraph ID when it had none). Only while scene
+ * numbers are locked, because the follow-up that clears the placeholder once the heading is back runs only then.
+ */
+function retypedLine(doc: ScreenplayDoc, omitted: Paragraph): Paragraph | undefined {
+  if (!sceneNumbersLocked(doc) || omitted.sceneId === undefined || omittedParagraphs(omitted).length) return undefined;
+  return doc.paragraphs().find((paragraph) => paragraph.id !== omitted.id && paragraph.type !== "sceneHeading"
+    && (paragraph.sceneId ?? paragraph.id) === omitted.sceneId);
 }
 
 function omitSceneAtCaret(target: App): void {
@@ -277,7 +292,8 @@ const feature: Feature = {
       enabled: (a) => writable(a) && state(a).sets.length > 0, run: (a) => a.openModal("revisions.manage", { mode: "clear" }),
     },
     {
-      id: "revisions.showMarks", label: "Show Revision Marks", menu: "Production", group: "revisions",
+      // The setting lives in the shared document, so a read-only guest cannot change it.
+      id: "revisions.showMarks", label: "Show Revision Marks", menu: "Production", group: "revisions", enabled: writable,
       checked: (a) => state(a).showMarks, run: (a) => change(a, (current) => ({ showMarks: !current.showMarks })),
     },
     { id: "revisions.lockPages", label: "Lock Pages", menu: "Production", group: "locking", enabled: writable, run: (a) => lockScriptPages(a) },
@@ -300,14 +316,28 @@ const feature: Feature = {
     },
     {
       id: "revisions.omitScene", label: "Omit Scene", menu: "Production", group: "locking",
-      enabled: (a) => !!sceneAtCaret(a) && !omittedAtCaret(a), run: (a) => omitSceneAtCaret(a),
+      enabled: (a) => {
+        const scene = sceneAtCaret(a);
+        return writable(a) && !!scene && !isOmitted(a.session.doc.paragraph(scene.headingId));
+      },
+      run: (a) => omitSceneAtCaret(a),
     },
     {
       id: "revisions.restoreScene", label: "Restore Omitted Scene", menu: "Production", group: "locking",
-      enabled: (a) => !!omittedAtCaret(a),
+      enabled: (a) => writable(a) && !!omittedAtCaret(a),
       run: (a) => {
         const heading = omittedAtCaret(a);
-        if (heading && a.session.edit(() => unomitScene(a.session.doc, heading))) a.toast("Restored the omitted scene.", "success");
+        if (!heading) return;
+        const doc = a.session.doc;
+        const line = retypedLine(doc, doc.paragraph(heading));
+        if (line && a.editor) {
+          // Retyping the line by hand brings this scene back, so Restore does exactly that: the line loses a
+          // parenthetical's parentheses, and the OMITTED line goes with no deletion mark. A paste over the line
+          // can have cleared the number it kept, so it takes the placeholder's in the same edit.
+          a.editor.setSelection({ paragraphId: line.id, offset: 0 });
+          a.editor.setElementType("sceneHeading", doc.paragraph(heading).sceneNumber);
+        } else if (!a.session.edit(() => unomitScene(a.session.doc, heading))) return;
+        a.toast("Restored the omitted scene.", "success");
       },
     },
   ],

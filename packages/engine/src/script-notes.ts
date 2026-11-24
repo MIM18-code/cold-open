@@ -6,6 +6,7 @@ import * as Y from "yjs";
 import type { ScreenplayDoc, TextPosition } from "./doc.ts";
 import { fdxOffset, fdxPositionAt, fdxPositions } from "./fdx.ts";
 import { plainText, type Script, type XmlNode } from "./model.ts";
+import { DEFAULT_EXTRAS } from "./revisions.ts";
 import { readOnce, storedFdx } from "./shapes.ts";
 import { asXmlNode, attr, textOf } from "./xml.ts";
 export const SCRIPT_NOTE_ANCHORS = "fdx.scriptNoteAnchors.v1";
@@ -258,7 +259,7 @@ export function projectScriptNotes(doc: ScreenplayDoc, script: Script): Script {
             const node = structuredClone(info.node);
             node.attrs = node.attrs.filter(([k]) => k !== ORPHAN_NOTE_ATTR && k !== "InklotDetachedKey");
             node.attrs.push([ORPHAN_NOTE_ATTR, "Yes"], ["InklotDetachedKey", info.key]);
-            (script.fdx ??= { rootAttrs: [], contentAttrs: [], before: [], after: [] }).after.push({ name: "ScriptNotes", attrs: [], children: [node] });
+            (script.fdx ??= structuredClone(DEFAULT_EXTRAS)).after.push({ name: "ScriptNotes", attrs: [], children: [node] });
         }
     return script;
 }
@@ -338,7 +339,7 @@ export function changeScriptNote(doc: ScreenplayDoc, key: string | null, edit: N
                 // Legacy notes stay paragraph-bound. A cross-paragraph attachment uses a new global representation.
                 found.parent.splice(found.index, 1);
                 const group: XmlNode = { name: "ScriptNotes", attrs: [], children: [node] };
-                (source.fdx ??= { rootAttrs: [], contentAttrs: [], before: [], after: [] }).after.push(group);
+                (source.fdx ??= structuredClone(DEFAULT_EXTRAS)).after.push(group);
             }
             node.attrs = node.attrs.filter(([k]) => k !== "Range" && k !== ORPHAN_NOTE_ATTR && k !== "InklotDetachedKey");
             node.attrs.push(["Range", range]);

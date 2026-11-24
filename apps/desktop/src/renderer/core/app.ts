@@ -238,9 +238,10 @@ export class App {
   }
 
   closeModal(): void {
+    // No editor.focus() here: the workspace is still inert until the next render, and the dialog's own focus
+    // handling (Shell.tsx) returns focus to the control that opened it, which keyboard users expect.
     this.ui = { ...this.ui, modal: null };
     this.emit();
-    this.editor?.focus();
     this.refreshMenu();
   }
 

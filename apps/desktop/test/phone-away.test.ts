@@ -246,3 +246,15 @@ test("typed drafts import from the folder, survive inbox reopen and retain revie
     assert.deepEqual(errors, []);
   } finally { await folder?.stop(); await rm(f.root, { recursive: true, force: true }); }
 });
+
+test("a Tailscale this app may not run is reported as refused, and another VPN's address is not Tailscale's", async () => {
+  const none = async () => null;
+  const never = async () => { throw new Error("must not run"); };
+  // Trust refuses every program, as a signed release does for a Homebrew build.
+  assert.deepEqual(await tailscaleCheck(never, none, async () => ["/opt/homebrew/bin/tailscale"]),
+    { installed: false, running: false, magicDns: false, https: false, refused: true });
+  assert.deepEqual(await tailscaleCheck(never, none, async () => []),
+    { installed: false, running: false, magicDns: false, https: false });
+  // No Tailscale on this Mac: an address in Tailscale's range belongs to something else, so nothing is offered.
+  assert.equal(await tailscaleNetwork(never, none, async () => []), null);
+});

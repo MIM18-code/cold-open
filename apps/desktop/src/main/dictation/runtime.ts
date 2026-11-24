@@ -51,6 +51,8 @@ export async function checkServer(config: DictationConfig): Promise<ServerStatus
 export class DictationRuntime {
   private helper?: SpeechHelper;
   private helperPath = "";
+  /** Helpers replaced by another, still exiting: quitting waits for them too. */
+  private readonly closing = new Set<Promise<void>>();
   private readonly pipeline: DictationPipeline;
   private readonly options: RuntimeOptions;
 
@@ -76,7 +78,11 @@ export class DictationRuntime {
     if (refused) throw new Error(refused);
     if (!existsSync(config.helperPath)) throw new Error(helperMissingMessage(config.helperPath));
     if (!this.helper || this.helperPath !== config.helperPath) {
-      this.helper?.close();
+      const closing = this.helper?.close();
+      if (closing) {
+        this.closing.add(closing);
+        void closing.finally(() => this.closing.delete(closing));
+      }
       this.helper = new SpeechHelper(config.helperPath);
       this.helperPath = config.helperPath;
     }
@@ -125,8 +131,8 @@ export class DictationRuntime {
     return { helperPath, exists: existsSync(helperPath) };
   }
 
-  /** Settles once the speech helper has exited or been killed. */
-  close(): Promise<void> {
-    return this.helper?.close() ?? Promise.resolve();
+  /** Settles once the speech helper, and any it replaced, has exited or been killed. */
+  async close(): Promise<void> {
+    await Promise.all([this.helper?.close(), ...this.closing]);
   }
 }

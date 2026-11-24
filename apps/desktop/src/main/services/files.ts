@@ -8,7 +8,8 @@ import { CHANNELS, type FileFilter, type OpenedFile } from "../../shared/api.ts"
 import { saveDialogName } from "../../shared/file-name.ts";
 import type { ServiceContext } from "../context.ts";
 import { registerRecentFiles } from "../recent-files.ts";
-import { randomSuffix, readChosenFile, replaceFile } from "../safe-fs.ts";
+import { fileWriter } from "../file-writer.ts";
+import { readChosenFile } from "../safe-fs.ts";
 
 const digest = (data: Uint8Array | string): string => createHash("sha256").update(data).digest("hex");
 export function register(ctx: ServiceContext): void {
@@ -55,32 +56,7 @@ export function register(ctx: ServiceContext): void {
     return { path, name: basename(path), data, fileHash: digest(data) };
   });
 
-  // Write to a unique temporary file and rename, so a crash mid-write never leaves half a script. Writes to the
-  // same destination run one after another, so overlapping saves land in the order they were asked for. The script
-  // may sit in a folder a co-writer shares, so the temporary name is random and created only if nothing is there:
-  // a link planted at a guessable name would otherwise carry the script into whatever file it points at.
-  const queues = new Map<string, Promise<unknown>>();
-  ctx.handle(CHANNELS.writeFile, (_event, path: string, data: Uint8Array | string, expectedHash?: string) => {
-    if (!ctx.isAllowedPath(path)) throw new Error("Choose where to save with the Save dialog first.");
-    if (expectedHash !== undefined && !/^[a-f0-9]{64}$/.test(expectedHash)) throw new Error("Invalid saved-file fingerprint.");
-    const destination = resolve(path);
-    // Check the last-opened version immediately before atomic replacement in this destination's serialized queue.
-    // Without an expected hash (Save As, export, recovery), the explicit destination selection authorizes writing.
-    const write = async () => {
-      if (expectedHash) {
-        let current: Uint8Array;
-        try { current = await readChosenFile(destination); }
-        catch { throw new Error("FILE_CHANGED: The original file was removed or replaced outside this app."); }
-        if (digest(current) !== expectedHash) throw new Error("FILE_CHANGED: Another app or window changed this file since you opened it.");
-      }
-      await replaceFile(destination, `${destination}.saving-${process.pid}-${randomSuffix()}`, data);
-      return digest(data);
-    };
-    const next = (queues.get(destination) ?? Promise.resolve()).catch(() => undefined).then(write);
-    queues.set(destination, next);
-    void next.finally(() => queues.get(destination) === next && queues.delete(destination)).catch(() => undefined);
-    return next;
-  });
+  ctx.handle(CHANNELS.writeFile, fileWriter((path) => ctx.isAllowedPath(path)));
 
   // Crash-recovery copies. Backups found at launch belong to a previous run, so only the first request sees them.
   const autosaveDir = join(ctx.paths.userData, "autosave");

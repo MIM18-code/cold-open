@@ -9,9 +9,9 @@ import { shownText } from "./writing";
 import { UNPAIRED } from "./store";
 import { Action, c, Caption, errorText, Label, NavBar, StatusDot, Symbol, Warning } from "./ui";
 
-export function Status({ pair, status, takes, back, forget, sendToMac }: {
+export function Status({ pair, status, takes, back, forget, sendToMac, nextBatch }: {
   pair: Pairing; status: string; takes: Take[]; back(): void; forget(): Promise<void>;
-  sendToMac(): Promise<number>;
+  sendToMac(): Promise<number>; nextBatch: number;
 }) {
   const [folderChosen, setFolderChosen] = useState(() => phoneFolder.configured());
   const [folderError, setFolderError] = useState("");
@@ -56,7 +56,8 @@ export function Status({ pair, status, takes, back, forget, sendToMac }: {
         {folderError && <Label accessibilityRole="alert">{folderError}</Label>}
       </View>}
       {pair.remembered && (!terminal || pair.legacy) && (unsent.length > 0 || resend.length > 0) && <View style={{ gap: 8 }}>
-        <Action label={unsent.length ? `Send to Mac (${unsent.length} remaining)` : `AirDrop again (${resend.length})`}
+        <Action label={unsent.length ? `Send to Mac (${unsent.length} remaining)`
+          : `AirDrop again (${nextBatch < resend.length ? `${nextBatch} of ${resend.length}` : resend.length})`}
           icon="square.and.arrow.up"
           disabled={sending} press={() => void send()} />
         <Caption>AirDrop a takes file to the Mac when this iPhone and the Mac share no network.

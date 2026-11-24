@@ -38,6 +38,15 @@ test("wraps at spaces and after hyphens, breaks long words, keeps hard line brea
   assert.deepEqual(wrap("", 10), [[0, 0]]);
 });
 
+test("wrap does not insert a phantom empty line when a cut lands on a soft return", () => {
+  const lines = (s: string, width: number) => wrap(s, width).map(([from, to]) => s.slice(from, to));
+  assert.deepEqual(lines("abcdefghij-\nnext", 10), ["abcdefghij-", "next"]);
+  assert.deepEqual(lines("abcdefghij \nnext", 10), ["abcdefghij", "next"]);
+  assert.deepEqual(lines("abcdefghij   \nnext", 10), ["abcdefghij", "next"]);
+  assert.deepEqual(lines("abcdefghij-\n\nnext", 10), ["abcdefghij-", "", "next"]);
+  assert.deepEqual(lines("abcdefghij-\n", 10), ["abcdefghij-", ""]);
+});
+
 test("line widths follow Final Draft 13: 61 characters of action, 35 of dialogue, 26 then 25 of parenthetical", () => {
   const action = "x".repeat(61) + " y";
   const dialogue = "x".repeat(35) + " y";

@@ -70,6 +70,19 @@ export async function pickRuntime(candidates: string[]): Promise<string | undefi
   return undefined;
 }
 
+/**
+ * The environment the Ollama this app starts runs with. Only what it needs: where the writer's home and models are,
+ * how to reach the network, and the Ollama settings a writer tunes. Anything else the app was started with, such as
+ * keys exported in a shell, stays out of a program the app did not write. So do the Ollama variables that say where
+ * it loads code from or who may call it: whatever launched the app must not steer a program the app vouches for.
+ */
+export function ollamaEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const keep = /^(HOME|USER|LOGNAME|PATH|TMPDIR|LANG|LC_[A-Z_]+|(HTTPS?|ALL|NO)_PROXY|OLLAMA_(MODELS|KEEP_ALIVE|NUM_PARALLEL|MAX_LOADED_MODELS|MAX_QUEUE|CONTEXT_LENGTH|FLASH_ATTENTION|KV_CACHE_TYPE|GPU_OVERHEAD|LOAD_TIMEOUT|NOPRUNE|DEBUG))$/i;
+  const out: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(env)) if (value !== undefined && keep.test(name)) out[name] = value;
+  return { ...out, OLLAMA_HOST: new URL(DEFAULT_OLLAMA_ENDPOINT).host, OLLAMA_NO_CLOUD: "1" };
+}
+
 export class LocalRuntime {
   private child?: ChildProcess;
   private readonly root: string;
@@ -90,20 +103,33 @@ export class LocalRuntime {
     }
     signal.throwIfAborted();
     report("Starting local AI…");
+    let spawned: ChildProcess | undefined;
     if (!this.child) {
-      const child = spawn(binary, ["serve"], { stdio: "ignore", env: {
-        ...process.env, OLLAMA_HOST: new URL(DEFAULT_OLLAMA_ENDPOINT).host, OLLAMA_NO_CLOUD: "1",
-      } });
-      this.child = child;
+      const child = spawn(binary, ["serve"], { stdio: "ignore", env: ollamaEnvironment(process.env) });
+      this.child = spawned = child;
       child.once("error", () => {}); // Failure to start also emits close.
       child.once("close", () => { if (this.child === child) this.child = undefined; });
     }
-    for (let attempt = 0; attempt < 50; attempt++) {
-      await delay(300, undefined, { signal });
-      if (await models.list().then(() => true, () => false)) return;
-      if (!this.child) break;
+    try {
+      for (let attempt = 0; attempt < 50; attempt++) {
+        await delay(300, undefined, { signal });
+        const ready = await models.list().then(() => true, () => false);
+        // A cancel that came during the check wins, even if the server answered.
+        signal.throwIfAborted();
+        if (ready) return;
+        if (!this.child) break;
+      }
+      throw new Error("Local AI could not start. Close other copies of Ollama and try again.");
+    } catch (error) {
+      // Cancelled or never answered: a server left running would be orphaned if the app crashed. Only the server
+      // this start spawned: another start (automatic startup) may still be waiting on its own. Forget it at once,
+      // so a start right after this one spawns a fresh server instead of waiting on the one being killed.
+      if (spawned) {
+        spawned.kill();
+        if (this.child === spawned) this.child = undefined;
+      }
+      throw error;
     }
-    throw new Error("Local AI could not start. Close other copies of Ollama and try again.");
   }
 
   stop(): void { this.child?.kill(); }

@@ -29,7 +29,24 @@ export interface RememberedPhone {
  * clear), or by beta 13's version 2 link (its root cannot become a version 3 one). It is never served live again.
  */
 export const outdatedPhone = (device: RememberedPhone) => !device.hostname && !device.root;
-interface Receipt { deviceId: string; scriptId: string; signature: string; outcome?: "accepted" | "ignored"; }
+/** `at` is when the item arrived, in milliseconds. Receipts written before beta 18 have none and count as oldest. */
+export interface Receipt { deviceId: string; scriptId: string; signature: string; outcome?: "accepted" | "ignored"; at?: number; }
+/**
+ * Receipts kept for one paired iPhone. A receipt stops a resent item being added twice and carries the writer's
+ * decision back to the phone. Past this many, the oldest decided ones go, so the file stays loadable: 5,000 are about
+ * 1.5 MB and load() accepts 24 MB. Undecided ones are never dropped.
+ */
+export const RECEIPTS_KEPT = 5000;
+export function dropOldDecided(receipts: Record<string, Receipt>, deviceId: string, kept = RECEIPTS_KEPT): void {
+  const own = Object.entries(receipts).filter(([, receipt]) => receipt.deviceId === deviceId);
+  let extra = own.length - kept;
+  if (extra <= 0) return;
+  const decided = own.filter(([, receipt]) => receipt.outcome).sort(([, a], [, b]) => (a.at ?? 0) - (b.at ?? 0));
+  for (const [key] of decided) {
+    if (extra-- <= 0) break;
+    delete receipts[key];
+  }
+}
 interface State { devices: RememberedPhone[]; receipts: Record<string, Receipt>; folder?: FolderGrant; }
 export class PhoneDevices {
   private state: State = { devices: [], receipts: {} };
@@ -131,7 +148,8 @@ export class PhoneDevices {
         return false;
       }
       await store.append(scriptId, { ...item, deviceId });
-      this.state.receipts[key] = { deviceId, scriptId, signature };
+      this.state.receipts[key] = { deviceId, scriptId, signature, at: Date.now() };
+      dropOldDecided(this.state.receipts, deviceId);
       await this.save();
       return true;
     });

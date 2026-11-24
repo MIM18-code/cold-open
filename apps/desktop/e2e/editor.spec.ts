@@ -437,6 +437,25 @@ test("element commands, marks, a co-writer's edit, and the drawing channels", as
   expect(await page.evaluate(() => (window as any).__app.setting("editor.zoom", 1))).toBe(1);
 });
 
+test("a page break deleted with its text comes back when Undo restores the text", async () => {
+  const [, action] = await load(page, [["sceneHeading", "INT. HALL - NIGHT"], ["action", "Nell waits by the door and listens."]]);
+  // One synchronous run, so live pagination cannot redraw the breaks in between.
+  const counts = await page.evaluate((id) => {
+    const app = (window as any).__app, s = app.session;
+    const breaks = [{ paragraphId: id, offset: 18, pageNumber: "3", more: true, contd: "NELL (CONT'D)" }];
+    const count = () => document.querySelectorAll(".editor-pagebreak-more").length;
+    app.editor.setPageBreaks(breaks);
+    const before = count();
+    s.edit(() => s.doc.deleteText(id, 10, 15));
+    const deleted = count();
+    s.undo.undo();
+    // Pagination reports the same break as before the delete.
+    app.editor.setPageBreaks(breaks);
+    return [before, deleted, count()];
+  }, action!);
+  expect(counts).toEqual([1, 0, 1]);
+});
+
 test("typing in a 3,000-paragraph script stays under 16 ms per keystroke", async () => {
   const types = ["sceneHeading", "action", "character", "dialogue", "character", "parenthetical", "dialogue", "action"];
   const list = await load(page, Array.from({ length: 3000 }, (_, i): Row => [types[i % types.length]!, `Line ${i} of a long script, with enough words to wrap across the page like real action does.`]));
@@ -510,6 +529,38 @@ test("composed characters (dead keys, input methods) reach the document when com
   await page.keyboard.type(" au lait");
   await expect.poll(() => rows(page)).toEqual([["action", "Caf\u00e9 au lait"]]);
   await expect(page.locator(".editor-t-action")).toHaveText("Caf\u00e9 au lait");
+});
+
+test("a composition confirmed just before the script view closes reaches the document", async () => {
+  const [first] = await load(page, [["action", "Caf"]]);
+  await select(page, [first!, 3]);
+  // Hold the editor's 40 ms commit timer, so only the view's teardown can commit the composed letter.
+  await page.evaluate(() => {
+    const real = window.setTimeout.bind(window);
+    (window as any).setTimeout = (fn: () => void, ms?: number, ...rest: unknown[]) => ms === 40 ? -1 : real(fn, ms, ...rest);
+  });
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Input.imeSetComposition", { text: "´", selectionStart: 1, selectionEnd: 1 });
+  await cdp.send("Input.insertText", { text: "é" });
+  expect(await rows(page)).toEqual([["action", "Caf"]]);
+  await page.evaluate(() => (window as any).__app.setView("cards"));
+  await expect(page.locator(".editor-pm")).toHaveCount(0);
+  expect(await rows(page)).toEqual([["action", "Café"]]);
+  expect(errors).toEqual([]);
+});
+
+test("the input event for Undo leaves a read-only script alone", async () => {
+  const [first] = await load(page, [["action", "Nell waits."]]);
+  const text = await page.evaluate((id) => {
+    const s = (window as any).__app.session;
+    s.edit(() => s.doc.insertText(id, 0, "Still, "));
+    s.setReadOnly(true);
+    document.querySelector(".editor-pm")!.dispatchEvent(new InputEvent("beforeinput", { inputType: "historyUndo", bubbles: true, cancelable: true }));
+    const result = s.script().paragraphs[0].runs.map((r: any) => r.text).join("");
+    s.setReadOnly(false);
+    return result;
+  }, first!);
+  expect(text).toBe("Still, Nell waits.");
 });
 
 test("dragging text to another paragraph moves only that text and keeps every paragraph ID", async () => {
@@ -895,6 +946,61 @@ test("a composition keeps a co-writer's text typed inside the range it replaces"
       // The caret is right after the committed text, before the co-writer's.
       await page.keyboard.type("!");
       expect((await rows(page))[0]![1]).toBe(expected.replace("é", "é!"));
+    } finally {
+      await cdp.detach();
+    }
+  }
+});
+
+/** Leave `text` as the whole script with no line break, as a co-writer deleting every paragraph while this writer typed does; returns the ID it is read with. */
+async function loadOpen(page: Page, text: string): Promise<string> {
+  await load(page, [["action", text]]);
+  await page.evaluate(() => {
+    const doc = (window as any).__app.session.doc;
+    doc.ydoc.transact(() => doc.body.delete(0, 1), "peer");
+  });
+  await expect(page.locator(".editor-pm > .editor-p")).toHaveText([text]);
+  expect(await page.evaluate(() => (window as any).__app.session.doc.body.toString())).toBe(text);
+  return (await ids(page))[0]!;
+}
+
+test("typing and a composition as the first edit of text with no line break land where they are drawn", async () => {
+  // Typing: the line break the first edit adds must not shift where the letter goes.
+  for (const [at, expected] of [[0, "!abcd"], [2, "ab!cd"], [4, "abcd!"]] as const) {
+    const id = await loadOpen(page, "abcd");
+    await select(page, [id, at]);
+    await page.keyboard.type("!");
+    await expect.poll(() => rows(page), `typing at ${at}`).toEqual([["general", expected]]);
+    await expect(page.locator(".editor-pm > .editor-p")).toHaveText([expected]);
+    expect(await ids(page), `typing at ${at}`).toEqual([id]);
+    await page.keyboard.type("?");
+    expect((await rows(page))[0]![1], `typing at ${at}`).toBe(expected.replace("!", "!?"));
+    // Undo takes the typing back and leaves the line break and the ID.
+    await page.evaluate(() => (window as any).__app.session.undo.undo());
+    expect(await rows(page), `undo at ${at}`).toEqual([["general", "abcd"]]);
+    expect(await ids(page), `undo at ${at}`).toEqual([id]);
+  }
+  // Sol's case: "bc" is composed over while a co-writer types X between b and c. The replaced letters are deleted
+  // in two ranges, and the first deletion is this text's first edit.
+  // [replaced from, to, where X goes in the body, the result]
+  for (const [from, to, at, expected] of [[1, 3, 2, "aéXd"], [0, 4, 2, "éX"], [2, 2, 1, "aXbécd"]] as const) {
+    const name = `${from}-${to} X at ${at}`;
+    const id = await loadOpen(page, "abcd");
+    await select(page, [id, from], [id, to]);
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      await cdp.send("Input.imeSetComposition", { text: "e", selectionStart: 1, selectionEnd: 1 });
+      await page.evaluate((at) => {
+        const doc = (window as any).__app.session.doc;
+        doc.ydoc.transact(() => doc.body.insert(at, "X"), "peer");
+      }, at);
+      expect(await page.evaluate(() => (window as any).__app.editor.view.composing), name).toBe(true);
+      await cdp.send("Input.insertText", { text: "é" });
+      await expect.poll(() => rows(page), name).toEqual([["general", expected]]);
+      await expect(page.locator(".editor-pm > .editor-p"), name).toHaveText([expected]);
+      expect(await ids(page), name).toEqual([id]);
+      await page.keyboard.type("!");
+      expect((await rows(page))[0]![1], name).toBe(expected.replace("é", "é!"));
     } finally {
       await cdp.detach();
     }

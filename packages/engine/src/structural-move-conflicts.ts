@@ -65,6 +65,7 @@ function spanIndex(spans: MoveSpan[]): Map<number, MoveSpan[]> {
     const list = index.get(span[0]) ?? [];
     list.push(span); index.set(span[0], list);
   }
+  for (const list of index.values()) list.sort((a, b) => a[1] - b[1]);
   return index;
 }
 

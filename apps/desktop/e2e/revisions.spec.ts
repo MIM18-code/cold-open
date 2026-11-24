@@ -333,6 +333,58 @@ test("locked scene numbers in the editor: a line passing through Scene Heading t
   await close(electronApp, page);
 });
 
+test("locked scene numbers: Restore Omitted Scene turns a heading retyped as action back into that scene's heading", async () => {
+  const { electronApp, page } = await launch();
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.waitForSelector(".editor-pm");
+  await load(page, 3);
+  const headings = () => page.evaluate(() => (window as any).__app.session.doc.paragraphs()
+    .filter((p: any) => p.type === "sceneHeading").map((p: any) => `${p.sceneNumber ?? "-"} ${p.runs.map((r: any) => r.text).join("")}`));
+  await runCommand(page, "revisions.lockScenes");
+
+  await typeAt(page, "h2", 3, "");
+  await page.evaluate(() => (window as any).__app.editor.setElementType("action"));
+  await expect.poll(headings).toEqual(["1 INT. ROOM 1 - DAY", "2 OMITTED", "3 INT. ROOM 3 - DAY"]);
+  // A writer's next command comes later than the undo manager's capture timeout.
+  await page.evaluate(() => (window as any).__app.session.undo.stopCapturing());
+
+  await runCommand(page, "revisions.restoreScene");
+  await expect.poll(headings).toEqual(["1 INT. ROOM 1 - DAY", "2 INT. ROOM 2 - DAY", "3 INT. ROOM 3 - DAY"]);
+  await expect(page.locator('.editor-p[data-id="h2"].editor-t-sceneHeading')).toHaveAttribute("data-scene-number", "2");
+  await expect(page.locator(".toast", { hasText: "Restored the omitted scene." })).toHaveCount(1);
+
+  // One undo takes the restore back.
+  await page.evaluate(() => (window as any).__app.session.undo.undo());
+  await expect.poll(headings).toEqual(["1 INT. ROOM 1 - DAY", "2 OMITTED", "3 INT. ROOM 3 - DAY"]);
+  expect(await page.evaluate(() => (window as any).__app.session.doc.paragraph("h2").type)).toBe("action");
+
+  // With Revision Mode on, taking the OMITTED line away is not a deletion the reader needs marked.
+  await runCommand(page, "revisions.mode");
+  await typeAt(page, "h2", 3, "");
+  await runCommand(page, "revisions.restoreScene");
+  await expect.poll(headings).toEqual(["1 INT. ROOM 1 - DAY", "2 INT. ROOM 2 - DAY", "3 INT. ROOM 3 - DAY"]);
+  await expect(page.locator(".editor-pm .rev-del")).toHaveCount(0);
+  await runCommand(page, "revisions.mode");
+
+  // A heading retyped as a parenthetical comes back without the parentheses the retype gave it.
+  await page.evaluate(() => (window as any).__app.editor.setElementType("parenthetical"));
+  await expect.poll(headings).toEqual(["1 INT. ROOM 1 - DAY", "2 OMITTED", "3 INT. ROOM 3 - DAY"]);
+  expect(await page.evaluate(() => (window as any).__app.session.doc.paragraph("h2").runs.map((r: any) => r.text).join(""))).toBe("(INT. ROOM 2 - DAY)");
+  // A paste over the line can clear the number it kept: the scene still comes back as 2, not as a new 2A.
+  await page.evaluate(() => { const app = (window as any).__app; app.session.edit(() => app.session.doc.setField("h2", "sceneNumber", undefined)); app.session.undo.stopCapturing(); });
+  await runCommand(page, "revisions.restoreScene");
+  await expect.poll(headings).toEqual(["1 INT. ROOM 1 - DAY", "2 INT. ROOM 2 - DAY", "3 INT. ROOM 3 - DAY"]);
+  // One undo takes back the type, the parentheses and the number together.
+  await page.evaluate(() => (window as any).__app.session.undo.undo());
+  await expect.poll(headings).toEqual(["1 INT. ROOM 1 - DAY", "2 OMITTED", "3 INT. ROOM 3 - DAY"]);
+  expect(await page.evaluate(() => { const p = (window as any).__app.session.doc.paragraph("h2"); return [p.type, p.sceneNumber ?? null, p.runs.map((r: any) => r.text).join("")]; }))
+    .toEqual(["parenthetical", null, "(INT. ROOM 2 - DAY)"]);
+
+  expect(errors).toEqual([]);
+  await close(electronApp, page);
+});
+
 test("Revision Mode follows the open document: a document opened in its place is tracked, and its own state shows", async () => {
   const { electronApp, page } = await launch();
   const errors: string[] = [];
@@ -369,10 +421,10 @@ test("a read-only script cannot change Revision Mode, revision sets or locks", a
   await load(page, 2);
   const enabled = () => page.evaluate(() => {
     const app = (window as any).__app;
-    return ["revisions.mode", "revisions.current", "revisions.newSet", "revisions.lockPages", "revisions.lockScenes"]
+    return ["revisions.mode", "revisions.current", "revisions.newSet", "revisions.lockPages", "revisions.lockScenes", "revisions.omitScene"]
       .filter((id) => { const command = app.commands.find((c: any) => c.id === id); return !command.enabled || command.enabled(app); });
   });
-  expect(await enabled()).toHaveLength(5);
+  expect(await enabled()).toHaveLength(6);
   await page.evaluate(() => (window as any).__app.session.setReadOnly(true));
   expect(await enabled()).toEqual([]);
   await runCommand(page, "revisions.mode");

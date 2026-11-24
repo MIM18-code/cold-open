@@ -143,3 +143,35 @@ test("cold-launch takes wait for their renderer's script report and refuse after
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("revoking the last remembered iPhone clears a stale connection error", async () => {
+  const root = await mkdtemp(join(tmpdir(), "phone-clear-error-"));
+  const path = join(root, "Draft.screenplay"), key = phonePathKey(path);
+  const devices = new PhoneDevices(join(root, "phone-devices.json"));
+  const { device } = await devices.create(key, "100.64.0.10", "mac.tail123.ts.net");
+  const handlers = new Map<string, Handler>(), quitting: (() => unknown)[] = [];
+  const ctx = {
+    handle: (channel: string, handler: Handler) => handlers.set(channel, handler),
+    paths: { userData: root }, settings: new Settings(join(root, "settings.json")),
+    broadcast() {}, send() {}, isAllowedPath: (candidate: string) => candidate === path,
+    onQuit: (callback: () => unknown) => quitting.push(callback), windowOf: () => ({}),
+  } as unknown as ServiceContext;
+  const sender = Object.assign(new EventEmitter(), { id: 1, isDestroyed: () => false });
+  const call = (channel: string, ...args: unknown[]) => handlers.get(channel)!({ sender } as never, ...args);
+  register(ctx, { clipboard: {}, dialog: {} } as never, async () => null,
+    async () => ({ installed: true, running: false, magicDns: false, https: false }));
+  try {
+    await call("phone:path-key", path);
+    // Wait for initial restoreHosts() to finish and record the offline Tailscale error.
+    await new Promise(resolve => setTimeout(resolve, 40));
+    const before = await call("phone:status", key) as any;
+    assert.match(before.connectionError, /Tailscale/);
+    await call("phone:revoke", device.id);
+    const after = await call("phone:status", key) as any;
+    assert.equal(after.remembered.length, 0);
+    assert.equal(after.connectionError, "");
+  } finally {
+    await Promise.all(quitting.map(fn => fn()));
+    await rm(root, { recursive: true, force: true });
+  }
+});

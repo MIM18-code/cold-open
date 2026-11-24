@@ -37,7 +37,9 @@ export function setupChecklist({ tailscale, remembered, folderChosen, showing }:
   return [
     {
       id: "installed", title: "Tailscale is installed on this Mac", done: tailscale.installed,
-      detail: "Install Tailscale on this Mac.",
+      detail: tailscale.refused
+        ? "This Mac has a Tailscale that Cold Open can't use, such as one installed with Homebrew. Install Tailscale from its website or the App Store."
+        : "Install Tailscale on this Mac.",
       action: tailscale.installed ? undefined : { label: "Install Tailscale", url: TAILSCALE_DOWNLOAD },
     },
     {

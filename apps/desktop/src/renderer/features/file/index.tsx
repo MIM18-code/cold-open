@@ -15,7 +15,7 @@ import { historyId, recordVersion } from "../history/index.tsx";
 import { resolveSceneNumbersForDelivery } from "../revisions/settle.ts";
 import { chooseTableReadStorage, restoreTableReadForOpen, writeTableReadSidecar } from "../table-read/sidecar-files.ts";
 import { persistProductionBaseline, prepareProductionBaselineSave, productionHeadingIdentities, restoreProductionBaseline, sessionBaseline } from "../backlot/baseline.ts";
-import { DocumentSession, type SourceFormat } from "../../core/session.ts";
+import { DocumentSession, LOCAL_ORIGIN, type SourceFormat } from "../../core/session.ts";
 
 const OPEN_FILTERS = [
   { name: "Screenplays", extensions: [NATIVE_EXTENSION, "fdx", "fountain", "spmd", "txt"] },
@@ -244,13 +244,20 @@ export async function save(target: App = app): Promise<boolean> {
     });
     if (choice === 0) return saveAs(target, session.format);
     if (choice === 1) {
+      // The writer may have moved to another script while this sheet was up.
+      if (target.session !== session) return false;
       const yes = await messageBox({
         type: "warning", message: "Replace your unsaved draft with the disk version?",
         detail: "Any changes not present in the disk file will be lost. Save a copy instead to keep both.",
         buttons: ["Keep my draft", "Reload disk version"], defaultId: 0, cancelId: 0,
       });
       if (yes !== 1 || target.session !== session) return false;
-      target.setSession(await restoredSessionFromFile(await desktop.invoke<OpenedFile>(CHANNELS.readFile, session.path!)));
+      const file = await desktop.invoke<OpenedFile>(CHANNELS.readFile, session.path!);
+      // The writer may have moved to another script while the file was read, or its baseline restored.
+      if (target.session !== session) return false;
+      const reloaded = await restoredSessionFromFile(file);
+      if (target.session !== session) return false;
+      target.setSession(reloaded);
       return true;
     }
     return false;
@@ -316,12 +323,15 @@ async function exportSex(): Promise<void> {
   app.toast(`Exported ${path.split("/").pop()}`, "success");
 }
 
-/** Ask to save unsaved changes. Resolves true when it is fine to discard the document. */
-export async function confirmDiscard(action = "closing"): Promise<boolean> {
+/**
+ * Ask to save unsaved changes. Resolves true when it is fine to discard the document. `answered` runs as soon as
+ * the writer has answered (or there was nothing to ask), before any save starts.
+ */
+export async function confirmDiscard(action = "closing", answered?: () => void): Promise<boolean> {
   // A pending draft makes the document dirty, so closing asks instead of dropping it.
   app.flushPending();
   const session = app.session;
-  if (!session.dirty) return true;
+  if (!session.dirty) { answered?.(); return true; }
   const choice = await messageBox({
     type: "warning",
     message: `Save changes to "${session.name}" before ${action}?`,
@@ -330,6 +340,7 @@ export async function confirmDiscard(action = "closing"): Promise<boolean> {
     defaultId: 0,
     cancelId: 2,
   });
+  answered?.();
   if (choice === 2) return false;
   if (choice === 0) return (await save()) && !app.session.dirty;
   return true;
@@ -551,11 +562,14 @@ const feature: Feature = {
     { id: "file.revert", label: "Revert to Saved", menu: "File", group: "save",
       enabled: (a) => !!a.session.path && a.session.dirty,
       run: async (a) => {
-        const path = a.session.path!;
-        const choice = await messageBox({ message: `Revert "${a.session.name}" to the saved version?`, detail: "Your unsaved changes will be lost.", buttons: ["Revert", "Cancel"], cancelId: 1 });
-        if (choice !== 0) return;
+        const waitingIn = a.session, path = waitingIn.path!;
+        const choice = await messageBox({ message: `Revert "${waitingIn.name}" to the saved version?`, detail: "Your unsaved changes will be lost.", buttons: ["Revert", "Cancel"], cancelId: 1 });
+        if (choice !== 0 || a.session !== waitingIn) return;
         const file = await desktop.invoke<OpenedFile>(CHANNELS.readFile, path);
+        // The writer may have moved to another script while the file was read, or its baseline restored.
+        if (a.session !== waitingIn) return;
         const session = await restoredSessionFromFile(file);
+        if (a.session !== waitingIn) return;
         a.setSession(session);
         await restoreAfterOpen(session);
       } },
@@ -589,14 +603,33 @@ const feature: Feature = {
     desktop.on(CHANNELS.openPath, (path) => void openPath(path as string).catch((error) => a.toast(String(error.message ?? error), "error")));
     desktop.on(CHANNELS.closeRequested, async () => {
       // The main process ignores further close requests until it hears back, so every path must answer.
-      let allowed = false;
+      // The writer can still type, undo or redo after answering the sheet, while Save and the backup cleanup run.
+      // That edit would go with the window, so it keeps the window open and the next close asks again.
+      let watched: DocumentSession | null = null, edited = false;
+      const onUpdate = (_update: Uint8Array, origin: unknown) => {
+        if (origin === LOCAL_ORIGIN || origin === watched?.undo) edited = true;
+      };
+      const watch = (session: DocumentSession) => {
+        watched?.doc.ydoc.off("update", onUpdate);
+        watched = session;
+        session.doc.ydoc.on("update", onUpdate);
+      };
       try {
-        allowed = await confirmDiscard();
-      } catch (error) {
-        a.toast(`Couldn't save: ${error instanceof Error ? error.message : String(error)}`, "error");
-      }
-      if (!allowed) { await desktop.invoke("shell:close-cancelled"); return; }
-      await clearBackup(a.session).catch(() => undefined);
+        let allowed = false;
+        try {
+          allowed = await confirmDiscard("closing", () => watch(a.session));
+        } catch (error) {
+          a.toast(`Couldn't save: ${error instanceof Error ? error.message : String(error)}`, "error");
+        }
+        if (!allowed) { await desktop.invoke("shell:close-cancelled"); return; }
+        // Reload disk version, chosen during Save, replaces the session on purpose; its replacement is what closes.
+        const approved = a.session;
+        if (watched !== approved) { edited = false; watch(approved); }
+        await clearBackup(approved).catch(() => undefined);
+        a.flushPending();
+        // An Open that landed during the cleanup put another script in this window.
+        if (edited || a.session !== approved) { await desktop.invoke("shell:close-cancelled"); return; }
+      } finally { (watched as DocumentSession | null)?.doc.ydoc.off("update", onUpdate); }
       await desktop.invoke(CHANNELS.closeAllowed);
     });
     if (!isDesktop) {

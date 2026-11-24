@@ -1,6 +1,6 @@
 // React hooks over the app object. Components re-render when the slice they read changes.
 import type { Script } from "@screenplay/engine";
-import { startTransition, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { app, type App } from "./app.ts";
 import type { EditorBridge } from "./editor-bridge.ts";
@@ -81,7 +81,8 @@ export function useScript(delay = 250): Script {
 /** Session path, name, format, dirty flag and read-only flag. */
 export function useSessionState(): { path: string | null; name: string; format: SourceFormat; dirty: boolean; readOnly: boolean } {
   const session = useSession();
-  const subscribe = (onChange: () => void) => session.onState(onChange);
+  // A new function each render would make all five stores resubscribe on every render.
+  const subscribe = useCallback((onChange: () => void) => session.onState(onChange), [session]);
   const path = useSyncExternalStore(subscribe, () => session.path);
   const name = useSyncExternalStore(subscribe, () => session.name);
   const format = useSyncExternalStore(subscribe, () => session.format);

@@ -172,6 +172,36 @@ test("a deletion mark at a wrap point marks exactly one line", () => {
   assert.deepEqual(marked("aaaa ".repeat(10) + "aaaaaaaa" + "     " + "bbbb ".repeat(20), 62), [[63, 122]]);
   // In the spaces after the last line's text, the mark stays on the last line.
   assert.deepEqual(marked("a".repeat(61) + "     ", 64), [[0, 61]]);
+  // Before the first printed character (stripped leading note and spaces), the mark stays on the first line.
+  const doc = ScreenplayDoc.fromScript({
+    titlePage: [],
+    paragraphs: [{ id: "a", type: "action", runs: [{ text: "note", note: true }, { text: "   " + "word ".repeat(16) }] }],
+  });
+  addDeletionMark(doc, "a", 0, "1");
+  addDeletionMark(doc, "a", 5, "1");
+  const script = doc.toScript();
+  const pagination = paginate(script);
+  const first = pagination.pages[0]!.lines[0]!;
+  assert.ok(first.from > 5, "first printed line starts past the leading note and spaces");
+  const rev = pageRevisions(script, pagination, state)[0]!;
+  assert.deepEqual(rev.marked, [0]);
+  assert.equal(rev.setId, "1");
+});
+
+test("a deletion mark whose offset sits past the end of a shortened paragraph clamps to its last printed line", () => {
+  const state = { sets: [newRevisionSet(NO_REVISIONS)], currentSetId: "1", tracking: true, showMarks: true };
+  // A two-line paragraph whose deletion mark was left past the end after a remote edit shortened the text.
+  const longText = "word ".repeat(20).trim();
+  const doc = docOf([{ id: "a", type: "action", runs: [{ text: longText }] }]);
+  addDeletionMark(doc, "a", 250, "1");
+  const script = doc.toScript();
+  const pagination = paginate(script);
+  const lines = pagination.pages[0]!.lines;
+  assert.ok(lines.length >= 2, "shortened paragraph still spans multiple lines");
+  const rev = pageRevisions(script, pagination, state)[0]!;
+  // Only the last printed line gets the margin mark, matching a locally clamped mark at the paragraph's end.
+  assert.deepEqual(rev.marked, [lines.length - 1]);
+  assert.equal(rev.setId, "1");
 });
 
 test("locked pages follow their text through edits and round-trip through FDX", () => {

@@ -33,9 +33,15 @@ function BeatCard({ record, index, spatial, zoom }: {
         setDraft(null);
     } };
     // The lane is written when focus leaves it, and on Save or Close while it is still being typed.
-    const lane = useRef<HTMLInputElement>(null), typed = useRef(false), commitLane = useRef(() => {});
+    const lane = useRef<HTMLInputElement>(null), typed = useRef(false), startedFrom = useRef(""), commitLane = useRef(() => {});
     commitLane.current = () => { const value = lane.current?.value; if (!typed.current || value === undefined)
-        return; typed.current = false; if (value !== position.lane)
+        return; typed.current = false;
+        // Typed in and put back: nothing to write, so the field takes the latest lane, which a co-writer may have changed.
+        if (value === startedFrom.current) {
+            lane.current!.value = position.lane;
+            return;
+        }
+        if (value !== position.lane)
         apply({ ...position, lane: value }); };
     useEffect(() => { const off = app.onFlush(() => commitLane.current()); return () => { off(); }; }, []);
     // The field stays in place while it is being typed in, so a Save does not take the caret out of it. A lane
@@ -51,7 +57,7 @@ function BeatCard({ record, index, spatial, zoom }: {
         e.currentTarget.releasePointerCapture(e.pointerId);
     } }} onPointerCancel={() => { drag.current = null; setDraft(null); }} onKeyDown={(e) => { const delta = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, number[]>)[e.key]; if (!delta)
         return; e.preventDefault(); const step = e.shiftKey ? 10 : 1; apply({ ...position, x: position.x + delta[0]! * step, y: position.y + delta[1]! * step }); }}>Move · {record.title || "Untitled beat"}</button>
-    <p>{record.text}</p><label>Lane / storyline <input aria-label={`Lane for ${record.title || "Untitled"}`} maxLength={80} defaultValue={position.lane} ref={lane} disabled={session.readOnly} onInput={() => { typed.current = true; }} onBlur={() => commitLane.current()}/></label>
+    <p>{record.text}</p><label>Lane / storyline <input aria-label={`Lane for ${record.title || "Untitled"}`} maxLength={80} defaultValue={position.lane} ref={lane} disabled={session.readOnly} onInput={() => { if (!typed.current) startedFrom.current = position.lane; typed.current = true; }} onBlur={() => commitLane.current()}/></label>
     <label>Link to scene <select aria-label={`Scene for ${record.title || "Untitled"}`} value={position.sceneId ?? ""} disabled={session.readOnly} onChange={(e) => apply({ ...position, sceneId: e.target.value || undefined })}><option value="">Unassigned idea</option>{scenes.map((s) => <option key={s.sceneId} value={s.sceneId}>{s.number || ""} {s.heading}</option>)}</select></label>
     {position.sceneId && !linked && <p role="status">Linked scene is missing. Choose another scene explicitly.</p>}
     {!spatial && <div className="roadmap-grid">{(["x", "y"] as const).map((key) => <label key={key}>{key}<input type="number" aria-label={`${key} position of ${record.title || "Untitled"}`} value={display[key]} disabled={session.readOnly} onChange={(e) => setDraft({ ...display, [key]: Number(e.target.value) })}/></label>)}<button className="button" disabled={session.readOnly || !draft} onClick={() => draft && apply(draft)}>Apply position</button></div>}

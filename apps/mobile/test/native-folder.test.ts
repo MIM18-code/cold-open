@@ -17,6 +17,9 @@ let fm = FileManager.default
 let root = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("picked")
 try fm.createDirectory(at: root, withIntermediateDirectories: false)
 let device = "device-123456789", receipt = "receipt-123456789"
+// A read before the Mac's folders sync down finds nothing and makes nothing.
+verify(try PhoneFolderStorage.read(root: root, deviceId: device) == nil)
+verify(try fm.contentsOfDirectory(atPath: root.path).isEmpty)
 try PhoneFolderStorage.write(root: root, deviceId: device, receiptId: receipt, json: "{\\"text\\":\\"First\\"}")
 let folder = root.appendingPathComponent("Inklot Phone Inbox/" + device)
 let destination = folder.appendingPathComponent(receipt + ".json")

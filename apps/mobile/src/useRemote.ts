@@ -26,7 +26,9 @@ export function useRemote() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const wake = useRef<() => void>(() => {});
-  const resendAfter = useRef<Take | undefined>(undefined);
+  // Tied to the pairing that shared it, so a share that finishes after pairing again cannot move the new position.
+  const resendAfter = useRef<{ pair: Pairing; take: Take | undefined } | undefined>(undefined);
+  const resendFrom = (p: Pairing) => resendAfter.current?.pair === p ? resendAfter.current.take : undefined;
   useEffect(() => {
     Keychain.getItemAsync(key).then(raw => { if (raw) setPair(decodePairing(raw, linkCrypto, Date.now(), true)); })
       .catch(() => setError("Could not restore the pairing. Scan the Mac again.")).finally(() => setReady(true));
@@ -34,6 +36,8 @@ export function useRemote() {
   useEffect(() => {
     setRows(pair ? cachedRows(pair.invite.room) : []); setPeople({ title: "", writers: [], cursor: null, offset: 0,
       production: pair ? cachedProduction(pair.invite.room) : undefined }); setStatus("Connecting");
+    // AirDrop again's position belongs to the previous pairing's takes.
+    resendAfter.current = undefined;
     if (!pair) return;
     // Paired on Wi-Fi before links were encrypted: nothing is sent or received until it is paired again.
     if (pair.legacy) { setStatus(PAIR_AGAIN); return; }
@@ -177,10 +181,10 @@ export function useRemote() {
   async function sendToMac() {
     if (!pair) throw new Error("Pair with your Mac first.");
     const all = listTakes(), resending = !unsentTakes(pair, all).length;
-    const items = takesBatch(pair, all, resendAfter.current);
+    const items = takesBatch(pair, all, resendFrom(pair));
     if (!(await shareTakes(takesFileName(), await takesFile(pair, items, sha256)))) return 0;
     // The next AirDrop again moves on to the takes after this batch; a cancelled share stays put.
-    if (resending) resendAfter.current = items.at(-1);
+    if (resending) resendAfter.current = { pair, take: items.at(-1) };
     // The Mac may have decided a resent take while the share sheet was open; keep its decision.
     const now = new Map(listTakes().map(t => [t.id, t.outcome]));
     for (const item of items) if (["pending", "saved"].includes(now.get(item.id) ?? "")) mark(item.id, "airdropped");
@@ -188,5 +192,7 @@ export function useRemote() {
     return items.length;
   }
   async function forget() { await Keychain.deleteItemAsync(key); setPair(null); }
-  return { pair, rows, people, status, takes, ready, error, scan, submit, note, forget, sendToMac };
+  // How many takes the next Send to Mac or AirDrop again shares.
+  const nextBatch = pair ? takesBatch(pair, takes, resendFrom(pair)).length : 0;
+  return { pair, rows, people, status, takes, ready, error, scan, submit, note, forget, sendToMac, nextBatch };
 }

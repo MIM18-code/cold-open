@@ -34,7 +34,7 @@ const stubs: Record<string, string> = {
     export function connect(pair, script, presence, status) { relay.status = status; return () => { relay.status = undefined; }; }`,
   "./production.ts": `export const folderProduction = () => ({});`,
   "./share.ts": `export const shared = [], sheet = { ok: true };
-    export async function shareTakes(name, json) { shared.push(json); return sheet.ok; }`,
+    export async function shareTakes(name, json) { shared.push(json); await sheet.gate; return sheet.ok; }`,
   "./store": `export const takes = [], ended = new Map(); export const UNPAIRED = "";
     export const listTakes = () => [...takes].sort((a, b) => b.created - a.created).map(t => ({ ...t }));
     export function saveTake(t) { takes.push({ ...t }); } export const saveNote = saveTake;
@@ -133,6 +133,7 @@ test("AirDrop again moves on to the next 100 undecided takes after each share an
   hook.sheet.ok = true;
   assert.equal(await render().sendToMac(), 100, "a cancelled share does not advance");
   assert.equal(first(), "receipt-000000100");
+  assert.equal(render().nextBatch, 50, "the button counts what the next share sends, not all 250 waiting");
   assert.equal(await render().sendToMac(), 50);
   assert.equal(first(), "receipt-000000200");
   assert.equal(await render().sendToMac(), 100);
@@ -164,5 +165,42 @@ test("closing the share sheet does not overwrite a decision the Mac made while i
   hook.takes[0].outcome = "accepted";
   assert.equal(await sending, 2);
   assert.deepEqual(hook.takes.map((t: { outcome: string }) => t.outcome), ["accepted", "airdropped"]);
+  hook.unmount();
+});
+
+test("pairing with a different script starts AirDrop again from its oldest undecided take", async t => {
+  t.mock.method(globalThis, "fetch", async () => { throw new TypeError("Network request failed"); });
+  await paired();
+  const start = Date.now(), other = "s".repeat(22);
+  const take = (id: string, inRoom: string, created: number) => ({ id, room: inRoom, kind: "note", text: "Lamp.",
+    paragraphId: "p", sourceText: "", scene: "Scene 1", created, outcome: "airdropped" });
+  for (let i = 0; i < 150; i++) hook.takes.push(take(`receipt-${String(i).padStart(9, "0")}`, room, start + i));
+  assert.equal(await render().sendToMac(), 100);
+  hook.takes.push(take("receipt-older0000", other, start + 50), take("receipt-newer0000", other, start + 120));
+  await render().scan(remembered.replace(room, other));
+  render(); await flush();
+  assert.equal(await render().sendToMac(), 2);
+  assert.equal(JSON.parse(hook.shared.at(-1)).takes[0].id, "receipt-older0000");
+  hook.unmount();
+});
+
+test("a resend that finishes after pairing with a different script does not move the new script's position", async t => {
+  t.mock.method(globalThis, "fetch", async () => { throw new TypeError("Network request failed"); });
+  await paired();
+  const start = Date.now(), other = "s".repeat(22);
+  const take = (id: string, inRoom: string, created: number) => ({ id, room: inRoom, kind: "note", text: "Lamp.",
+    paragraphId: "p", sourceText: "", scene: "Scene 1", created, outcome: "airdropped" });
+  for (let i = 0; i < 150; i++) hook.takes.push(take(`receipt-${String(i).padStart(9, "0")}`, room, start + i));
+  let close = () => {};
+  hook.sheet.gate = new Promise<void>(ok => { close = ok; });
+  const sending = render().sendToMac();
+  await flush();
+  hook.takes.push(take("receipt-older0000", other, start + 50), take("receipt-newer0000", other, start + 120));
+  await render().scan(remembered.replace(room, other));
+  render(); await flush();
+  close(); hook.sheet.gate = undefined;
+  assert.equal(await sending, 100);
+  assert.equal(await render().sendToMac(), 2);
+  assert.equal(JSON.parse(hook.shared.at(-1)).takes[0].id, "receipt-older0000");
   hook.unmount();
 });

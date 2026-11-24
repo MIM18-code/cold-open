@@ -251,3 +251,24 @@ test("a sealed reader is held to the relay's limits, and hears the refusal seale
   await waitFor(() => second.status === "denied", "the oversized presence to be refused");
   assert.ok(![...host.awareness.getStates().values()].some((state) => String(state.user?.name).length > 4096));
 });
+
+test("a refusal's reason travels only inside the seal", async () => {
+  const { keys, relay, url } = await sealedListener();
+  const { room, key } = relay.createRoom();
+  const plain: { code: number; reason: string }[] = [];
+  class Watched extends NodeSocket {
+    constructor(...args: ConstructorParameters<typeof NodeSocket>) {
+      super(...args);
+      this.on("close", (code, reason) => plain.push({ code, reason: reason.toString() }));
+    }
+  }
+  const Sealed = sealedWebSocket(keys, Watched as unknown as typeof WebSocket);
+  // The writer key is refused on the reader listener.
+  const socket = new Sealed(`${url}/${room}?key=${key}`);
+  closers.push(() => socket.close());
+  const sealed = await new Promise<{ code: number; reason: string }>((resolve) => { socket.onclose = resolve; });
+  assert.equal(sealed.code, CLOSE_DENIED);
+  assert.notEqual(sealed.reason, "", "the phone still learns why");
+  await waitFor(() => plain.length === 1, "the socket's own close");
+  assert.deepEqual(plain[0], { code: 1000, reason: "" });
+});

@@ -23,6 +23,7 @@ import { registerSystemAccent } from "./system-accent.ts";
 import { registerServices } from "./services/index.ts";
 import { openTakesFile } from "./services/phone.ts";
 import { isTakesFileName } from "./phone/takes.ts";
+import { isWebUrl, menuCommands } from "./page-input.ts";
 import { realLocation } from "./safe-fs.ts";
 import { legacyUserDataPath } from "./user-data.ts";
 import { windowBackground } from "./window-theme.ts";
@@ -148,7 +149,7 @@ function createWindow(path?: string, mode: WindowMode = "open", tabParent?: Brow
     }
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) void shell.openExternal(url);
+    if (isWebUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
@@ -291,8 +292,8 @@ ctx.handle("shell:renderer-ready", (event) => {
   for (const path of queuedOpen.get(id) ?? []) if (window) ctx.send(window, CHANNELS.openPath, path);
   queuedOpen.delete(id);
 });
-ctx.handle(CHANNELS.setMenu, (event, list: MenuCommand[]) => {
-  commands.set(event.sender.id, list);
+ctx.handle(CHANNELS.setMenu, (event, list: unknown) => {
+  commands.set(event.sender.id, menuCommands(list));
   if (BrowserWindow.fromWebContents(event.sender) === BrowserWindow.getFocusedWindow()) rebuildMenu();
 });
 ctx.handle(CHANNELS.setWindowState, (event, state: { title: string; edited: boolean; path?: string }) => {
@@ -352,7 +353,7 @@ ctx.handle(CHANNELS.newTab, (event, path?: string) => {
 });
 ctx.handle(CHANNELS.tabAction, (event, action: unknown) => performTabAction(process.platform, ctx.windowOf(event.sender), action));
 ctx.handle(CHANNELS.openExternal, (_event, url: string) => {
-  if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+  if (isWebUrl(url)) void shell.openExternal(url);
 });
 ctx.handle("shell:message-box", async (event, options: Electron.MessageBoxOptions) => {
   const window = ctx.windowOf(event.sender);

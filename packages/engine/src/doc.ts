@@ -42,6 +42,33 @@
 // the paragraph if there is one, otherwise sceneHeading when it has a scene ID and section when it has a depth, so
 // a scene heading or an act or sequence title keeps its place in the structure. Any other paragraph stays General.
 //
+// Text with no line break. When one writer deletes every paragraph while another types in one, the merged text has
+// characters and no line break. It is read as one General paragraph whose text is all lead (see readEntries), with an
+// ID made from the Yjs ID of the text's first character, so every peer, a read-only follower and a copy opened from
+// a saved file read the same well-formed paragraph without writing anything. The next local edit first gives it its
+// line break (mend): one insert at the start of the text, with that ID. No character moves and the paragraph list
+// reads the same before and after, and from then on the document is an ordinary one. The app's session calls mend()
+// before it opens the undoable edit, so the line break is in a transaction of its own that undo never takes back,
+// that a view hears of apart from the edit, and that comes before the caller works out any body offset (they all
+// grow by one). The editing methods below call it too, for a caller that did not. Never done on read, on load or by
+// the repair, where every peer acts at once and each would add a line break. Not put at the end of the text either,
+// which would leave the text as lead: two peers who then split it or add a paragraph above would each move it
+// (absorbLead) and double it.
+//
+// Two peers editing at the same moment each add such a line break, with the same ID. Every one went in before the
+// text that was there, so the last of them holds that text, and the others are empty unless their writer typed at the
+// very start. Each carries a "mend" attribute, and when the repair finds one among line breaks sharing an ID, the
+// last of those keeps the ID, so a note or anything else tied to that ID stays with the text. The others get new IDs
+// and lose the attribute in the same step. The one that keeps the ID keeps the attribute too: peers can settle this
+// in groups that have not met (two pairs, say), and when they meet, each group's winner must still be known for
+// what it is, or the first of them, an empty one, would take the ID. The attribute decides only that, which line
+// break keeps an ID that several share; it never makes a change to one paragraph reach another, and a line break
+// that mend() added with no race keeps it for good. Nothing else is carried over. A type or field that one writer set in that same moment,
+// before hearing of the other's line break, went on that writer's own line break, and stays there: if that is not
+// the last one, the writer sees an empty paragraph of that type above the text, which still has the type it had,
+// and can delete it. (Handing the type on to the text was tried and taken out: it retyped the text when the empty
+// paragraph was changed much later, and a change to Scene Heading left two scenes.)
+//
 // Rejected designs. Deleting all copies but the first (the first version) loses text: it deleted a copy holding
 // accepted typing when an undo put an older copy back ahead of it, and it lets a later undo or redo, which
 // recorded the copy the repair deleted, remove the last copy of a scene. Deleting only copies identical to the
@@ -177,6 +204,10 @@ interface Entry {
   end: number;
   /** Its line break has no element type (see the top of this file); it reads as General. */
   untyped?: boolean;
+  /** The text has no line break (see the top of this file): it is all lead, and start is the end of the text. */
+  open?: boolean;
+  /** Its line break was added by mend() for the text that had this ID, and has not lost that ID to another such line break (see the top of this file). */
+  mended?: string;
 }
 
 /** The type a paragraph that lost it gets back when no other copy of it has one, or undefined to stay General. */
@@ -204,7 +235,7 @@ function newEntry(attributes: Attributes, start: number): Entry & { runs: Run[] 
     id: typeof attributes.id === "string" ? attributes.id : "", type: isElementType(type) ? type : "general", runs: [],
     ...structuredClone(paragraphFields(attributes)),
   };
-  return { paragraph, start, end: start, runs: [], ...(isElementType(type) ? {} : { untyped: true }) };
+  return { paragraph, start, end: start, runs: [], ...(isElementType(type) ? {} : { untyped: true }), ...(typeof attributes.mend === "string" ? { mended: attributes.mend } : {}) };
 }
 
 /** A paragraph's fields after a format() of its line break, as newEntry would read them back. */
@@ -273,6 +304,8 @@ export class ScreenplayDoc {
   /** Transactions whose body changes patch() recorded in the cache. */
   private readonly patched = new WeakSet<Y.Transaction>();
   private repairs: boolean;
+  /** The transaction in which deleteParagraph deleted the only paragraph and left its lead (see insertParagraph). */
+  private leadLeft: Y.Transaction | null = null;
   private readonly repairListeners = new Set<(report: RepairReport) => void>();
 
   constructor(ydoc: Y.Doc = new Y.Doc(), options: DocOptions = {}) {
@@ -395,7 +428,8 @@ export class ScreenplayDoc {
    * or moves the first paragraph or scene while another types in it. It is read as the start of the first paragraph,
    * so every peer agrees and nothing is lost, and text offsets in that paragraph count it too, as it is drawn (see
    * bodyAt). The first entry's start is still the offset of its line break, after the lead. A body with no line
-   * break at all reads as one paragraph with an empty ID, which validate() flags.
+   * break at all reads as one paragraph that is all lead, as if its line break were at the end of the text (see the
+   * top of this file).
    */
   private readEntries(): Entry[] {
     const entries: Entry[] = [];
@@ -407,7 +441,7 @@ export class ScreenplayDoc {
       if (!current) return;
       current.end = offset;
       current.paragraph.runs = normalizeRuns(current.runs);
-      entries.push({ paragraph: current.paragraph, start: current.start, end: current.end, ...(current.untyped ? { untyped: true } : {}) });
+      entries.push({ paragraph: current.paragraph, start: current.start, end: current.end, ...(current.untyped ? { untyped: true } : {}), ...(current.mended !== undefined ? { mended: current.mended } : {}) });
     };
     for (const op of this.body.toDelta() as { insert?: unknown; attributes?: Attributes }[]) {
       if (typeof op.insert !== "string") continue;
@@ -430,8 +464,30 @@ export class ScreenplayDoc {
       });
     }
     finish();
-    if (!entries.length && orphan.length) entries.push({ paragraph: { id: "", type: "general", runs: normalizeRuns(orphan) }, start: 0, end: offset });
+    if (!entries.length && orphan.length) entries.push({ paragraph: { id: this.firstCharacterId(), type: "general", runs: normalizeRuns(orphan) }, start: offset, end: offset + 1, open: true });
     return entries;
+  }
+
+  /** The ID of text with no line break, made from its first character: the same on every peer (see the top of this file). */
+  private firstCharacterId(): string {
+    for (let item = this.body._start; item; item = item.right) if (!item.deleted && item.countable) return idFromItem(item.id.client, item.id.clock);
+    return "";
+  }
+
+  /**
+   * Give text with no line break its line break, at the start, with the ID and type it is read with (see the top of
+   * this file), and say whether one was added. The paragraph list does not change; body offsets taken before it are
+   * one too low after it. Call it before opening an undoable transaction, and before working out body offsets for
+   * an edit: outside a transaction it is one of its own that undo leaves alone, inside one it is part of that one.
+   * Every editing method calls it first too. Only for a local edit, never on a read or by the repair: two peers
+   * would each add a line break.
+   */
+  mend(): boolean {
+    const first = this.entries()[0];
+    if (!first?.open) return false;
+    const { id, type } = first.paragraph;
+    this.ydoc.transact(() => this.body.applyDelta([{ insert: "\n", attributes: { id, type, mend: id } }]), REPAIR_ORIGIN);
+    return true;
   }
 
   /**
@@ -447,7 +503,7 @@ export class ScreenplayDoc {
     const { type, sceneId } = paragraph;
     if (type === "sceneHeading" && sceneId !== undefined && (entry.paragraph.type !== type || entry.paragraph.sceneId !== sceneId)
       && cache.entries.some((other, i) => i !== index && other.paragraph.type === type && other.paragraph.sceneId === sceneId)) cache.repeats = true;
-    cache.entries[index] = { paragraph, start: entry.start, end: entry.end + shift, ...(entry.untyped && !typed ? { untyped: true } : {}) };
+    cache.entries[index] = { paragraph, start: entry.start, end: entry.end + shift, ...(entry.untyped && !typed ? { untyped: true } : {}), ...(entry.mended !== undefined ? { mended: entry.mended } : {}) };
     if (shift) {
       for (let i = index + 1; i < cache.entries.length; i++) {
         const next = cache.entries[i]!;
@@ -517,11 +573,12 @@ export class ScreenplayDoc {
 
   /**
    * Where a paragraph's text after its line break sits in the body: from start (just after the line break) up to
-   * end. The first paragraph's lead (see readEntries) comes before this range; lead() says how long it is.
+   * end. The first paragraph's lead (see readEntries) comes before this range; lead() says how long it is. Text with
+   * no line break is all lead, and its range is empty, at the end of the text.
    */
   range(id: string): { start: number; end: number } {
-    const { start, end } = this.locate(id);
-    return { start: start + 1, end };
+    const { start, end, open } = this.locate(id);
+    return open ? { start, end: start } : { start: start + 1, end };
   }
 
   /**
@@ -581,7 +638,8 @@ export class ScreenplayDoc {
   /** The body offset of a text position. With Y.RelativePosition this follows concurrent edits. */
   bodyIndex(at: TextPosition): number {
     const entry = this.locate(at.paragraphId);
-    return this.bodyAt(entry, entry.index, Math.max(0, Math.min(at.offset, this.textLength(entry, entry.index))));
+    // The end of text with no line break (see readEntries) is the end of the body.
+    return Math.min(this.body.length, this.bodyAt(entry, entry.index, Math.max(0, Math.min(at.offset, this.textLength(entry, entry.index)))));
   }
 
   /** The text position at a body offset. An offset on a paragraph's line break reads as the end of the paragraph before it. */
@@ -606,10 +664,15 @@ export class ScreenplayDoc {
     const paragraph: Paragraph = { ...init, id: init.id ?? newId(), runs: init.runs ?? [] };
     if (paragraph.type === "sceneHeading") paragraph.sceneId ??= paragraph.id;
     this.ydoc.transact(() => {
+      // Lead that this same transaction left with no line break, by deleting the only paragraph (deleteParagraph,
+      // as Restore Omitted Scene does), is not a paragraph to give a line break to: it joins the paragraph put in
+      // that one's place, at its end, and is the lead of one put after it.
+      const left = this.leadLeft !== null && this.leadLeft === this.ydoc._transaction && !!this.entries()[0]?.open;
+      if (!left) this.mend();
       // Above the first paragraph its lead stays with it, rather than becoming the new paragraph's text.
-      if (index <= 0) this.absorbLead();
+      if (index <= 0 && !left) this.absorbLead();
       const entries = this.entries();
-      const at = index < entries.length ? entries[index]!.start : this.body.length;
+      const at = left ? (index <= 0 ? 0 : this.body.length) : index < entries.length ? entries[index]!.start : this.body.length;
       this.body.applyDelta([
         ...(at > 0 ? [{ retain: at }] : []),
         { insert: "\n", attributes: paragraphAttributes(paragraph) },
@@ -625,12 +688,15 @@ export class ScreenplayDoc {
    * Omitted Scene deleting the OMITTED line, say) has not seen it.
    */
   deleteParagraph(id: string): void {
-    const { start, end } = this.locate(id);
+    this.mend();
+    const { start, end, index, entries } = this.locate(id);
+    if (index === 0 && start > 0 && entries.length === 1) this.leadLeft = this.ydoc._transaction;
     this.body.delete(start, end - start);
   }
 
   /** Change a paragraph's element type. The ID stays; a heading's scene ID is kept even if it is retyped and back. */
   setType(id: string, type: ElementType): void {
+    this.mend();
     const { start, paragraph, index } = this.locate(id);
     const change: Attributes = { type };
     if (type === "sceneHeading" && paragraph.sceneId === undefined) change.sceneId = id;
@@ -641,6 +707,7 @@ export class ScreenplayDoc {
   }
 
   setField<K extends OptionalField>(id: string, field: K, value: Paragraph[K] | undefined): void {
+    this.mend();
     const { start, paragraph, index } = this.locate(id);
     const change = { [field]: value === undefined ? null : structuredClone(value) };
     this.ydoc.transact(() => {
@@ -665,6 +732,7 @@ export class ScreenplayDoc {
 
   /** Insert text with exactly these run attributes. */
   insertFormatted(id: string, offset: number, text: string, attributes: Attributes): void {
+    this.mend();
     const entry = this.locate(id);
     const { paragraph, index } = entry;
     if (offset < 0 || offset > this.textLength(entry, index)) throw new RangeError("Offset is outside the paragraph.");
@@ -678,6 +746,7 @@ export class ScreenplayDoc {
   }
 
   deleteText(id: string, offset: number, length: number): void {
+    this.mend();
     const entry = this.locate(id);
     const { paragraph, index } = entry;
     const size = this.textLength(entry, index);
@@ -718,6 +787,7 @@ export class ScreenplayDoc {
    * attribute as "fdx:<name>" (fdx:RevisionID marks revised text). The paragraph list is patched, not re-read.
    */
   formatRuns(id: string, offset: number, length: number, attributes: Record<string, string | true | null>): void {
+    this.mend();
     const entry = this.locate(id);
     const { paragraph, index } = entry;
     const size = this.textLength(entry, index);
@@ -738,6 +808,7 @@ export class ScreenplayDoc {
    * is inserted above instead, so the existing text keeps its ID.
    */
   splitParagraph(id: string, offset: number, type?: ElementType): string {
+    this.mend();
     const entry = this.locate(id);
     const { start, end, index, paragraph } = entry;
     // At or inside the first paragraph's lead, the lead joins the text after the line break first, so the split
@@ -782,6 +853,7 @@ export class ScreenplayDoc {
    * co-writer's concurrent typing outside the range survives, and typing inside it is kept.
    */
   deleteRange(from: TextPosition, to: TextPosition): void {
+    this.mend();
     let a = this.bodyIndex(from), b = this.bodyIndex(to);
     if (b < a) [a, b] = [b, a];
     const lead = this.lead();
@@ -812,6 +884,7 @@ export class ScreenplayDoc {
     const copies = paragraphs.map((paragraph) => freshCopy(paragraph, blocks));
     const ids: string[] = [];
     this.ydoc.transact(() => {
+      this.mend();
       if (this.indexOf(at.paragraphId) === 0) this.absorbLead();
       const { start, end, paragraph } = this.locate(at.paragraphId);
       const length = end - start - 1;
@@ -901,11 +974,16 @@ export class ScreenplayDoc {
     for (const list of scenes.values()) if (list.length > 1) for (const entry of list) renamed.add(entry);
     // The characters of every line break involved, in one walk of the text.
     const made = this.lineBreakIds([...renamed].map((entry) => entry.start));
-    const keeperOf = (list: Entry[], id: string) => list.find((entry) => made.get(entry.start) === id) ?? list[0]!;
+    // Where mend() added one of the line breaks, for text that had this ID, the last holds that text and keeps the
+    // ID, and the "mend" attribute goes from the others (see the top of this file).
+    const mended = (list: Entry[], id: string) => list.some((entry) => entry.mended === id);
+    const keeperOf = (list: Entry[], id: string) => list.find((entry) => made.get(entry.start) === id) ?? (mended(list, id) ? list.at(-1)! : list[0]!);
+    const settled = new Set<Entry>();
     const nextIds = new Map<Entry, string>();
     for (const [id, list] of groups) {
       if (id && list.length < 2) continue;
       const keeper = id ? keeperOf(list, id) : undefined;
+      if (id && mended(list, id)) for (const entry of list) if (entry !== keeper && entry.mended !== undefined) settled.add(entry);
       for (const entry of list) {
         const fresh = made.get(entry.start);
         if (entry !== keeper && fresh && fresh !== id) nextIds.set(entry, fresh);
@@ -942,6 +1020,7 @@ export class ScreenplayDoc {
         attributes.type = type;
         report.types = (report.types ?? 0) + 1;
       }
+      if (settled.has(entry)) attributes.mend = null;
       const id = nextIds.get(entry);
       if (id !== undefined) {
         attributes.id = id;

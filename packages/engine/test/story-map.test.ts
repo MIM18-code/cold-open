@@ -356,3 +356,13 @@ test("unreleased record formats are ignored without migration", () => {
   assert.throws(() => updateStructurePoint(doc, "old", { name: "Renamed" }), RangeError);
   assert.throws(() => updateStructurePoint(doc, "nested", { name: "Renamed" }), RangeError);
 });
+
+test("a malformed preset entry in meta does not block adding the preset point", () => {
+  for (const bad of ["", "   ", 42, null]) {
+    const doc = twoScenes();
+    doc.meta.set("structurePoint.beat-midpoint.name", bad);
+    const added = addStructurePointPreset(doc, "threeAct");
+    assert.ok(added.some((point) => point.id === "beat-midpoint" && point.name === "Midpoint"), `bad=${JSON.stringify(bad)}`);
+    assert.ok(structurePoints(doc).some((point) => point.id === "beat-midpoint" && point.name === "Midpoint"));
+  }
+});

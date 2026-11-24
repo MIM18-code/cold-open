@@ -648,13 +648,13 @@ export function sceneNumberBetween(previous: string | undefined, next: string | 
 
 /** Numbers for unnumbered scenes that keep every existing number: each new scene gets an A-number from its neighbours. */
 export function lockedSceneNumbers(current: readonly (string | undefined)[]): (string | undefined)[] {
-  if (!current.some((number) => number !== undefined)) return [...current];
-  const normalized = current.map((number) => number?.trim().toUpperCase());
+  const normalized = current.map((number) => number?.trim().toUpperCase() || undefined);
+  if (!normalized.some((number) => number !== undefined)) return [...current];
   const used = new Set(normalized.filter((number): number is string => number !== undefined));
   const out = [...current];
   out.forEach((number, k) => {
     if (number !== undefined) return;
-    const previous = out.slice(0, k).findLast((value) => value !== undefined)?.trim().toUpperCase();
+    const previous = out.slice(0, k).findLast((value) => value?.trim())?.trim().toUpperCase();
     const next = normalized.slice(k + 1).find((value) => value !== undefined);
     out[k] = numberBetween(previous, next, used);
     used.add(out[k]!);
@@ -687,13 +687,14 @@ function letterBetween(previous: string | undefined, next: string | undefined, u
 
 /** Locked scene letters: keep A, B and C and give scenes added since the next free letter after the one before them. */
 export function lockedSceneLetters(current: readonly (string | undefined)[]): (string | undefined)[] {
-  if (!current.some((number) => number !== undefined)) return [...current];
-  const used = new Set(current.filter((number): number is string => number !== undefined));
+  const normalized = current.map((number) => number?.trim().toUpperCase() || undefined);
+  if (!normalized.some((number) => number !== undefined)) return [...current];
+  const used = new Set(normalized.filter((number): number is string => number !== undefined));
   const out = [...current];
   out.forEach((number, k) => {
     if (number !== undefined) return;
-    const previous = out.slice(0, k).findLast((value) => value !== undefined);
-    const next = current.slice(k + 1).find((value) => value !== undefined);
+    const previous = out.slice(0, k).findLast((value) => value?.trim())?.trim().toUpperCase();
+    const next = normalized.slice(k + 1).find((value) => value !== undefined);
     out[k] = letterBetween(previous, next, used);
     used.add(out[k]!);
   });

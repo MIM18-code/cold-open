@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { AiError, type ChatRequest, buildRequest, listModels, pickOllamaModel, readDelta, streamChat } from "../src/main/ai/providers.ts";
-import { readLines, readSse } from "../src/main/ai/stream.ts";
+import { AiError, MAX_ANSWER, type ChatRequest, buildRequest, listModels, pickOllamaModel, readDelta, streamChat } from "../src/main/ai/providers.ts";
+import { MAX_LINE, MAX_STREAM_BYTES, readLines, readSse } from "../src/main/ai/stream.ts";
 
 const request: ChatRequest = {
   model: "m1", tier: "fast", system: "Be brief.", maxTokens: 500, json: false,
@@ -101,6 +101,44 @@ test("SSE and line readers handle events split across chunks", async () => {
   assert.deepEqual(lines, ['{"a":1}', '{"b":2}', "tail"]);
 });
 
+test("a body that goes quiet ends with a plain message, and a reader that stops cancels the body", async () => {
+  const quiet = () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => controller.enqueue(new TextEncoder().encode('{"a":1}\n')),
+      cancel: () => { cancelled = true; },
+    });
+    return { body, cancelled: () => cancelled };
+  };
+  const hung = new Promise<string>((resolve) => setTimeout(() => resolve("still reading"), 2000).unref());
+  const stalled = quiet();
+  const lines: string[] = [];
+  const outcome = await Promise.race([hung, (async () => {
+    for await (const line of readLines(stalled.body, 50)) lines.push(line);
+    return "finished";
+  })().catch((error: Error) => error.message)]);
+  assert.deepEqual(lines, ['{"a":1}']);
+  assert.match(outcome, /sent nothing for 1 minutes/);
+  assert.equal(stalled.cancelled(), true);
+  // A caller that stops after the first event (an error in the answer, or Cancel) closes the connection too.
+  const stopped = quiet();
+  for await (const line of readLines(stopped.body)) { assert.equal(line, '{"a":1}'); break; }
+  assert.equal(stopped.cancelled(), true);
+});
+
+test("a body whose cancel never settles still lets the stall reach the caller", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start: (controller) => controller.enqueue(new TextEncoder().encode("line\n")),
+    cancel: () => new Promise<void>(() => undefined),
+  });
+  const hung = new Promise<string>((resolve) => setTimeout(() => resolve("still reading"), 2000).unref());
+  const outcome = await Promise.race([hung, (async () => {
+    for await (const _line of readLines(body, 50)) { /* read until it stalls */ }
+    return "finished";
+  })().catch((error: Error) => error.message)]);
+  assert.match(outcome, /sent nothing/);
+});
+
 test("streamChat joins Ollama lines and reports each piece", async () => {
   const seen: string[] = [];
   const text = await streamChat("ollama", request, { ollamaEndpoint: "http://x" }, async (url, init) => {
@@ -110,6 +148,19 @@ test("streamChat joins Ollama lines and reports each piece", async () => {
   }, noSignal, (piece) => seen.push(piece));
   assert.equal(text, "Hello");
   assert.deepEqual(seen, ["Hel", "lo"]);
+});
+
+test("streamChat returns on the terminal event even if the provider leaves the connection open, and closes it", async () => {
+  let cancelled = false;
+  const open = () => new Response(new ReadableStream<Uint8Array>({
+    start: (controller) => controller.enqueue(new TextEncoder().encode(
+      `data: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: "Done." } })}\n\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`)),
+    cancel: () => { cancelled = true; },
+  }));
+  const hung = new Promise<string>((resolve) => setTimeout(() => resolve("still reading"), 2000).unref());
+  const text = await Promise.race([hung, streamChat("anthropic", request, { ollamaEndpoint: "", apiKey: "k" }, async () => open(), noSignal, () => undefined)]);
+  assert.equal(text, "Done.");
+  assert.equal(cancelled, true);
 });
 
 test("streamChat reads Anthropic events", async () => {
@@ -165,4 +216,49 @@ test("the best small Ollama model", () => {
   assert.equal(pickOllamaModel([{ name: "big:70b", size: 40e9 }, { name: "odd:7b", size: 4e9 }]), "odd:7b");
   assert.equal(pickOllamaModel([{ name: "big:70b", size: 40e9 }]), "big:70b");
   assert.equal(pickOllamaModel([]), null);
+});
+
+test("a body that never ends a line, or an answer that never ends, is stopped", async () => {
+  const filler = "x".repeat(1024 * 1024);
+  const endless = () => streamOf(Array.from({ length: MAX_LINE / filler.length + 2 }, () => filler));
+  await assert.rejects(async () => { for await (const _ of readLines(endless().body!)); }, /too long/);
+  await assert.rejects(async () => { for await (const _ of readSse(streamOf(["data: ", ...Array.from({ length: MAX_LINE / filler.length + 2 }, () => filler)]).body!)); }, /too long/);
+  // Many data lines for one event add up the same way.
+  const lines = Array.from({ length: MAX_LINE / filler.length + 2 }, () => `data: ${filler}\n`);
+  await assert.rejects(async () => { for await (const _ of readSse(streamOf(lines).body!)); }, /too long/);
+  // So do empty data lines, which carry no characters of their own.
+  const empty = "data:\n".repeat(100_000);
+  await assert.rejects(async () => { for await (const _ of readSse(streamOf(Array.from({ length: MAX_LINE / 100_000 + 2 }, () => empty)).body!)); }, /too long/);
+  // A line that arrives whole, with its line break, is measured too.
+  const whole = "z".repeat(MAX_LINE + 1) + "\n";
+  await assert.rejects(async () => { for await (const _ of readLines(streamOf([whole]).body!)); }, /too long/);
+  await assert.rejects(async () => { for await (const _ of readSse(streamOf([`data: ${whole}\n`]).body!)); }, /too long/);
+  // A long but ordinary line is still read.
+  const read: string[] = [];
+  for await (const line of readLines(streamOf([filler, "\n"]).body!)) read.push(line);
+  assert.equal(read[0]!.length, filler.length);
+
+  const piece = JSON.stringify({ message: { content: "y".repeat(500_000) }, done: false }) + "\n";
+  const flood = () => streamOf(Array.from({ length: MAX_ANSWER / 500_000 + 2 }, () => piece));
+  const noSignal = new AbortController().signal;
+  await assert.rejects(streamChat("ollama", { model: "m", messages: [{ role: "user", content: "hi" }] } as ChatRequest, { ollamaEndpoint: "http://x" }, async () => flood(), noSignal, () => undefined),
+    (error: unknown) => error instanceof AiError && /more than one answer can hold/.test(error.message));
+
+  // Endless non-text events (empty Ollama deltas or Gemini thought parts) stop once the stream exceeds MAX_STREAM_BYTES.
+  const emptyDelta = '{"message":{"content":""},"done":false}\n'.repeat(25_000);
+  const emptyCount = Math.ceil(MAX_STREAM_BYTES / emptyDelta.length) + 1;
+  await assert.rejects(
+    streamChat("ollama", { model: "m", messages: [{ role: "user", content: "hi" }] } as ChatRequest, { ollamaEndpoint: "http://x" },
+      async () => streamOf(Array.from({ length: emptyCount }, () => emptyDelta)), noSignal, () => undefined),
+    // "bad-response", not "unreachable": for the local model the second opens AI setup and hides this message.
+    (error: unknown) => error instanceof AiError && error.code === "bad-response" && /more data than one answer can hold/.test(error.message),
+  );
+
+  const thought = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ thought: true, text: "x".repeat(64_000) }] } }] })}\n\n`;
+  const thoughtCount = Math.ceil(MAX_STREAM_BYTES / thought.length) + 1;
+  await assert.rejects(
+    streamChat("google", { model: "gemini-3.8-flash", messages: [{ role: "user", content: "hi" }] } as ChatRequest, { ollamaEndpoint: "http://x", apiKey: "k" },
+      async () => streamOf(Array.from({ length: thoughtCount }, () => thought)), noSignal, () => undefined),
+    (error: unknown) => error instanceof AiError && /more data than one answer can hold/.test(error.message),
+  );
 });

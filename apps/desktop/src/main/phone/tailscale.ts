@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { networkInterfaces } from "node:os";
 import { openForRead } from "../safe-fs.ts";
@@ -24,6 +24,13 @@ const trustTailscale: TrustTail = cachedTrust(TAILSCALE_SIGNER);
  * The CLIs this app may run, in order. In a signed release a Homebrew build or the shell script in /usr/local/bin is
  * skipped, since neither carries Tailscale's signature, and the app's own binary is used.
  */
+/** The Tailscale programs on this Mac, whether or not this app may run them. */
+export type FindTail = () => Promise<string[]>;
+const installedTailscales: FindTail = async () => {
+  const found: string[] = [];
+  for (const path of binaries) if (await access(path).then(() => true, () => false)) found.push(path);
+  return found;
+};
 async function trustedClis(trust: TrustTail): Promise<string[]> {
   const clis: string[] = [];
   for (const path of binaries) {
@@ -52,13 +59,16 @@ export function tailStatusFields(raw: string): Omit<PhoneTailscale, "installed">
  * Whether Tailscale is installed, signed in, has MagicDNS and can issue HTTPS certificates. Returns booleans only,
  * so the Phone panel can explain the next step without any address, port or file path reaching the renderer.
  */
-export async function tailscaleCheck(exec: RunTail = run, trust: TrustTail = trustTailscale): Promise<PhoneTailscale> {
-  for (const cli of await trustedClis(trust)) {
+export async function tailscaleCheck(exec: RunTail = run, trust: TrustTail = trustTailscale, find: FindTail = installedTailscales): Promise<PhoneTailscale> {
+  const clis = await trustedClis(trust);
+  for (const cli of clis) {
     let raw: string;
     try { raw = await exec(cli, ["status", "--json"]); } catch { continue; }
     try { return { installed: true, ...tailStatusFields(raw) }; } catch { continue; }
   }
-  return { installed: false, running: false, magicDns: false, https: false };
+  // A Tailscale this app may not run (a Homebrew build in a signed release) is there, and is not "not installed".
+  const refused = !clis.length && (await find()).length > 0;
+  return { installed: false, running: false, magicDns: false, https: false, ...(refused ? { refused } : {}) };
 }
 /** This Mac's Tailscale IPv4 address as Tailscale itself reports it, or null when Tailscale isn't running here. */
 export async function tailscaleOwnAddress(exec: RunTail = run, trust: TrustTail = trustTailscale): Promise<string | null> {
@@ -70,7 +80,7 @@ export async function tailscaleOwnAddress(exec: RunTail = run, trust: TrustTail 
   }
   return null;
 }
-export async function tailscaleNetwork(exec: RunTail = run, trust: TrustTail = trustTailscale): Promise<TailNetwork | null> {
+export async function tailscaleNetwork(exec: RunTail = run, trust: TrustTail = trustTailscale, find: FindTail = installedTailscales): Promise<TailNetwork | null> {
   let stopped = false;
   for (const cli of await trustedClis(trust)) {
     try {
@@ -84,6 +94,8 @@ export async function tailscaleNetwork(exec: RunTail = run, trust: TrustTail = t
     } catch { /* The other supported installation may own the CLI. */ }
   }
   if (stopped) return null;
+  // Other VPNs use the same address range. With no Tailscale on this Mac, such an address is not Tailscale's.
+  if (!(await find()).length) return null;
   for (const rows of Object.values(networkInterfaces())) {
     const ip = rows?.find(r => r.family === "IPv4" && tailAddress(r.address));
     if (ip) return { address: ip.address, name: "Tailscale · works away from home", tailscale: true };

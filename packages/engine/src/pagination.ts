@@ -192,6 +192,11 @@ function wrapLines(text: string, firstWidth: number, width: number): [number, nu
     lines.push([start, cut]);
     start = next;
     while (text[start] === " ") start++;
+    // A hanging hyphen or trailing spaces before a soft return already ended the line, so consume that break.
+    if (text[start] === "\n") {
+      start++;
+      if (start === text.length) lines.push([start, start]);
+    }
   }
   if (!lines.length) lines.push([0, 0]);
   return lines;
@@ -865,11 +870,16 @@ export function compareNumbers(a: string, b: string): number {
 
 /**
  * A number for something inserted between two locked numbers (an A-page or an A-scene): after 12 it is 12A,
- * after 12A it is 12B, between 12A and 12B it is 12AA, before 1 it is A1. Between 12 and 12A no letter sorts in
+ * after 12A it is 12B, between 12A and 12B it is 12AA, before 1 it is A1. With 12A in use, after 12 it is 12B, then
+ * 12C, through 12Z, before 12AA. Between 12 and 12A no letter sorts in
  * between, so it is 12AA, which is what productions use. Never one of `used`.
  */
 export function numberBetween(previous: string | undefined, next: string | undefined, used: ReadonlySet<string> = new Set()): string {
-  const taken = (candidate: string) => used.has(candidate) || candidate === next || candidate === previous;
+  const takenSet = new Set<string>();
+  for (const label of used) takenSet.add(label.toUpperCase());
+  if (previous !== undefined) takenSet.add(previous.toUpperCase());
+  if (next !== undefined) takenSet.add(next.toUpperCase());
+  const taken = (candidate: string) => takenSet.has(candidate.toUpperCase());
   if (previous === undefined) {
     if (next === undefined) {
       let n = 1;
@@ -883,7 +893,10 @@ export function numberBetween(previous: string | undefined, next: string | undef
       const candidate = letters + base;
       if (!taken(candidate) && (!match || compareNumbers(candidate, next) < 0)) return candidate;
     }
-    return `A${next}`;
+    // Every lettered candidate is in use: keep lengthening until one is free.
+    let fallback = `A${next}`;
+    while (taken(fallback)) fallback = `A${fallback}`;
+    return fallback;
   }
   const match = NUMBER.exec(previous);
   const candidates: string[] = [];
@@ -894,7 +907,17 @@ export function numberBetween(previous: string | undefined, next: string | undef
   for (let suffix = "A"; suffix.length < 6; suffix += "A") candidates.push(previous + suffix);
   const fits = (candidate: string) => !taken(candidate) && compareNumbers(candidate, previous) > 0
     && (next === undefined || compareNumbers(candidate, next) < 0);
-  return candidates.find(fits) ?? candidates.find((candidate) => !taken(candidate)) ?? `${previous}A`;
+  // After 12 or 12A, the next free single letter (12B, 12C, up to 12Z) comes before a longer one like 12AA.
+  const singles: string[] = [];
+  if (match && !match[1] && match[3]!.length <= 1) {
+    for (let code = match[3] ? match[3].toUpperCase().charCodeAt(0) + 1 : 65; code <= 90; code++) singles.push(match[2]! + String.fromCharCode(code));
+  }
+  const found = singles.find(fits) ?? candidates.find(fits) ?? candidates.find((candidate) => !taken(candidate));
+  if (found !== undefined) return found;
+  // Every usual candidate is in use: keep lengthening until one is free, so a used number is never returned.
+  let candidate = candidates.at(-1)!;
+  do candidate += "A"; while (taken(candidate));
+  return candidate;
 }
 
 const textLength = (paragraph: Paragraph) => paragraph.runs.reduce((sum, run) => sum + run.text.length, 0);

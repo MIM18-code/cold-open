@@ -14,7 +14,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 function currentCharacter(): string {
   const id = app.editor?.currentParagraphId();
   const paragraph = id ? app.session.script().paragraphs.find((p) => p.id === id) : undefined;
-  return paragraph?.type === "character" ? characterName(plainText(paragraph.runs)) : "";
+  // Inline [[notes]] never print, so they are no part of the name.
+  return paragraph?.type === "character" ? characterName(plainText(paragraph.runs.filter((run) => !run.note))) : "";
 }
 
 function RenameModal({ close, props }: ModalProps<{ name?: string } | undefined>) {

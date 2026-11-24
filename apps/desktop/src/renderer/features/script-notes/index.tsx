@@ -44,7 +44,8 @@ function EditNote({ props, close }: ModalProps<EditProps>) {
     <label className="field"><span>Note text</span><textarea aria-label="Script note text" rows={7} maxLength={20000} value={text} onChange={(e) => setText(e.target.value)}/></label>
     <label className="field"><span>Author</span><input aria-label="Script note author" maxLength={160} value={author} onChange={(e) => setAuthor(e.target.value)}/></label>
     <label className="field"><span>Color</span><input type="color" aria-label="Script note color" value={pickerColor(color)} onChange={(e) => setColor(e.target.value)}/></label>
-    {props.attach && <p>Pinned to: {plainText(app.session.doc.paragraph(props.attach.from.paragraphId).runs).slice(0, 160)}</p>}
+    {/* A co-writer can delete the passage while this is open; throwing here would lose what the writer typed. */}
+    {props.attach && <p>Pinned to: {app.session.doc.has(props.attach.from.paragraphId) ? plainText(app.session.doc.paragraph(props.attach.from.paragraphId).runs).slice(0, 160) : "a passage that was deleted"}</p>}
     {error && <p role="alert">{error}</p>}<div className="dialog-actions"><button className="button" onClick={close}>Cancel</button><button className="button primary" disabled={!text.trim()} onClick={apply}>Save note</button></div>
   </div>;
 }

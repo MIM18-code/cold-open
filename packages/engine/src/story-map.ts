@@ -226,7 +226,7 @@ export function addStructurePointPreset(doc: ScreenplayDoc, presetId: string): S
   const added: StructurePoint[] = [];
   for (const spec of preset.points) {
     const id = `beat-${spec.name.toLowerCase().replace(/\s+/g, "-")}`;
-    if (doc.meta.has(`${STRUCTURE_POINT_PREFIX}${id}.name`) || taken.has(spec.name.toLowerCase())) continue;
+    if (readPoint(doc, id) || taken.has(spec.name.toLowerCase())) continue;
     const point = { id, name: spec.name, position: spec.position };
     store(doc, point);
     added.push(point);

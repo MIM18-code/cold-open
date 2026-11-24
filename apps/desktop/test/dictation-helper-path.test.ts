@@ -1,7 +1,7 @@
 // The main process runs the speech helper, so only the main process may choose it: the writer picks it in a native
 // dialog (kept under grants.*, which pages cannot set), or the app finds its own build. A page cannot point it anywhere.
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -68,6 +68,33 @@ test("the runtime uses the granted helper and runs nothing a page named", async 
   const result = await typed.check();
   assert.equal(result.helper.ok, false);
   assert.notEqual(result.helper.path, chosen);
+});
+
+test("closing the runtime also waits for a helper that was just replaced", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "helper-replaced-"));
+  // Answers every call, and after its input closes takes a moment to exit, leaving a mark when it does.
+  const helper = (name: string, linger: string) => {
+    const path = join(folder, name);
+    writeFileSync(path, `#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed 's/.*"id":\\([0-9]*\\).*/\\1/')
+  printf '{"id":%s,"ok":true}\\n' "$id"
+done
+sleep ${linger}
+touch "${path}.exited"
+`);
+    chmodSync(path, 0o755);
+    return path;
+  };
+  const first = helper("first-helper", "1"), second = helper("second-helper", "0");
+  let chosen = first;
+  const runtime = new DictationRuntime({ settings: () => ({ [SETTING_KEYS.helperPath]: chosen, "dictation.endpoint": "http://127.0.0.1:9" }), lookup: { repoRoot: folder } });
+  await runtime.prepare();
+  chosen = second;
+  await runtime.prepare();
+  await runtime.close();
+  assert.equal(existsSync(`${first}.exited`), true, "quit did not wait for the replaced helper");
+  assert.equal(existsSync(`${second}.exited`), true);
 });
 
 test("a packaged app ignores SCREENPLAY_SPEECH_HELPER, so the launching program cannot pick what it runs", () => {

@@ -2,6 +2,7 @@
 // late, in pieces, and more than once.
 import assert from "node:assert/strict";
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -555,4 +556,51 @@ test("a log that cannot be read does not lose the records of the logs read befor
   assert.equal(a.errors.length, 1);
   assert.match(a.errors[0]!, /could not read the log device-zzzz\.ylog/);
   await a.sync.stop();
+});
+
+test("an append cut off mid-record is retried so that other devices can read it, without waiting for compaction", async (t) => {
+  const folder = freshDir();
+  const a = new FolderSync({ folder, deviceId: "device-aaaa", watch: false, rescanMs: 60_000, onUpdates: () => undefined });
+  await a.start();
+  await a.append([typed("Base ")]);
+  const b = device(folder, "device-bbbb");
+  (await b.sync.start()).forEach((update) => Y.applyUpdate(b.doc, update, REMOTE));
+  assert.equal(b.text(), "Base ");
+  // The disk fills partway through the next record: some of its bytes land, then the write fails.
+  const probe = await open(join(folder, "device-aaaa.ylog"), "r");
+  const handle = Object.getPrototypeOf(probe) as { writeFile: (data: Uint8Array) => Promise<void> };
+  await probe.close();
+  const write = handle.writeFile;
+  const full = t.mock.method(handle, "writeFile", async function (this: unknown, data: Uint8Array) {
+    await write.call(this, data.subarray(0, 6));
+    throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+  });
+  const edit = typed("Edit.");
+  await assert.rejects(a.append([edit]), /ENOSPC/);
+  full.mock.restore();
+  // The caller tries the same edit again, and the disk has room now.
+  await a.append([edit]);
+  await b.sync.scan();
+  assert.match(b.text(), /Edit\./);
+  await a.stop();
+  await b.sync.stop();
+});
+
+test("an append that lands but whose compaction fails still resolves, so the caller does not write it again", async () => {
+  const folder = freshDir();
+  const errors: string[] = [];
+  const sync = new FolderSync({ folder, deviceId: "device-aaaa", watch: false, compactBytes: 1, onUpdates: () => undefined,
+    onError: (error) => errors.push(String(error)) });
+  await sync.start();
+  await sync.append([typed("First.")]);
+  let compactions = 0;
+  (sync as unknown as { compact: () => Promise<void> }).compact = () => (compactions++, Promise.reject(new Error("compaction failed")));
+  // Large enough to pass the compaction threshold.
+  await sync.append([typed(`Second.${" ".repeat(4000)}`)]);
+  assert.equal(compactions, 1);
+  assert.match(errors.join("\n"), /compaction failed/);
+  const rebuilt = new Y.Doc();
+  for (const record of parseLog(new Uint8Array(readFileSync(join(folder, "device-aaaa.ylog")))).records) Y.applyUpdate(rebuilt, record);
+  assert.match(rebuilt.getText("body").toString(), /Second\./);
+  await sync.stop();
 });

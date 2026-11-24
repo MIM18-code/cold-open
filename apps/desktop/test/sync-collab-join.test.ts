@@ -110,6 +110,29 @@ for (const lan of [true, false]) {
   });
 }
 
+test("a second Share while the first is starting does not start a second client", async (t) => {
+  const room = randomId(), key = randomId();
+  const info: HostInfo = { relay: "ws://127.0.0.1:1", room, key, lan: true, tailscale: null, address: "127.0.0.1:1",
+    invite: formatInvite({ relay: "ws://127.0.0.1:1", room, key, readOnly: false }),
+    readOnlyInvite: formatInvite({ relay: "ws://127.0.0.1:1", room, key: readKeyFor(key), readOnly: true }) };
+  const bridge = (globalThis as any).window.desktop;
+  const invoke = bridge.invoke;
+  let starts = 0;
+  t.mock.method(bridge, "invoke", async (channel: string, ...args: unknown[]) => {
+    if (channel !== SYNC.hostStart) return invoke(channel, ...args);
+    starts++;
+    await wait(20);
+    return info;
+  });
+  const collab = new CollabController(fakeApp(DocumentSession.untitled()));
+  t.after(() => collab.stop());
+  // A double-click on Share for Co-writing: the second click arrives while the main process is still starting.
+  await Promise.all([collab.share(), collab.share()]);
+  assert.equal(starts, 1);
+  assert.equal(collab.state.mode, "host");
+  await collab.stop();
+});
+
 test("typing while Join waits keeps the window's script; the shared one opens in a new window", async () => {
   const { shareScript, invite } = await hostedRoom();
   const own = DocumentSession.untitled();

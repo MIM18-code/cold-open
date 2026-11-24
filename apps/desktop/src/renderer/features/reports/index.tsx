@@ -3,7 +3,7 @@ import {
   type CharacterRow, type LocationRow, type SceneRow, type ScriptStatistics, characterReport, formatEighths, locationReport, sceneReport,
   scriptStatistics, sidesScript, toCsv, writeFdx, writeFountain, dialogueReport, notesReport, elementReport, sceneSpeakerReport, reportHtml, type ElementType, type DialogueRow, type NoteRow, type ElementRow, type SceneSpeakerRow, tagReport, tagsByTag, type TagOccurrence, type TagSummary, type ReportLayout,
 } from "@screenplay/engine";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { PRINT_CHANNELS } from "../../../shared/channels/print.ts";
 import { revealScene } from "../navigator/structure-data.ts";
@@ -238,16 +238,32 @@ function SidesModal({ close }: ModalProps) {
   });
   const eighths = scenes.filter((s) => chosen.has(s.sceneId)).reduce((sum, s) => sum + s.eighths, 0);
 
+  const [error, setError] = useState("");
+  // A ref, not state, so a second click before the next render cannot open a second save dialog.
+  const saving = useRef(false);
+  const [busy, setBusy] = useState(false);
+
   const save = async () => {
-    app.flushPending();
-    const sides = sidesScript(session.script(), chosen);
-    const warnings: string[] = [];
-    const text = format === "fdx" ? writeFdx(sides, { warnings }) : writeFountain(sides);
-    const label = format === "fdx" ? "Final Draft" : "Fountain";
-    const path = await saveText("Export Sides", `${session.name} sides.${format}`, [{ name: label, extensions: [format] }], text);
-    if (!path) return;
-    app.toast(`Exported ${chosen.size} scene${chosen.size === 1 ? "" : "s"} to ${path.split("/").pop()}`, "success");
-    close();
+    if (saving.current) return;
+    saving.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      app.flushPending();
+      const sides = sidesScript(session.script(), chosen);
+      const warnings: string[] = [];
+      const text = format === "fdx" ? writeFdx(sides, { warnings }) : writeFountain(sides);
+      const label = format === "fdx" ? "Final Draft" : "Fountain";
+      const path = await saveText("Export Sides", `${session.name} sides.${format}`, [{ name: label, extensions: [format] }], text);
+      if (!path) return;
+      app.toast(`Exported ${chosen.size} scene${chosen.size === 1 ? "" : "s"} to ${path.split("/").pop()}`, "success");
+      close();
+    } catch (e) {
+      setError(`Couldn't export the sides: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
   };
 
   return (
@@ -275,12 +291,13 @@ function SidesModal({ close }: ModalProps) {
         ))}
         {!scenes.length ? <div className="empty-note">This script has no scenes.</div> : null}
       </div>
+      {error ? <p role="alert">{error}</p> : null}
       <div className="modal-actions">
         <span style={{ marginRight: "auto", color: "var(--ink-2)" }}>
           {chosen.size} of {scenes.length} scenes selected{chosen.size ? `, about ${formatEighths(eighths)} page${eighths > 8 ? "s" : ""}` : ""}
         </span>
         <button className="button" onClick={close}>Cancel</button>
-        <button className="button primary" disabled={!chosen.size} onClick={() => void save()}>Export…</button>
+        <button className="button primary" disabled={!chosen.size || busy} onClick={() => void save()}>Export…</button>
       </div>
     </div>
   );

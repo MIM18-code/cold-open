@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BACKLOT_BASELINE, ScreenplayDoc, applyTag, omitScene, productionSnapshot, backlotChanges, backlotBaseline, isProductionSnapshot, type Script, type BacklotBaseline } from "../src/index.ts";
+import { BACKLOT_BASELINE, ScreenplayDoc, applyTag, omitScene, productionSnapshot, backlotChanges, backlotBaseline, isProductionSnapshot, isPhoneProduction, productionChanges, type Script, type BacklotBaseline } from "../src/index.ts";
 
 const script = (): Script => ({ titlePage: [], paragraphs: [
   { id: "h1", sceneId: "s1", type: "sceneHeading", runs: [{ text: "INT. ROOM - DAY" }] },
@@ -70,4 +70,24 @@ test("baseline survives document reopen and malformed metadata is ignored", () =
   assert.equal(backlotBaseline({ ...b, revision: 1.5 }), null);
   assert.equal(backlotBaseline({ ...b, revision: "2" }), null);
   assert.deepEqual(backlotBaseline({ ...b, revision: 2 }), { ...b, revision: 2 });
+});
+
+test("a production summary with holes in its lists is not accepted", () => {
+  const doc = ScreenplayDoc.fromScript({ titlePage: [], paragraphs: [
+    { id: "h", type: "sceneHeading", sceneId: "s", runs: [{ text: "INT. ROOM - DAY" }] },
+    { id: "a", type: "action", runs: [{ text: "Maya waits." }] },
+  ] });
+  const good = productionChanges(doc);
+  assert.equal(isPhoneProduction(good), true);
+  // every() skips holes, so a list with nothing in its slots used to pass and then break whoever read it.
+  for (const key of ["sets", "scenes", "lockedPages"] as const) {
+    const holes = new Array(3);
+    assert.equal(isPhoneProduction({ ...good, [key]: holes }), false, key);
+  }
+  if (good.scenes[0]) assert.equal(isPhoneProduction({ ...good, scenes: [{ ...good.scenes[0], changes: new Array(2) }] }), false, "changes");
+  // A list that only claims a huge length is refused at its first hole, without being walked or copied.
+  const started = performance.now();
+  assert.equal(isPhoneProduction({ ...good, lockedPages: new Array(2 ** 32 - 1) }), false);
+  assert.ok(performance.now() - started < 1000);
+  doc.ydoc.destroy();
 });

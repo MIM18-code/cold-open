@@ -74,7 +74,8 @@ export interface EditorBridge {
   currentParagraphId(): string | null;
   /** The element type at the caret, for toolbars. */
   currentElementType(): ElementType | null;
-  setElementType(type: ElementType): void;
+  /** `sceneNumber` is a number the retyped lines take in the same edit (Restore Omitted Scene). */
+  setElementType(type: ElementType, sceneNumber?: string): void;
   toggleMark(mark: Mark): void;
   /**
    * Bold, italic and underline at the caret, for toolbars: what typing would continue (including a mark just

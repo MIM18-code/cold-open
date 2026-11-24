@@ -16,6 +16,8 @@ export interface PhoneSnapshot {
 /** The Tailscale setup answers the Phone panel checklist needs. Never carries addresses or paths. */
 export interface PhoneTailscale {
     installed: boolean;
+    /** A Tailscale is on this Mac, but this app may not run it (a Homebrew build, in a signed release). */
+    refused?: boolean;
     running: boolean;
     magicDns: boolean;
     https: boolean;

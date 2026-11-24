@@ -31,8 +31,26 @@ test("A-numbers: after, between and before, never reusing a number", () => {
   assert.equal(numberBetween(undefined, "1"), "A1");
   assert.equal(numberBetween("A1", "1"), "B1");
   assert.equal(numberBetween("12", undefined), "12A");
-  assert.equal(numberBetween("12", "13", new Set(["12A"])), "12AA");
+  // With 12A in use the next free letter comes before 12AA.
+  assert.equal(numberBetween("12", "13", new Set(["12A"])), "12B");
+  assert.equal(numberBetween("12", "13", new Set(["12A", "12B"])), "12C");
+  assert.equal(numberBetween("12", undefined, new Set(["12A"])), "12B");
+  // When 12B is the next scene, 12B does not sort between, so the answer stays 12AA.
+  assert.equal(numberBetween("12", "12B", new Set(["12A"])), "12AA");
+  // With 12A through 12Z all in use, it lengthens to a free number.
+  const run = new Set(Array.from({ length: 26 }, (_, i) => `12${String.fromCharCode(65 + i)}`));
+  assert.equal(numberBetween("12", "13", run), "12AA");
+  assert.equal(numberBetween("12", "13", new Set([...run, "12AA", "12AAA"])), "12AAAA");
+  // With every usual candidate in use, the answer is still one that is free.
+  const deep = new Set(["12A", "12AA", "12AAA", "12AAAA", "12AAAAA"]);
+  assert.equal(numberBetween("12", "13", deep), "12B");
+  assert.equal(numberBetween("12", "13", new Set([...deep, ...run])), "12AAAAAA");
+  assert.equal(numberBetween("12", "12A", deep), "12AAAAAA");
   assert.equal(numberBetween(undefined, undefined), "1");
+  // Case-only differences count as already taken, including lengthened fallback numbers.
+  assert.equal(numberBetween("12", "13", new Set(["12a"])), "12B");
+  assert.equal(numberBetween("12", "12a"), "12AA");
+  assert.equal(numberBetween("12", "12a", new Set([...deep, "12aaaaaa"])), "12AAAAAAA");
   const sorted = ["13", "12B", "A1", "12", "12AA", "1", "12A", "B1", "2"].sort(compareNumbers);
   assert.deepEqual(sorted, ["A1", "B1", "1", "2", "12", "12A", "12AA", "12B", "13"]);
 });

@@ -128,6 +128,9 @@ export class DocumentSession {
   /** Run document changes as one undoable local edit. Throws ReadOnlyError while the document is read-only. */
   edit<T>(change: () => T): T {
     if (this.readOnly) throw new ReadOnlyError();
+    // Text with no line break gets one before the edit, in a transaction of its own: undo leaves it, listeners hear
+    // of it apart from the edit, and the body offsets the edit works with are taken after it (see mend in doc.ts).
+    this.doc.mend();
     let result!: T;
     this.doc.ydoc.transact(() => {
       result = change();

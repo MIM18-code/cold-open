@@ -80,6 +80,7 @@ export class CollabController {
   private readonly app: App;
   private readonly listeners = new Set<() => void>();
   private live: Live | null = null;
+  private starting: Promise<void> | null = null;
   private defaultName = "";
   private editor: EditorBridge | null = null;
   private offSelection: () => void = () => undefined;
@@ -132,6 +133,17 @@ export class CollabController {
   async share(): Promise<void> {
     if (this.state.mode === "host") return this.app.togglePanel("collab", true);
     if (this.state.mode === "guest") throw new Error("Leave the current session before sharing.");
+    // A second Share (a double-click) while the first is still starting would connect a second client over the first.
+    if (this.starting) return this.starting;
+    this.starting = this.startHosting();
+    try {
+      await this.starting;
+    } finally {
+      this.starting = null;
+    }
+  }
+
+  private async startHosting(): Promise<void> {
     // A section title or synopsis still being typed belongs in what the guests receive.
     this.app.flushPending();
     const relayUrl = this.app.setting<string>(RELAY_SETTING, "").trim();

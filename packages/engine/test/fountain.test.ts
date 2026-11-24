@@ -276,3 +276,18 @@ test("a transition ending in < stays a transition", () => {
 test("a literal U+E000 in text is kept and does not move notes", () => {
   roundTrip([{ type: "action", runs: [{ text: "x\uE000y " }, { text: "n1", note: true }, { text: " z " }, { text: "n2", note: true }] }]);
 });
+
+test("an opening bracket right before an inline note stays in the page text", () => {
+  const cases: Run[][] = [
+    [{ text: "see [" }, { text: "n", note: true }, { text: " ok" }],
+    [{ text: "see [[" }, { text: "n", note: true }, { text: " ok" }],
+    [{ text: "[" }, { text: "n", note: true }],
+    [{ text: "see [" }, { text: "[n", note: true }],
+    [{ text: "a\\[" }, { text: "n", note: true }],
+    [{ text: "see [", bold: true }, { text: "n", note: true }],
+  ];
+  for (const runs of cases) {
+    assert.deepEqual(readInline(writeInline(runs)), fountainRuns(runs), JSON.stringify(runs));
+    roundTrip([{ type: "action", runs }]);
+  }
+});

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ScreenplayDoc, parseFountain, parseFdx, writeFdx, plainText, applyTag, removeTag, tagDefinitions, tagReport, paginate } from "../src/index.ts";
+import { ScreenplayDoc, parseFountain, parseFdx, writeFdx, plainText, applyTag, removeTag, tagDefinitions, tagReport, paginate, productionSnapshot, sexFromScript, sexScenes } from "../src/index.ts";
 const make = () => ScreenplayDoc.fromScript(parseFountain('INT. ROOM - DAY\n\nA red door beside a blue car.'));
 test('authored tags round trip with spans, names and categories without changing words', () => { const doc = make(), p = doc.paragraphs()[1]!; const before = plainText(p.runs); applyTag(doc, { paragraphId: p.id, offset: 2 }, { paragraphId: p.id, offset: 10 }, 'Props', 'Red door'); let s = doc.toScript(); assert.equal(plainText(s.paragraphs[1]!.runs), before); const xml = writeFdx(s); assert(!xml.includes('InklotTagId')); s = parseFdx(xml); assert.equal(tagDefinitions(s)[0]?.label, 'Red door'); const report = tagReport(s, paginate(s)); assert.equal(report[0]?.text, 'red door'); assert.equal(report[0]?.category, 'Props'); doc.ydoc.destroy(); });
 test('tagging refuses silent replacement; removing tags keeps the source and reusable definitions', () => { const doc = make(), p = doc.paragraphs()[1]!, from = { paragraphId: p.id, offset: 2 }, to = { paragraphId: p.id, offset: 10 }; applyTag(doc, from, to, 'Props', 'Door'); assert.throws(() => applyTag(doc, from, to, 'Vehicles', 'Car'), /already contains/); removeTag(doc, from, to); assert.equal(tagReport(doc.toScript(), paginate(doc.toScript())).length, 0); assert.equal(tagDefinitions(doc.toScript()).length, 1); doc.ydoc.destroy(); });
@@ -99,4 +99,31 @@ test("the same tag is recognised by its ID even when export numbers the tags in 
     } finally {
         crypto.randomUUID = real;
     }
+});
+
+test("tags in note, synopsis and section paragraphs are ignored by tagReport, productionSnapshot and sexFromScript", () => {
+    const doc = ScreenplayDoc.fromScript({
+        titlePage: [],
+        paragraphs: [
+            { id: "h1", type: "sceneHeading", sceneId: "s1", runs: [{ text: "INT. LAB - DAY" }] },
+            { id: "a1", type: "action", runs: [{ text: "A red door." }] },
+            { id: "a2", type: "action", runs: [{ text: "A silver key." }] },
+            { id: "a3", type: "action", runs: [{ text: "A blue car." }] },
+            { id: "a4", type: "action", runs: [{ text: "A gold watch." }] },
+        ],
+    });
+    applyTag(doc, { paragraphId: "a1", offset: 2 }, { paragraphId: "a1", offset: 10 }, "Props", "Red door");
+    applyTag(doc, { paragraphId: "a2", offset: 2 }, { paragraphId: "a2", offset: 12 }, "Props", "Silver key");
+    applyTag(doc, { paragraphId: "a3", offset: 2 }, { paragraphId: "a3", offset: 10 }, "Vehicles", "Blue car");
+    applyTag(doc, { paragraphId: "a4", offset: 2 }, { paragraphId: "a4", offset: 12 }, "Props", "Gold watch");
+    // Turn three of those tagged lines into non-printing elements; only the printing action line should count.
+    doc.setType("a2", "note");
+    doc.setType("a3", "synopsis");
+    doc.setType("a4", "section");
+    const script = doc.toScript();
+    const pages = paginate(script);
+    assert.deepEqual(tagReport(script, pages).map((row) => row.label), ["Red door"]);
+    assert.deepEqual(productionSnapshot(script, pages).scenes[0]!.tags.map((tag) => tag.label), ["Red door"]);
+    assert.deepEqual(sexScenes(sexFromScript(script))[0]!.elements.map((el) => el.name), ["Red door"]);
+    doc.ydoc.destroy();
 });

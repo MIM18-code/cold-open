@@ -37,6 +37,13 @@ export function fullUserName(): Promise<string> {
   });
 }
 
+/**
+ * What one Mac's co-writing relay accepts. It listens on the local network, so anyone there can open sockets, and a
+ * guest with an invite can send edits and presence. These sit far above what a writing session uses: a script's
+ * whole state is a few megabytes and its presence a few hundred bytes.
+ */
+const HOST_LIMITS = { maxConnections: 32, maxDocBytes: 32 * 1024 * 1024, maxAwarenessBytes: 64 * 1024, maxAwarenessClients: 8 };
+
 export class Host {
   private relay: Relay | null = null;
   private starting: Promise<Relay> | null = null;
@@ -122,7 +129,7 @@ export class Host {
 
   private async ensureRelay(): Promise<Relay> {
     if (this.relay) return this.relay;
-    const starting = this.starting ??= this.createRelay({ host: this.bindHost, port: 0, allowClaim: false });
+    const starting = this.starting ??= this.createRelay({ host: this.bindHost, port: 0, allowClaim: false, ...HOST_LIMITS });
     try {
       const relay = await starting;
       // close() takes a relay that is still starting; that one is not kept.

@@ -24,6 +24,8 @@ export function sessionBaseline(session: DocumentSession, projectId?: string): B
 function recordHandoff(session: DocumentSession, baseline: BacklotBaseline): BacklotBaseline {
   const previous = sessionBaseline(session, baseline.projectId);
   const latest = previous && compareHandoffs(previous, baseline) > 0 ? previous : baseline;
+  // A read-only guest may not change the shared document; the baseline stays known to this window only.
+  if (session.readOnly) return latest;
   session.doc.ydoc.transact(() => {
     for (const [key, value] of session.doc.meta) {
       if (key.startsWith(BACKLOT_BASELINE + ".") && backlotBaseline(value)?.projectId === baseline.projectId) session.doc.meta.delete(key);

@@ -13,7 +13,7 @@
 // and a right single quote as 0xD5; those bytes are nonsense as Latin-1 and invalid as UTF-8.
 import { normalizeCharacterName } from "./characters.ts";
 import { NON_PRINTING, type Script, plainText, scenesOf } from "./model.ts";
-import { tagDefinitions } from "./tags.ts";
+import { printedTagPlacements, tagDefinitions } from "./tags.ts";
 
 /** The category table every sample writes, in category-index order. */
 export const SEX_CATEGORIES = [
@@ -363,13 +363,9 @@ export function sexFromScript(script: Script, options: SexFromScriptOptions = {}
     };
 
     for (const paragraph of script.paragraphs.slice(scene.start, scene.end)) {
-      // A tagged line turned into a note or synopsis no longer prints, so it's no longer a production need.
       if (NON_PRINTING.has(paragraph.type)) continue;
       if (paragraph.type === "character") add(CAST_CATEGORY, normalizeCharacterName(visibleText(paragraph)));
-      for (const run of paragraph.runs) {
-        if (run.note) continue;
-        const tagNumber = run.fdx?.TagNumber;
-        if (!tagNumber) continue;
+      for (const { number: tagNumber } of printedTagPlacements(paragraph)) {
         const definition = definitions.get(tagNumber);
         if (!definition) continue;
         add(TAG_CATEGORY_INDEX[definition.category] ?? MISCELLANEOUS_CATEGORY, definition.label);

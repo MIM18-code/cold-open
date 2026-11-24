@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ScreenplayDoc, plainText, type Paragraph } from "@screenplay/engine";
@@ -46,6 +46,38 @@ test("history serializes concurrent records and never silently prunes named snap
     assert.equal((await store.list(key)).length,20);
     await assert.rejects(()=>store.record({documentId:key,label:"One too many",named:true,data:encodeNative(doc)}),/Twenty/);
     assert.equal((await store.list(key)).filter((e)=>e.named).length,20);
+  }finally{doc.ydoc.destroy();await rm(root,{recursive:true,force:true});}
+});
+
+test("opening a snapshot while another change removes it never reports a false integrity error",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"screenplay-history-")),key=crypto.randomUUID(),store=new HistoryStore(root),doc=makeDoc();
+  try{
+    const entry=await store.record({documentId:key,label:"Automatic",named:false,data:encodeNative(doc,"Draft")});
+    // The removal gets its chance between the read's index lookup and its file read.
+    let removal:Promise<void>|undefined;
+    const bytes=(store as any).bytes.bind(store);
+    (store as any).bytes=async(path:string,limit:number)=>{
+      if(path.endsWith(`${entry.id}.screenplay`))await Promise.race([removal,new Promise((resolve)=>setTimeout(resolve,200))]);
+      return bytes(path,limit);
+    };
+    const read=store.read(key,entry.id);
+    removal=store.remove(key,entry.id);
+    assert.equal((await read).length,entry.bytes);
+    await removal;
+    await assert.rejects(()=>store.read(key,entry.id),/no longer in history/);
+  }finally{doc.ydoc.destroy();await rm(root,{recursive:true,force:true});}
+});
+
+test("history keeps the state hash to itself, refuses a null index plainly, and listing creates nothing",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"screenplay-history-")),key=crypto.randomUUID(),store=new HistoryStore(root),doc=makeDoc();
+  try{
+    assert.deepEqual(await store.list(key),[]);
+    await assert.rejects(()=>stat(join(root,key)),/ENOENT/);
+    const entry=await store.record({documentId:key,label:"Automatic",named:false,data:encodeNative(doc,"Draft")});
+    assert.equal("stateHash" in entry,false);
+    assert.equal("stateHash" in await store.record({documentId:key,label:"Same state",named:false,data:encodeNative(doc,"Draft")}),false);
+    await writeFile(join(root,key,"index.json"),"null");
+    await assert.rejects(()=>store.list(key),/history index is damaged/);
   }finally{doc.ydoc.destroy();await rm(root,{recursive:true,force:true});}
 });
 

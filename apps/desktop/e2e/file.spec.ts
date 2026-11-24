@@ -269,6 +269,136 @@ for (const [choice, button] of [["Save", 0], ["Don't Save", 1]] as const) {
   });
 }
 
+for (const edit of ["typing", "Undo"] as const) {
+  test(`${edit} after Save is answered but before the window closes keeps the window open`, async () => {
+    test.setTimeout(120_000);
+    const { electronApp, page } = await launch();
+    const windows = () => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+    const flag = (name: string) => electronApp.evaluate((_electron, key) => (globalThis as any)[key], name);
+    const native = join(mkdtempSync(join(tmpdir(), "screenplay-file-")), "Kitchen.screenplay");
+    try {
+      await page.evaluate(write);
+      // Hold the next backup write, so the close waits on the backup cleanup while the writer edits.
+      await electronApp.evaluate(({ dialog, ipcMain }, path) => {
+        dialog.showSaveDialog = (async () => ({ canceled: false, filePath: path })) as any;
+        const g = globalThis as any;
+        const handlers = (ipcMain as any)._invokeHandlers as Map<string, (...args: unknown[]) => unknown>;
+        const original = handlers.get("files:write")!;
+        g.backupStarted = false;
+        handlers.set("files:write", async (event: unknown, ...args: unknown[]) => {
+          if (!String(args[0]).includes("/autosave/")) return original(event, ...args);
+          g.backupStarted = true;
+          await new Promise<void>((done) => { g.releaseBackup = done; });
+          return original(event, ...args);
+        });
+      }, native);
+      await expect.poll(() => flag("backupStarted"), { timeout: 45_000 }).toBe(true);
+      await electronApp.evaluate(() => { (globalThis as any).e2eMessageBox = () => 0; });
+      await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+      await expect.poll(() => existsSync(native)).toBe(true);
+      await expect.poll(() => page.evaluate(() => (window as any).__app.session.dirty)).toBe(false);
+      if (edit === "typing") {
+        await page.evaluate(() => (window as any).__app.editor.focus());
+        await page.keyboard.press("Meta+ArrowDown");
+        await page.keyboard.type(" Late");
+      } else {
+        // Undo's transactions come from the undo manager, not this window's edit origin.
+        await page.evaluate(() => (window as any).__app.session.undo.undo());
+      }
+      await electronApp.evaluate(() => (globalThis as any).releaseBackup());
+      await new Promise((done) => setTimeout(done, 1000));
+      expect(await windows()).toBe(1);
+      expect(await page.evaluate(() => (window as any).__app.session.dirty)).toBe(true);
+      // The next close asks again, and Don't Save closes it.
+      await electronApp.evaluate(() => { (globalThis as any).e2eMessageBox = () => 1; });
+      await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+      await expect.poll(windows).toBe(0);
+    } finally {
+      await electronApp.evaluate(() => (globalThis as any).releaseBackup?.());
+      await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy()));
+      await electronApp.close();
+    }
+  });
+}
+
+test("typing while an earlier save holds the queue, after Save is answered, keeps the window open", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "screenplay-file-"));
+  const native = join(dir, "Kitchen.screenplay");
+  const { electronApp, page } = await launch();
+  const windows = () => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  try {
+    await page.evaluate(write);
+    await electronApp.evaluate(({ dialog }, path) => { dialog.showSaveDialog = (async () => ({ canceled: false, filePath: path })) as any; }, native);
+    await page.evaluate(() => (window as any).__app.runCommand("file.saveAs"));
+    await expect.poll(() => existsSync(native)).toBe(true);
+    await page.evaluate(() => {
+      const s = (window as any).__app.session;
+      s.edit(() => s.doc.insertText(s.doc.toScript().paragraphs[1].id, 0, "Later, "));
+    });
+    // Hold the next save of the script, so the close's Save waits in the queue behind it.
+    await electronApp.evaluate(({ ipcMain }, path) => {
+      const g = globalThis as any;
+      const handlers = (ipcMain as any)._invokeHandlers as Map<string, (...args: unknown[]) => unknown>;
+      const original = handlers.get("files:write")!;
+      g.held = false;
+      handlers.set("files:write", async (event: unknown, ...args: unknown[]) => {
+        if (args[0] !== path || g.held) return original(event, ...args);
+        g.held = true;
+        await new Promise<void>((done) => { g.releaseSave = done; });
+        return original(event, ...args);
+      });
+    }, native);
+    await page.evaluate(() => void (window as any).__app.runCommand("file.save"));
+    await expect.poll(() => electronApp.evaluate(() => (globalThis as any).held)).toBe(true);
+    await electronApp.evaluate(() => { (globalThis as any).e2eMessageBox = () => 0; });
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+    await page.waitForTimeout(300);
+    await page.evaluate(() => (window as any).__app.editor.focus());
+    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.type(" Late");
+    await electronApp.evaluate(() => (globalThis as any).releaseSave());
+    await page.waitForTimeout(1000);
+    expect(await windows()).toBe(1);
+    await electronApp.evaluate(() => { (globalThis as any).e2eMessageBox = () => 0; });
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+    await expect.poll(windows).toBe(0);
+  } finally {
+    await electronApp.evaluate(() => (globalThis as any).releaseSave?.());
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy()));
+    await electronApp.close();
+  }
+});
+
+test("a composition confirmed just before closing is saved by the close's Save", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "screenplay-file-"));
+  const original = join(dir, "Cafe.fountain");
+  writeFileSync(original, "INT. CAFE - DAY\n\nCaf\n");
+  const { electronApp, page } = await launch([original]);
+  const windows = () => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  try {
+    await expect(page.locator(".titlebar-name")).toHaveText("Cafe");
+    // Hold the editor's 40 ms composition commit, so only the close itself can commit the composed letter.
+    await page.evaluate(() => {
+      const real = window.setTimeout.bind(window);
+      (window as any).setTimeout = (fn: () => void, ms?: number, ...rest: unknown[]) => ms === 40 ? -1 : real(fn, ms, ...rest);
+      const app = (window as any).__app, id = app.session.doc.paragraphs().find((p: any) => p.type === "action").id;
+      app.editor.focus();
+      app.editor.setSelection({ paragraphId: id, offset: 3 }, { paragraphId: id, offset: 3 });
+    });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.imeSetComposition", { text: "´", selectionStart: 1, selectionEnd: 1 });
+    await cdp.send("Input.insertText", { text: "é" });
+    expect(await page.evaluate(() => (window as any).__app.session.dirty)).toBe(false);
+    await electronApp.evaluate(() => { (globalThis as any).e2eMessageBox = () => 0; });
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+    await expect.poll(windows).toBe(0);
+    expect(readFileSync(original, "utf8")).toContain("Café");
+  } finally {
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy()));
+    await electronApp.close();
+  }
+});
+
 test("a recovered script keeps its title, and Save clears the recovery status", async () => {
   test.setTimeout(120_000);
   const dir = mkdtempSync(join(tmpdir(), "screenplay-file-"));
@@ -410,6 +540,114 @@ test("external edits are protected: Save does not overwrite them and Save Copy k
   expect(readFileSync(copy, "utf8")).toContain("Writer's change.");
   expect(readFileSync(original, "utf8")).toContain("External revision.");
   await close(electronApp, page);
+});
+
+for (const flow of ["Revert to Saved", "Reload disk version"] as const) {
+  test(`${flow} leaves alone a script the writer moved to while the file was read`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "screenplay-conflict-"));
+    const original = join(dir, "Shared.fountain");
+    writeFileSync(original, "INT. ROOM - DAY\n\nOriginal text.\n");
+    const { electronApp, page } = await launch([original]);
+    try {
+      await expect(page.locator(".titlebar-name")).toHaveText("Shared");
+      await page.evaluate(() => {
+        const s = (window as any).__app.session;
+        s.edit(() => s.doc.insertText(s.doc.paragraphs().find((p: any) => p.type === "action").id, 0, "Writer's change. "));
+      });
+      if (flow === "Reload disk version") writeFileSync(original, "EXT. ROAD - NIGHT\n\nExternal revision.\n");
+      // Hold the read of the script, and answer the sheets: Revert, or Reload disk version and then confirm it.
+      await electronApp.evaluate(({ ipcMain }, path) => {
+        const g = globalThis as any;
+        const handlers = (ipcMain as any)._invokeHandlers as Map<string, (...args: unknown[]) => unknown>;
+        const original = handlers.get("files:read")!;
+        g.readStarted = false;
+        handlers.set("files:read", async (event: unknown, ...args: unknown[]) => {
+          if (args[0] !== path) return original(event, ...args);
+          g.readStarted = true;
+          await new Promise<void>((done) => { g.releaseRead = done; });
+          return original(event, ...args);
+        });
+        g.e2eMessageBox = (options: { buttons?: string[] }) => options.buttons?.[0] === "Keep my draft" ? 1 : options.buttons?.[0] === "Revert" ? 0 : 1;
+      }, original);
+      await page.evaluate((command) => void (window as any).__app.runCommand(command), flow === "Revert to Saved" ? "file.revert" : "file.save");
+      await expect.poll(() => electronApp.evaluate(() => (globalThis as any).readStarted)).toBe(true);
+      // The writer moves to a new script before the read finishes.
+      const moved = await page.evaluate(() => {
+        const app = (window as any).__app;
+        app.setSession(app.session.constructor.untitled());
+        return app.session.id;
+      });
+      await electronApp.evaluate(() => (globalThis as any).releaseRead());
+      await page.waitForTimeout(500);
+      expect(await page.evaluate(() => (window as any).__app.session.id)).toBe(moved);
+    } finally {
+      await electronApp.evaluate(() => (globalThis as any).releaseRead?.());
+      await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy()));
+      await electronApp.close();
+    }
+  });
+}
+
+test("a read-only script closes at once, with or without a co-writer's unsaved changes", async () => {
+  for (const changed of [false, true]) {
+    const { electronApp, page } = await launch();
+    const windows = () => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+    try {
+      await page.evaluate((changed) => {
+        const s = (window as any).__app.session;
+        if (changed) s.doc.ydoc.transact(() => s.doc.insertText(s.doc.paragraphs()[0].id, 0, "INT. HALL - DAY"), "peer");
+        s.setReadOnly(true);
+      }, changed);
+      await electronApp.evaluate(() => { (globalThis as any).e2eMessageBox = () => 1; });
+      await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+      await expect.poll(windows).toBe(0);
+    } finally {
+      await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy()));
+      await electronApp.close();
+    }
+  }
+});
+
+test("moving to another script while the conflict sheet is up asks nothing more", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "screenplay-conflict-"));
+  const original = join(dir, "Shared.fountain");
+  writeFileSync(original, "INT. ROOM - DAY\n\nOriginal text.\n");
+  const { electronApp, page } = await launch([original]);
+  try {
+    await expect(page.locator(".titlebar-name")).toHaveText("Shared");
+    await page.evaluate(() => {
+      const s = (window as any).__app.session;
+      s.edit(() => s.doc.insertText(s.doc.paragraphs().find((p: any) => p.type === "action").id, 0, "Writer's change. "));
+    });
+    writeFileSync(original, "EXT. ROAD - NIGHT\n\nExternal revision.\n");
+    // Hold the conflict sheet until the test answers it with Reload disk version; count any later sheet.
+    await electronApp.evaluate(({ ipcMain }) => {
+      const g = globalThis as any;
+      const handlers = (ipcMain as any)._invokeHandlers as Map<string, (...args: unknown[]) => unknown>;
+      g.sheetUp = false; g.laterSheets = 0;
+      handlers.set("shell:message-box", async (_event: unknown, options: { buttons?: string[] }) => {
+        if (options.buttons?.[0] !== "Save a copy…") { g.laterSheets++; return { response: 1, checkboxChecked: false }; }
+        g.sheetUp = true;
+        await new Promise<void>((done) => { g.answerSheet = done; });
+        return { response: 1, checkboxChecked: false };
+      });
+    });
+    await page.evaluate(() => void (window as any).__app.runCommand("file.save"));
+    await expect.poll(() => electronApp.evaluate(() => (globalThis as any).sheetUp)).toBe(true);
+    const moved = await page.evaluate(() => {
+      const app = (window as any).__app;
+      app.setSession(app.session.constructor.untitled());
+      return app.session.id;
+    });
+    await electronApp.evaluate(() => (globalThis as any).answerSheet());
+    await page.waitForTimeout(500);
+    expect(await electronApp.evaluate(() => (globalThis as any).laterSheets)).toBe(0);
+    expect(await page.evaluate(() => (window as any).__app.session.id)).toBe(moved);
+  } finally {
+    await electronApp.evaluate(() => (globalThis as any).answerSheet?.());
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy()));
+    await electronApp.close();
+  }
 });
 
 test("the scene number lock survives FDX export and reopening", async () => {

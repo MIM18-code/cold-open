@@ -2,7 +2,7 @@
 // builder and a parser for one streamed event, both pure so tests can run them against canned responses.
 import { randomUUID } from "node:crypto";
 import type { AiErrorCode, AiMessage, AiTier, AiTool, AiTurn, ProviderId } from "../../shared/channels/ai.ts";
-import { type SseEvent, readLines, readSse } from "./stream.ts";
+import { type SseEvent, StreamLimitError, readLines, readSse } from "./stream.ts";
 import { readCalls, record, readResponseTurn, responseInput, responseTools, toolParseError } from "./tool-calls.ts";
 import { boundedJson } from "./chatgpt-http.ts";
 
@@ -345,6 +345,9 @@ async function send(provider: HttpProvider, built: BuiltRequest, fetchFn: FetchL
   return response;
 }
 
+/** The longest answer kept, in characters. Far past any real answer: about a thousand script pages. */
+export const MAX_ANSWER = 4_000_000;
+
 /** Stream a chat answer. Resolves with the whole text; `onDelta` sees each piece as it arrives. */
 export async function streamChat(
   provider: HttpProvider, request: ChatRequest, config: ProviderConfig, fetchFn: FetchLike, signal: AbortSignal, onDelta: (text: string) => void,
@@ -359,14 +362,22 @@ export async function streamChat(
       const delta = readDelta(provider, event);
       if (delta.error) throw new AiError(delta.error.code, delta.error.message);
       if (delta.text) {
+        // An endpoint that never stops would otherwise grow this text, and the page showing it, without limit.
+        if (text.length + delta.text.length > MAX_ANSWER) throw new AiError("bad-response", `${NAMES[provider]} sent more than one answer can hold, so it was stopped.`);
         text += delta.text;
         onDelta(delta.text);
       }
-      if (delta.done) finished = true;
+      if (delta.done) {
+        // Leaving the loop cancels the body, so a provider that keeps the connection open after its last event
+        // neither holds the answer back nor has it reported as a stall.
+        finished = true;
+        break;
+      }
     }
   } catch (error) {
     if (signal.aborted) throw new AiError("cancelled", "Cancelled.");
     if (error instanceof AiError) throw error;
+    if (error instanceof StreamLimitError) throw new AiError("bad-response", `The answer from ${NAMES[provider]} was stopped: ${error.message}.`);
     throw new AiError("unreachable", `The connection to ${NAMES[provider]} dropped: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (signal.aborted) throw new AiError("cancelled", "Cancelled.");

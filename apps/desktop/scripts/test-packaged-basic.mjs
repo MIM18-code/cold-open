@@ -15,6 +15,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
+import { createServer as createHttpsServer, get as httpsGet } from 'node:https';
 import { connect, createServer } from 'node:net';
 import { _electron as electron } from 'playwright';
 import { PDFDocument } from 'pdf-lib';
@@ -184,6 +185,29 @@ async function sealedChecks() {
   } finally { clearInterval(asking); if (!byPipe.exit) byPipe.child.kill('SIGKILL'); }
   console.log('PASS sealed app quits before --remote-debugging-port or --remote-debugging-pipe can reach its page');
 
+  // Chromium also has switches that name a program to start its helper processes with, and that program would run
+  // as the app's child. The sealed beta 17 app ran a planted script given --browser-subprocess-path or
+  // --gpu-launcher. Each must now make the app quit before the planted program runs.
+  // Chromium reads one dash the same as two and trims white space from an argument, so each is also tried once.
+  for (const [name, flag] of [['browser-subprocess-path', '--browser-subprocess-path'], ['gpu-launcher', '--gpu-launcher'],
+    ['renderer-cmd-prefix', '--renderer-cmd-prefix'], ['utility-cmd-prefix', '--utility-cmd-prefix'], ['one-dash', '-gpu-launcher'],
+    ['leading-space', ' --browser-subprocess-path']]) {
+    const marker = output(`${name}-ran`), planted = output(`${name}-planted`);
+    writeFileSync(planted, `#!/bin/sh\n: > ${JSON.stringify(marker)}\nexit 1\n`, { mode: 0o755 });
+    // The planted program has to work when something does run it, or its marker staying absent proves nothing.
+    spawnSync(planted, [], { stdio: 'ignore' });
+    check(existsSync(marker), `The planted program for "${flag}" does not write its marker when run`);
+    rmSync(marker, { force: true });
+    const run = start(`${name}-profile`, [`${flag}=${planted}`]);
+    try {
+      await Promise.race([run.exited, sleep(20000)]);
+      await sleep(1000);
+      check(!existsSync(marker), `"${flag}" made the sealed app run a planted program`);
+      check(run.exit?.code === 1, `The sealed app did not refuse "${flag}": ${run.describe()}`);
+    } finally { if (!run.exit) run.child.kill('SIGKILL'); }
+  }
+  console.log('PASS sealed app quits before a helper-program switch can make it run a planted program');
+
   if (await ollamaAnswers()) console.log(OLLAMA_SKIP);
   else {
     for (const [profile, link] of [['ollama-profile', false], ['ollama-link-profile', true]]) {
@@ -337,6 +361,26 @@ async function main() {
     assert.equal(status.helperPath, helper, 'The packaged app chose the speech helper named by SCREENPLAY_SPEECH_HELPER');
     await close();
     console.log('PASS packaged app ignores SCREENPLAY_SPEECH_HELPER');
+
+    // A packaged app keeps checking certificates when the launching program sets NODE_TLS_REJECT_UNAUTHORIZED=0. Its
+    // main process asks a local HTTPS server with a certificate nobody trusts, which must fail. The control asks the
+    // same server with the check turned off, so a server that never answers cannot pass for a refusal.
+    const pem = name => output(`untrusted-${name}.pem`);
+    const made = spawnSync('/usr/bin/openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', pem('key'), '-out', pem('cert'), '-days', '2',
+      '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1'], { env, encoding: 'utf8' });
+    check(made.status === 0, `openssl could not make a test certificate: ${made.stderr}`);
+    const untrusted = createHttpsServer({ key: readFileSync(pem('key')), cert: readFileSync(pem('cert')) }, (_, response) => response.end('reached'));
+    await new Promise(done => untrusted.listen(0, '127.0.0.1', done));
+    try {
+      const address = `https://127.0.0.1:${untrusted.address().port}/`;
+      const unchecked = await new Promise(done => httpsGet(address, { rejectUnauthorized: false }, response => { response.resume(); done(response.statusCode); }).on('error', () => done(0)));
+      check(unchecked === 200, 'The test HTTPS server did not answer a request made with the certificate check off');
+      p = await open('tls-env-profile', undefined, { NODE_TLS_REJECT_UNAUTHORIZED: '0' });
+      const answer = await app.evaluate(async (_, url) => { try { return `reached ${(await fetch(url)).status}`; } catch (error) { return `refused ${error?.cause?.code ?? error}`; } }, address);
+      check(/^refused .*SELF_SIGNED/.test(answer), `With NODE_TLS_REJECT_UNAUTHORIZED=0 the packaged app's main process accepted an untrusted certificate: ${answer}`);
+      await close();
+    } finally { untrusted.close(); }
+    console.log('PASS packaged app keeps checking certificates with NODE_TLS_REJECT_UNAUTHORIZED=0');
 
     // The control for the sealed check: this ad hoc build is not sealed, so it runs the planted Ollama as before.
     if (await ollamaAnswers()) console.log(OLLAMA_SKIP);

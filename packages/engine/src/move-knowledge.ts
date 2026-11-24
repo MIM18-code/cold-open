@@ -8,8 +8,9 @@ export type MoveSpan = [client: number, clock: number, length: number];
 // chars preserves the countable subset after GC merges text and formatting tombstones.
 export interface MoveKnowledge { sv: string; at: number; spans: MoveSpan[]; chars: MoveSpan[]; }
 
-// Indexes, not every(), which skips holes.
-const isSpan = (value: unknown) => Array.isArray(value) && value.length === 3 && [0, 1, 2].every((i) => Number.isSafeInteger(value[i]) && value[i] >= 0);
+// Indexes, not every(), which skips holes. Length must be positive so clock + length - 1 stays inside the span.
+const isSpan = (value: unknown) => Array.isArray(value) && value.length === 3
+  && [0, 1, 2].every((i) => Number.isSafeInteger(value[i]) && value[i] >= (i === 2 ? 1 : 0));
 
 /** A record as moveRanges writes it. Records sync like any meta value, so a co-writer can store any shape. */
 export function isMoveKnowledge(value: unknown): value is MoveKnowledge {

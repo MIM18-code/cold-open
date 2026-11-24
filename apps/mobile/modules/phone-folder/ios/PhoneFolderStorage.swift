@@ -6,14 +6,18 @@ private func storageError(_ message: String) -> NSError {
 }
 
 enum PhoneFolderStorage {
-  private static func directory(_ url: URL) throws {
+  /// False when the folder is missing and `create` is off: a read runs under a reading coordinator and must not make one.
+  @discardableResult
+  private static func directory(_ url: URL, create: Bool = true) throws -> Bool {
     var info = stat()
     if lstat(url.path, &info) != 0 {
       guard errno == ENOENT else { throw storageError("Cannot inspect the inbox folder.") }
+      guard create else { return false }
       try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
       guard lstat(url.path, &info) == 0 else { throw storageError("Cannot inspect the new inbox folder.") }
     }
     guard info.st_mode & S_IFMT == S_IFDIR else { throw storageError("The inbox folder is a link or special file.") }
+    return true
   }
   static func read(root: URL, deviceId: String) throws -> String? {
     guard deviceId.range(of: #"^[-A-Za-z0-9_]{12,80}$"#, options: .regularExpression) != nil else {
@@ -21,7 +25,8 @@ enum PhoneFolderStorage {
     }
     let inbox = root.appendingPathComponent("Inklot Phone Inbox")
     let device = inbox.appendingPathComponent(deviceId)
-    try directory(root); try directory(inbox); try directory(device)
+    guard try directory(root, create: false), try directory(inbox, create: false),
+          try directory(device, create: false) else { return nil }
     let path = device.appendingPathComponent("production.json")
     let fd = open(path.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
     if fd < 0 { return nil }

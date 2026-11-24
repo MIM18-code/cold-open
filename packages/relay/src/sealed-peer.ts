@@ -27,7 +27,9 @@ class SealedPeer extends EventEmitter {
   }
   close(code = 1000, reason = ""): void {
     if (this.raw.readyState === this.raw.OPEN) this.raw.send(this.tunnel.seal(FRAME_CLOSE, closeFrame(code, reason)));
-    this.raw.close(code, reason);
+    // The code and reason went inside the seal. The socket's own close frame is readable on the network, and the
+    // phone ignores it, so it says nothing.
+    this.raw.close(1000);
   }
   ping(): void { this.raw.ping(); }
   terminate(): void { this.raw.terminate(); }

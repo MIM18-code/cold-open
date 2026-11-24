@@ -50,18 +50,24 @@ export function productionChanges(doc: ScreenplayDoc, baseline?: readonly Paragr
   return { v: 2, active, sets: state.sets, scenes, marks, lockedPages: locks.map(l => l.number) };
 }
 
+/** every(), but a hole in the list fails it. every() skips holes; this stops at the first one, however long the list claims to be. */
+function dense<T>(list: readonly T[], ok: (item: T) => boolean): boolean {
+  for (let i = 0; i < list.length; i++) if (!(i in list) || !ok(list[i]!)) return false;
+  return true;
+}
+
 export function isPhoneProduction(value: unknown): value is PhoneProduction {
   if (!value || typeof value !== "object") return false;
   const p = value as PhoneProduction;
   const revision = (s: RevisionSet) => !!s && typeof s.id === "string" && typeof s.name === "string"
     && /^#[\da-f]{6}$/i.test(s.color) && typeof s.mark === "string";
-  return p.v === 2 && Array.isArray(p.sets) && p.sets.every(revision)
+  return p.v === 2 && Array.isArray(p.sets) && dense(p.sets, revision)
     && (p.active === null || revision(p.active))
-    && Array.isArray(p.scenes) && p.scenes.every(s => !!s && typeof s.id === "string"
+    && Array.isArray(p.scenes) && dense(p.scenes, s => !!s && typeof s.id === "string"
       && typeof s.number === "string" && typeof s.heading === "string"
       && (s.color === null || /^#[\da-f]{6}$/i.test(s.color))
-      && Array.isArray(s.changes) && s.changes.every(c => typeof c === "string"))
+      && Array.isArray(s.changes) && dense(s.changes, c => typeof c === "string"))
     && !!p.marks && typeof p.marks === "object" && !Array.isArray(p.marks)
     && Object.values(p.marks).every(m => !!m && typeof m.label === "string" && /^#[\da-f]{6}$/i.test(m.color))
-    && Array.isArray(p.lockedPages) && p.lockedPages.every(n => typeof n === "string");
+    && Array.isArray(p.lockedPages) && dense(p.lockedPages, n => typeof n === "string");
 }

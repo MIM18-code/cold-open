@@ -2,7 +2,7 @@
 // "Save changes?" prompt must leave folder sync running, a real quit must wait for every write, and a stale startup
 // must not end a newer one.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -13,6 +13,7 @@ import { SYNC } from "../src/shared/channels/sync.ts";
 import type { Handler, ServiceContext } from "../src/main/context.ts";
 import { parseLog } from "../src/main/sync/folder-log.ts";
 import { registerFolderSync } from "../src/main/sync/folder-service.ts";
+import { FolderSync } from "../src/main/sync/folder-sync.ts";
 
 const temp = mkdtempSync(join(tmpdir(), "screenplay-sync-service-"));
 // Closing every fake window stops its watchers, so a failing test does not keep the process alive.
@@ -33,10 +34,18 @@ function fakeContext() {
     onQuit: (task: () => unknown) => void quitTasks.push(task),
   } as unknown as ServiceContext;
   const destroyed: (() => void)[] = [];
-  const sender = { id: 1, isDestroyed: () => false, send: () => undefined, once: (_event: string, listener: () => void) => void destroyed.push(listener) };
+  const errors: string[] = [];
+  const sender = {
+    id: 1,
+    isDestroyed: () => false,
+    send: (channel: string, _path: string, message?: unknown) => {
+      if (channel === SYNC.folderError) errors.push(String(message));
+    },
+    once: (_event: string, listener: () => void) => void destroyed.push(listener),
+  };
   const call = (channel: string, ...args: unknown[]) => handlers.get(channel)!({ sender } as never, ...args);
   windows.push(() => destroyed.forEach((listener) => listener()));
-  return { ctx, call, quit: () => Promise.all(quitTasks.map((task) => task())), destroyWindow: () => destroyed.forEach((listener) => listener()) };
+  return { ctx, call, errors, quit: () => Promise.all(quitTasks.map((task) => task())), destroyWindow: () => destroyed.forEach((listener) => listener()) };
 }
 
 function readLog(ctx: ServiceContext, docPath: string): string {
@@ -130,4 +139,85 @@ test("an old startup stopping does not end a newer one for the same document in 
   await call(SYNC.folderStop, path, current.subscription);
   const text = readLog(ctx, path);
   assert.ok(text.includes("After revert."), text);
+});
+
+test("edits from an append that failed are kept and written, in order, on the next try", async (t) => {
+  const { ctx, call, quit } = fakeContext();
+  registerFolderSync(ctx);
+  const path = join(temp, "Full disk.screenplay");
+  const script = typing("Start.");
+  const { subscription } = await call(SYNC.folderStart, path, script.state) as { subscription: string };
+  // The disk refuses every try of the first quit's flush, then has room.
+  const append = FolderSync.prototype.append;
+  const written: number[] = [];
+  let failures = 3;
+  t.mock.method(FolderSync.prototype, "append", function (this: FolderSync, updates: Uint8Array[]) {
+    if (updates.length && failures-- > 0) return Promise.reject(new Error("ENOSPC"));
+    if (updates.length) written.push(updates.length);
+    return append.call(this, updates);
+  });
+  await call(SYNC.folderAppend, path, subscription, script.type(6, " Kept."));
+  await quit();
+  await call(SYNC.folderAppend, path, subscription, script.type(12, " Then more."));
+  await quit();
+  assert.equal(readLog(ctx, path), "Start. Kept. Then more.");
+  assert.deepEqual(written, [1], "the kept edit and the new one go out together, once");
+  await call(SYNC.folderStop, path, subscription);
+});
+
+test("the last window closing retries its final write a few times, and quit does too", async (t) => {
+  const append = FolderSync.prototype.append;
+  let failures = 0;
+  t.mock.method(FolderSync.prototype, "append", function (this: FolderSync, updates: Uint8Array[]) {
+    if (updates.length && failures-- > 0) return Promise.reject(new Error("EIO"));
+    return append.call(this, updates);
+  });
+  // Closing: the entry is gone before its final flush, so only that flush can write the edit.
+  const closing = fakeContext();
+  registerFolderSync(closing.ctx);
+  const closed = join(temp, "Closed.screenplay");
+  const first = typing("Start.");
+  const one = await closing.call(SYNC.folderStart, closed, first.state) as { subscription: string };
+  await closing.call(SYNC.folderAppend, closed, one.subscription, first.type(6, " Last edit."));
+  failures = 1;
+  closing.destroyWindow();
+  await closing.quit();
+  assert.equal(readLog(closing.ctx, closed), "Start. Last edit.");
+  // Quitting with the window still open.
+  const open = fakeContext();
+  registerFolderSync(open.ctx);
+  const kept = join(temp, "Quit.screenplay");
+  const second = typing("Start.");
+  const two = await open.call(SYNC.folderStart, kept, second.state) as { subscription: string };
+  await open.call(SYNC.folderAppend, kept, two.subscription, second.type(6, " At quit."));
+  failures = 1;
+  await open.quit();
+  assert.equal(readLog(open.ctx, kept), "Start. At quit.");
+  await open.call(SYNC.folderStop, kept, two.subscription);
+});
+
+test("a sync folder replaced by a link reports one error and does not spin a retry loop", async (t) => {
+  const { ctx, call, errors } = fakeContext();
+  registerFolderSync(ctx);
+  const path = join(temp, "Broken.screenplay");
+  const script = typing("Start.");
+  const { subscription } = await call(SYNC.folderStart, path, script.state) as { subscription: string };
+  const folder = path.replace(/\.screenplay$/, ".screenplay-sync");
+  rmSync(folder, { recursive: true, force: true });
+  symlinkSync(join(temp, "missing-target"), folder);
+
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await call(SYNC.folderAppend, path, subscription, script.type(6, " Edit."));
+  t.mock.timers.tick(300);
+  // Let the async flush settle, then advance past several 5-second retry intervals.
+  t.mock.timers.reset();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(errors.length, 1);
+
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.mock.timers.tick(20_000);
+  t.mock.timers.reset();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(errors.length, 1);
+  await call(SYNC.folderStop, path, subscription);
 });

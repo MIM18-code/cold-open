@@ -228,7 +228,7 @@ export function revisionsNode(state: RevisionState): XmlNode {
   };
 }
 
-const DEFAULT_EXTRAS: FdxDocumentExtras = { rootAttrs: [["DocumentType", "Script"], ["Template", "No"], ["Version", "5"]], contentAttrs: [], before: [], after: [] };
+export const DEFAULT_EXTRAS: FdxDocumentExtras = { rootAttrs: [["DocumentType", "Script"], ["Template", "No"], ["Version", "5"]], contentAttrs: [], before: [], after: [] };
 
 /** Replace or add a top-level element of the FDX extras (which are a copy). */
 function putFdxNode(extras: FdxDocumentExtras, node: XmlNode): void {
@@ -485,15 +485,15 @@ export function pageRevisions(script: Pick<Script, "paragraphs" | "fdx">, pagina
     const own = deletionMarks(paragraph).filter((mark) => mark.setId !== "0");
     if (own.length) deletions.set(paragraph.id, [...(deletions.get(paragraph.id) ?? []), ...own]);
   }
-  // Each offset belongs to one line: from where the paragraph's line before it ends, up to its own end, which goes
-  // to the next line. A hyphen or CJK wrap ends one line where the next starts, and offsets in the spaces at a wrap
-  // are on no line, so the plain from-to test marked both lines or neither. The last line takes the rest of the
-  // paragraph, trailing spaces included.
+  // Each offset belongs to one line: from where the paragraph's line before it ends (0 for the first line, covering
+  // stripped leading notes or spaces), up to its own end, which goes to the next line. A hyphen or CJK wrap ends one
+  // line where the next starts, and offsets in the spaces at a wrap are on no line, so the plain from-to test marked
+  // both lines or neither. The last line takes the rest of the paragraph, trailing spaces included.
   const start = new Map<Line, number>(), last = new Map<string, Line>();
   for (const page of pagination.pages) {
     for (const line of page.lines) {
       if (line.generated) continue;
-      start.set(line, last.get(line.paragraphId)?.to ?? line.from);
+      start.set(line, last.get(line.paragraphId)?.to ?? 0);
       last.set(line.paragraphId, line);
     }
   }

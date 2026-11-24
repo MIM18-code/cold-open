@@ -119,7 +119,7 @@ function markedRuns(runs: readonly Run[]): Run[] {
   }));
 }
 
-function writeMarked(runs: readonly Run[]): string {
+function writeMarked(runs: readonly Run[], beforeNote = false): string {
   let out = "";
   let open = new Set<Mark>();
   const switchTo = (next: Set<Mark>) => {
@@ -131,8 +131,8 @@ function writeMarked(runs: readonly Run[]): string {
   const chars = charMarks(runs);
   chars.forEach(({ char, marks }, i) => {
     switchTo(marks);
-    // "[[" in script text would read back as a note, so its first bracket is escaped.
-    out += /[*_\\]/.test(char) || (char === "[" && chars[i + 1]?.char === "[") ? `\\${char}` : char;
+    // "[[" in script text, or a trailing "[" right before a note's "[[", would read back as a note, so escape it.
+    out += /[*_\\]/.test(char) || (char === "[" && (chars[i + 1]?.char === "[" || (beforeNote && i === chars.length - 1))) ? `\\${char}` : char;
   });
   switchTo(new Set());
   return out;
@@ -191,5 +191,6 @@ export function fountainRuns(runs: readonly Run[]): Run[] {
 }
 
 export function writeInline(runs: readonly Run[]): string {
-  return segments(runs).map((part) => part.note ? `[[${escapeNote(part.runs[0]!.text)}]]` : writeMarked(part.runs)).join("");
+  const parts = segments(runs);
+  return parts.map((part, i) => part.note ? `[[${escapeNote(part.runs[0]!.text)}]]` : writeMarked(part.runs, parts[i + 1]?.note)).join("");
 }

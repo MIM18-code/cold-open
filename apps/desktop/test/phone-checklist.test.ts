@@ -78,3 +78,11 @@ test("Use from anywhere stays folded until a step is finished or an away pairing
   assert.equal(checklistOpen(setupChecklist({ ...none, tailscale: { ...none.tailscale, installed: true } }), false), true);
   assert.equal(checklistOpen(setupChecklist({ ...none, folderChosen: true }), false), true);
 });
+
+test("a Tailscale the app cannot use gets its own instruction", () => {
+  const steps = setupChecklist({ tailscale: { installed: false, refused: true, running: false, magicDns: false, https: false },
+    remembered: [], folderChosen: false });
+  assert.match(steps[0]!.detail, /can't use/);
+  assert.match(steps[0]!.detail, /Homebrew/);
+  assert.equal(steps[0]!.action?.url, TAILSCALE_DOWNLOAD);
+});

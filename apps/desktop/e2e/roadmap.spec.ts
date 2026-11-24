@@ -153,6 +153,13 @@ test("Save writes a beat's lane while it is still being typed", async () => { co
     await expect(r.page.getByLabel("Lane for Opening image")).toHaveValue("C story");
     await r.page.getByLabel("Lane for Opening image").blur();
     expect(await r.page.evaluate(() => [...(window as any).__app.session.doc.meta.entries()].filter(([key]: [string]) => key.startsWith("workbench.canvas.")).map(([, value]: [string, any]) => value.lane))).toEqual(["C story"]);
+    // Typed in and put back while a co-writer changes the lane: leaving the field keeps the co-writer's lane.
+    await r.page.getByLabel("Lane for Opening image").fill("C story, then");
+    await r.page.getByLabel("Lane for Opening image").fill("C story");
+    await r.page.evaluate(() => { const app = (window as any).__app; const [key, value] = [...app.session.doc.meta.entries()].find(([k]: [string]) => k.startsWith("workbench.canvas."))!; app.session.doc.ydoc.transact(() => app.session.doc.meta.set(key, { ...value, lane: "D story", revision: "from-a-co-writer-2" }), "remote"); });
+    await r.page.getByLabel("Lane for Opening image").blur();
+    expect(await r.page.evaluate(() => [...(window as any).__app.session.doc.meta.entries()].filter(([key]: [string]) => key.startsWith("workbench.canvas.")).map(([, value]: [string, any]) => value.lane))).toEqual(["D story"]);
+    await expect(r.page.getByLabel("Lane for Opening image")).toHaveValue("D story");
 }
 finally {
     await close(r.electronApp, r.page);

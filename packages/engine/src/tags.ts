@@ -1,6 +1,6 @@
 /** FDX breakdown tags use definitions plus span attributes; screenplay text remains untouched. */
 import type { ScreenplayDoc, TextPosition } from "./doc.ts";
-import { NON_PRINTING, plainText, type Script, type XmlNode } from "./model.ts";
+import { NON_PRINTING, plainText, type Paragraph, type Script, type XmlNode } from "./model.ts";
 import { attr, textOf } from "./xml.ts";
 export const TAG_CATEGORIES = [
     ["Cast Members", "01fc9642-84ff-4366-b37c-a3068dee57e8", 2], ["Background Actors", "028a4e2b-b507-4d09-88ab-90e3edae9071", 3],
@@ -39,6 +39,30 @@ export function tagDefinitions(script: Script): TagDefinition[] {
             rows.push({ number, def });
     }
     return rows.map(({ number, def }) => ({ number, id: attr(def, "Id") ?? "", label: attr(def, "Label") ?? "", category: categories.get(attr(def, "CatId")) ?? "Unresolved category", categoryId: attr(def, "CatId") ?? "" }));
+}
+
+/**
+ * Breakdown tag placements that print in a paragraph. Non-printing paragraphs (notes, synopses, sections)
+ * and inline notes do not print, so their tags are skipped. Adjacent runs with the same tag number join.
+ */
+export function printedTagPlacements(paragraph: Paragraph): { number: string; text: string }[] {
+    if (NON_PRINTING.has(paragraph.type)) return [];
+    const placements: { number: string; text: string }[] = [];
+    let last: { number: string; text: string } | undefined;
+    for (const run of paragraph.runs) {
+        const number = run.fdx?.TagNumber;
+        if (!number || run.note || !run.text) {
+            last = undefined;
+            continue;
+        }
+        if (last?.number === number) {
+            last.text += run.text;
+            continue;
+        }
+        last = { number, text: run.text };
+        placements.push(last);
+    }
+    return placements;
 }
 function spans(doc: ScreenplayDoc, from: TextPosition, to: TextPosition): {
     id: string;

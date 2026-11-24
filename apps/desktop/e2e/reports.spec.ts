@@ -361,3 +361,26 @@ test("compare: edits made while the dialog is open move the highlights with the 
   expect(marked).toContain("deal");
   expect(marked.join(" ")).not.toContain("had");
 });
+
+test("compare: highlights drawn in one script view do not count once that view is gone", async () => {
+  const { electronApp, page } = await launch();
+  const earlier = join(tempDir(), "earlier.fountain");
+  writeFileSync(earlier, ["EXT. SALVAGE YARD - DAWN", "", "Dust.", ""].join("\n"));
+  await load(page, SCRIPT);
+  await stubEditor(page);
+  await stubDialogs(electronApp, { open: earlier });
+  await runCommand(page, "compare.open");
+  const dialog = page.getByRole("dialog", { name: "Compare Drafts" });
+  await dialog.getByRole("button", { name: "Choose earlier draft…" }).click();
+  await dialog.getByRole("button", { name: "Highlight in script" }).click();
+  await expect(dialog).toBeHidden();
+  const clearable = () => page.evaluate(() => {
+    const app = (window as any).__app;
+    return app.commands.find((c: any) => c.id === "compare.clear").enabled(app);
+  });
+  expect(await clearable()).toBe(true);
+  // A view switch replaces the editor; the new one has no compare highlights.
+  await page.evaluate(() => (window as any).__app.setEditor(null));
+  await stubEditor(page);
+  expect(await clearable()).toBe(false);
+});

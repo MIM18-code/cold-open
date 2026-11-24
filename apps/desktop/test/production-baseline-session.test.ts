@@ -58,6 +58,16 @@ test("untitled handoffs carry over to the first save", async () => {
   session.destroy();
 });
 
+test("a read-only guest's native save leaves the handoff out of its document", async () => {
+  const session = DocumentSession.untitled();
+  // A baseline this window knows from its sidecar, not yet in the document's metadata.
+  await persistProductionBaseline(session, baseline);
+  session.setReadOnly(true);
+  assert.deepEqual(prepareProductionBaselineSave(session, "screenplay"), baseline);
+  assert.deepEqual(handoffRecords(session), []);
+  session.destroy();
+});
+
 test("Fountain reopening restores saved scene identities and preserves heading changes since handoff", async () => {
   const source = "INT. ROOM - DAY\n\nA car waits.\n";
   const original = new DocumentSession(ScreenplayDoc.fromScript(parseFountain(source)), { path: join(root, "Identity.fountain"), format: "fountain" });

@@ -9,9 +9,13 @@ import * as Y from "yjs";
 
 import { DEVICE_ID_SETTING, FOLDER_SYNC_SETTING, SYNC, type FolderStartResult } from "../../shared/channels/sync.ts";
 import type { ServiceContext } from "../context.ts";
+import { UnsafeFileError } from "../safe-fs.ts";
 import { FolderSync, hasSyncFolder, syncFolderFor } from "./folder-sync.ts";
 
 const FLUSH_DELAY = 250;
+const RETRY_DELAY = 5000;
+const FINAL_ATTEMPTS = 3;
+const FINAL_RETRY_DELAY = 200;
 
 interface Entry {
   path: string;
@@ -21,6 +25,8 @@ interface Entry {
   subscribers: Map<string, WebContents>;
   pending: Uint8Array[];
   timer: ReturnType<typeof setTimeout> | undefined;
+  /** The last flush, which the next one waits for. */
+  flushing: Promise<void>;
 }
 
 export function registerFolderSync(ctx: ServiceContext): void {
@@ -46,17 +52,56 @@ export function registerFolderSync(ctx: ServiceContext): void {
   };
 
   /** Write the batched changes, and wait for writes already queued (a timer's flush still under way). */
-  const flush = async (entry: Entry) => {
+  const flush = (entry: Entry): Promise<void> => {
     clearTimeout(entry.timer);
     entry.timer = undefined;
-    const updates = entry.pending.splice(0);
-    await entry.sync.append(updates.length ? [updates.length === 1 ? updates[0]! : Y.mergeUpdates(updates)] : []);
+    // One flush at a time, so changes kept from a failed append go out ahead of later ones.
+    const run = entry.flushing.catch(() => undefined).then(async () => {
+      const updates = entry.pending.splice(0);
+      if (!updates.length) return entry.sync.append([]);
+      let merged: Uint8Array;
+      try {
+        merged = updates.length === 1 ? updates[0]! : Y.mergeUpdates(updates);
+      } catch (error) {
+        sendAll(entry, SYNC.folderError, error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+      try {
+        await entry.sync.append([merged]);
+      } catch (error) {
+        // A broken sync folder (replaced by a link or non-directory) never recovers until sync restarts.
+        if (error instanceof UnsafeFileError) throw error;
+        // Keep the changes for the next flush, and try again. FolderSync writes a clean log first if the failed
+        // append left part of a record behind, so the retry is readable.
+        entry.pending.unshift(merged);
+        if (entries.get(entry.path) === entry) entry.timer ??= setTimeout(() => void flush(entry).catch(() => undefined), RETRY_DELAY);
+        throw error;
+      }
+    });
+    entry.flushing = run;
+    return run;
+  };
+
+  /**
+   * A flush that nothing will retry later (the last window closed, or the app is quitting): try a few times, briefly,
+   * so closing and quitting never hang on a disk that stays full. If every try fails the batch is not in the folder
+   * log; the document still has it, and the next start writes what the log lacks.
+   */
+  const finalFlush = async (entry: Entry): Promise<void> => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await flush(entry);
+      } catch (error) {
+        if (error instanceof UnsafeFileError || attempt >= FINAL_ATTEMPTS) throw error;
+        await new Promise((resolve) => setTimeout(resolve, FINAL_RETRY_DELAY));
+      }
+    }
   };
 
   const finish = (entry: Entry): Promise<void> => {
     entries.delete(entry.path);
     const done = (async () => {
-      await flush(entry).catch(() => undefined);
+      await finalFlush(entry).catch(() => undefined);
       await entry.sync.stop();
     })();
     stopping.set(entry.path, done);
@@ -108,7 +153,7 @@ export function registerFolderSync(ctx: ServiceContext): void {
       onUpdates: (updates) => created && sendAll(created, SYNC.folderUpdates, updates),
       onError: (error) => created && sendAll(created, SYNC.folderError, error instanceof Error ? error.message : String(error)),
     });
-    const created: Entry = { path, sync, started: sync.start(state), subscribers: new Map([[subscription, contents]]), pending: [], timer: undefined };
+    const created: Entry = { path, sync, started: sync.start(state), subscribers: new Map([[subscription, contents]]), pending: [], timer: undefined, flushing: Promise.resolve() };
     entries.set(path, created);
     try {
       return { folder: sync.folder, deviceId: sync.deviceId, subscription, updates: await created.started };
@@ -123,7 +168,8 @@ export function registerFolderSync(ctx: ServiceContext): void {
     const entry = entries.get(path);
     if (!entry || entry.subscribers.get(subscription) !== event.sender || !(update instanceof Uint8Array)) return;
     entry.pending.push(update);
-    entry.timer ??= setTimeout(() => void flush(entry).catch((error) => sendAll(entry, SYNC.folderError, String(error))), FLUSH_DELAY);
+    // FolderSync reports append failures through onError; flush reports merge errors directly.
+    entry.timer ??= setTimeout(() => void flush(entry).catch(() => undefined), FLUSH_DELAY);
     for (const contents of windowsOf(entry)) if (contents !== event.sender) contents.send(SYNC.folderUpdates, path, [update]);
   });
 
@@ -133,6 +179,6 @@ export function registerFolderSync(ctx: ServiceContext): void {
   // Only flush: the writer may still cancel the quit at a "Save changes?" prompt, and sync must keep working then.
   // Closing windows stops each document's sync as usual; quitting waits for those still writing their last changes.
   ctx.onQuit(async () => {
-    await Promise.all([...[...entries.values()].map((entry) => flush(entry).catch(() => undefined)), ...stopping.values()]);
+    await Promise.all([...[...entries.values()].map((entry) => finalFlush(entry).catch(() => undefined)), ...stopping.values()]);
   });
 }

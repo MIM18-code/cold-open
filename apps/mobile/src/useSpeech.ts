@@ -21,6 +21,8 @@ export function useSpeech(begin: () => void, heard: (text: string) => void) {
   const held = useRef(false), active = useRef(false), mounted = useRef(true);
   const handlers = useRef({ begin, heard });
   const stall = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Counts presses, so a start the give-up timer abandoned cannot answer for a later press.
+  const run = useRef(0), startedBy = useRef(0);
   handlers.current = { begin, heard };
   useEffect(() => {
     mounted.current = true;
@@ -33,7 +35,7 @@ export function useSpeech(begin: () => void, heard: (text: string) => void) {
       if (message) setError(message);
     });
     const watch = AppState.addEventListener("change", s => {
-      if (s === "background") { held.current = false; if (active.current) { speech.finish(); giveUpLater(); } }
+      if (s === "background") { held.current = false; if (active.current) { setPhase("finishing"); speech.finish(); giveUpLater(); } }
     });
     return () => {
       mounted.current = false; held.current = false; clearTimeout(stall.current);
@@ -43,26 +45,34 @@ export function useSpeech(begin: () => void, heard: (text: string) => void) {
   }, []);
   async function start() {
     if (held.current || active.current) return;
+    clearTimeout(stall.current);
     held.current = true; setError(""); setPhase("starting");
+    const mine = ++run.current;
     try {
       if (!(await speech.authorize())) throw new Error("Allow microphone and speech access in Settings.");
-      if (!mounted.current || !held.current) return;
+      // A release and a new press during authorization: the new press owns `held` and starts the recognizer itself.
+      if (mine !== run.current || !mounted.current || !held.current) return;
       handlers.current.begin();
-      active.current = true;
+      active.current = true; startedBy.current = mine;
       await speech.start();
+      // Stop a recognizer that started late for an abandoned press, unless a newer press has started its own.
+      if (mine !== run.current) { if (startedBy.current === mine) speech.finish(); return; }
       if (!mounted.current || !held.current) { speech.finish(); return; }
       setPhase("listening");
     } catch (e) {
+      if (mine !== run.current) return;
+      clearTimeout(stall.current);
       active.current = false; held.current = false;
       if (mounted.current) setError(speechError(errorText(e)) || errorText(e));
-    } finally { if (mounted.current && !active.current) setPhase("idle"); }
+    } finally { if (mounted.current && !active.current && mine === run.current) setPhase("idle"); }
   }
   // A recognizer that never answers after Stop would leave the note read-only. Cancel it; the words heard so far
   // are already in the note.
   function giveUpLater() {
     clearTimeout(stall.current);
+    const owner = startedBy.current;
     stall.current = setTimeout(() => {
-      if (!active.current) return;
+      if (!active.current || startedBy.current !== owner) return;
       active.current = false; held.current = false; speech.cancel();
       if (mounted.current) setPhase("idle");
     }, FINISH_LIMIT);

@@ -128,6 +128,13 @@ export class EditorController implements EditorBridge {
   private decorations = DecorationSet.empty;
   /** Re-pagination can preserve every boundary; avoid expensive unchanged widget redraws. */
   private pageBreakSnapshot: string | null = null;
+  private pageBreakCount = 0;
+  /**
+   * Commits waiting after a composition ends. Save, closing the window and destroy() run them early (see
+   * commitComposition), so the composed text is in the document they read and none fires on a destroyed view.
+   */
+  private readonly compositionTimers = new Set<ReturnType<typeof setTimeout>>();
+  private readonly offFlush: () => void;
   private pending: TargetSelection | null = null;
   private changing = false;
   private syncs = 0;
@@ -162,7 +169,7 @@ export class EditorController implements EditorBridge {
         cut: (_view, event) => this.copy(event as ClipboardEvent, true),
         paste: (_view, event) => this.paste(event as ClipboardEvent),
         compositionend: () => {
-          setTimeout(() => this.afterComposition(), 40);
+          this.afterCompositionSoon();
           return false;
         },
         blur: () => {
@@ -173,6 +180,7 @@ export class EditorController implements EditorBridge {
     });
     this.bind(session);
     this.offSession = app.onSession((next) => this.bind(next));
+    this.offFlush = app.onFlush(() => this.commitComposition());
   }
 
   /** Draw a session's document and follow its changes. */
@@ -226,6 +234,9 @@ export class EditorController implements EditorBridge {
   }
 
   destroy(): void {
+    // A composition the input method confirmed commits now, while the view still exists, not on a timer after.
+    this.commitComposition();
+    this.offFlush();
     this.unbind?.();
     this.offSession();
     this.view.destroy();
@@ -265,7 +276,7 @@ export class EditorController implements EditorBridge {
     if (this.composed()) {
       // Redrawing now would draw over the composed text. It commits first, then the redraw follows; a confirmed
       // composition commits on the timer compositionend started, and this one makes sure a commit comes.
-      if (!this.view.composing) setTimeout(() => this.afterComposition(), 40);
+      if (!this.view.composing) this.afterCompositionSoon();
       this.deferred = true;
       return;
     }
@@ -374,6 +385,10 @@ export class EditorController implements EditorBridge {
       this.view.updateState(this.view.state);
       return;
     }
+    // Text with no line break gets its line break now (as session.edit would, a little later), before any body
+    // offset below is worked out: it moves them all by one. The redraw it causes resets drawnLead, or, during a
+    // composition, is put off after drawnState is taken, so the offsets below count in the text they are used on.
+    if (!this.session.readOnly) this.session.doc.mend();
     let { a: endA, b: endB } = before.content.findDiffEnd(after.content)!;
     const overlap = start - Math.min(endA, endB);
     if (overlap > 0) (endA += overlap, endB += overlap);
@@ -461,6 +476,22 @@ export class EditorController implements EditorBridge {
       return { paragraphId: at.paragraphId, offset: 0 };
     }
     return { paragraphId: doc.splitParagraph(at.paragraphId, at.offset, type), offset: 0 };
+  }
+
+  /** Run a waiting composition commit now instead of on its timer. */
+  private commitComposition(): void {
+    if (!this.compositionTimers.size) return;
+    for (const timer of this.compositionTimers) clearTimeout(timer);
+    this.compositionTimers.clear();
+    this.afterComposition();
+  }
+
+  private afterCompositionSoon(): void {
+    const timer = setTimeout(() => {
+      this.compositionTimers.delete(timer);
+      this.afterComposition();
+    }, 40);
+    this.compositionTimers.add(timer);
   }
 
   private afterComposition(): void {
@@ -630,6 +661,8 @@ export class EditorController implements EditorBridge {
   private beforeInput(event: InputEvent): boolean {
     if (event.inputType === "historyUndo" || event.inputType === "historyRedo") {
       event.preventDefault();
+      // The same read-only rule as the Undo command.
+      if (this.session.readOnly) return true;
       if (event.inputType === "historyUndo") this.session.undo.undo();
       else this.session.undo.redo();
       return true;
@@ -1054,7 +1087,10 @@ export class EditorController implements EditorBridge {
     // Widgets follow edits through ProseMirror transaction mapping. Skip a full decoration update when
     // pagination reports identical paragraph-relative boundaries, even if the script changed elsewhere.
     const snapshot = JSON.stringify(breaks);
-    if (snapshot === this.pageBreakSnapshot) return;
+    // Mapping drops a widget whose spot was deleted, and Undo does not bring it back, so an equal snapshot is
+    // only enough while every widget drawn for it is still in the set.
+    if (snapshot === this.pageBreakSnapshot
+      && this.decorations.find(undefined, undefined, (spec) => spec.source === PAGE_SOURCE).length === this.pageBreakCount) return;
     this.pageBreakSnapshot = snapshot;
     const doc = this.view.state.doc;
     const map = this.positionMap(doc);
@@ -1070,6 +1106,7 @@ export class EditorController implements EditorBridge {
       const key = `page-${mark.pageNumber}-${mark.more ? 1 : 0}-${mark.contd ?? ""}-${inline ? node.attrs.type : "block"}`;
       decorations.push(Decoration.widget(pos, () => pageBreak(mark, inline), { side: -1, key, source: PAGE_SOURCE, ignoreSelection: true }));
     }
+    this.pageBreakCount = decorations.length;
     this.replaceDecorations(PAGE_SOURCE, decorations);
   }
 
@@ -1118,7 +1155,7 @@ export class EditorController implements EditorBridge {
     return $head.parent.type === schema.nodes.paragraph ? $head.parent.attrs.type : null;
   }
 
-  setElementType(type: ElementType): void {
+  setElementType(type: ElementType, sceneNumber?: string): void {
     const range = this.range();
     if (!range) return;
     const selection = this.getSelection()!;
@@ -1139,6 +1176,7 @@ export class EditorController implements EditorBridge {
           doc.deleteText(id, open, 1);
           shifts.set(id, (offset) => offset - Number(offset > open) - Number(offset > close));
         }
+        if (sceneNumber !== undefined) doc.setField(id, "sceneNumber", sceneNumber);
         doc.setType(id, type);
       }
       const shift = (at: Position) => ({ paragraphId: at.paragraphId, offset: shifts.get(at.paragraphId)?.(at.offset) ?? at.offset });

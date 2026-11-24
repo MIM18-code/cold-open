@@ -157,6 +157,13 @@ test("the phone is sent presence again only when something it reads has changed"
     for (let i = 0; i < 80 && received === before; i++) await delay(5);
     assert.equal(received, before + 1, "a moved caret still reaches the phone's follow mode");
     assert.deepEqual(client.awareness.getStates().get(host.ydoc.clientID)?.cursor, { head: at(4) });
+    // A run of caret moves, as from typing or a held arrow key, reaches the phone as one send with the last place.
+    const settled = received;
+    for (const offset of [5, 6, 7, 8, 9]) { cursor = { anchor: at(1), head: at(offset) }; publisher.refresh(); }
+    for (let i = 0; i < 120 && client.awareness.getStates().get(host.ydoc.clientID)?.cursor?.head?.offset !== 9; i++) await delay(5);
+    await delay(100);
+    assert.deepEqual(client.awareness.getStates().get(host.ydoc.clientID)?.cursor, { head: at(9) });
+    assert.ok(received - settled <= 2, `five caret moves made ${received - settled} sends`);
   } finally { client.destroy(); publisher.stop(); await server.stop(); host.ydoc.destroy(); reader.ydoc.destroy(); }
 });
 

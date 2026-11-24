@@ -95,7 +95,8 @@ export class ReadPlayer {
     this.sourceRevision = ""; this.sessionId = ""; this.emit();
   }
   close() { this.stop(); }
-  outputChanged() { this.stop(); this.error = "Audio output changed. Press Play to restart this reading."; this.emit(); }
+  // Connecting headphones while nothing plays interrupts nothing, so it is no error.
+  outputChanged() { if (!this.active) return; this.stop(); this.error = "Audio output changed. Press Play to restart this reading."; this.emit(); }
   helperFailed(message: string) { this.fail(new Error(message)); }
   next(direction: 1 | -1) {
     if (!this.cues.length) return;

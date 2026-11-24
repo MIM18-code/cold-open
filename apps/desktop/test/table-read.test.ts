@@ -39,6 +39,12 @@ test("pausing before synthesis finishes cannot start sound behind the paused but
   const f = fixture(); f.delay(); f.p.play([cue("one")]); await tick(); f.p.pause(); f.resolve(); await tick();
   assert.deepEqual(f.spoken, []); f.p.resume(); await tick(); assert.deepEqual(f.spoken, ["late"]); f.p.stop();
 });
+test("an audio device change shows an error only while something is playing", async () => {
+  const f = fixture(); f.p.outputChanged();
+  assert.equal(f.p.error, ""); assert.equal(f.p.state, "idle");
+  f.p.play([cue("one")]); await tick(); f.p.outputChanged();
+  assert.equal(f.p.state, "idle"); assert.match(f.p.error, /Audio output changed/);
+});
 test("changing passages invalidates prefetched results from the old run", async () => {
   const f = fixture(); f.p.play([cue("old"), cue("old-next")]); await tick(); f.p.play([cue("new")]); await tick();
   assert.deepEqual(f.spoken, ["old", "new"]); f.p.stop();
@@ -106,6 +112,16 @@ test("the ensemble and recast paths share the novelty filter", async () => {
   const voices = [novelty("characters_Azgorath"), novelty("characters_Bubbles"), plain("en_us_Delia"), plain("en_gb_Imogen")];
   assert.deepEqual(castable(voices).map((v) => v.id), ["en_us_Delia", "en_gb_Imogen"]);
   assert.deepEqual(castable(voices.slice(0, 2)).map((v) => v.id), ["characters_Azgorath", "characters_Bubbles"]);
+});
+
+test("a failed system voice list leaves the rest of the voice catalogue loading", async () => {
+  const root = await mkdtemp(join(tmpdir(), "reader-say-fails-"));
+  const runtime = new ReaderRuntime({ root, platform: "darwin", systemRun: async () => { throw new Error("say: no voices"); } });
+  try {
+    const system = (await runtime.status()).engines.find((e) => e.id === "system")!;
+    assert.deepEqual(system.voices, []);
+    assert.equal(system.ready, false);
+  } finally { runtime.cancel(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("a Premium voice added after the first scan appears without a restart", async () => {

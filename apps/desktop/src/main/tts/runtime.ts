@@ -149,7 +149,8 @@ export class ReaderRuntime {
     // without a restart.
     if (this.platform === "darwin" && !this.voices.system?.length && Date.now() - this.systemScannedAt > 10_000) {
       this.systemScannedAt = Date.now();
-      this.voices.system = parseSystemVoices(await this.systemRun(["-v", "?"], "", new AbortController().signal));
+      // A failed `say` means no system voices for now (tried again on the next rescan), not no voices at all.
+      this.voices.system = parseSystemVoices(await this.systemRun(["-v", "?"], "", new AbortController().signal).catch(() => ""));
       if (this.voices.system.length) this.ready.add("system");
     }
     for (const engine of ["phonon", "ming", "kokoro"] as const) {

@@ -215,3 +215,35 @@ test("a layout-only change leaves script notes and their anchors as they are sto
     assert.deepEqual(scriptNotes(doc)[0]?.from, { paragraphId: "a", offset: 6 }, "and still follows the text typed before it");
     doc.ydoc.destroy();
 });
+
+test("script-note fallbacks with no stored FDX extras still write the default FinalDraft root attributes", () => {
+  const expectedRoot = writeFdx({ titlePage: [], paragraphs: [{ id: "a", type: "action", runs: [{ text: "Rain." }] }] }).match(/<FinalDraft[^>]*>/)?.[0];
+  assert.ok(expectedRoot && expectedRoot.includes('DocumentType="Script"'));
+
+  // 1) Orphan note projected when the document has no stored FDX value.
+  const orphanDoc = ScreenplayDoc.fromScript({
+    titlePage: [],
+    paragraphs: [
+      { id: "a", type: "action", runs: [{ text: "Rain." }], fdx: { after: [{ name: "ScriptNote", attrs: [], children: [{ name: "Text", attrs: [], children: ["Orphan note"] }] }] } },
+      { id: "b", type: "action", runs: [{ text: "Wind." }] },
+    ],
+  });
+  orphanDoc.deleteParagraph("a");
+  const orphanXml = writeFdx(orphanDoc.toScript());
+  assert.equal(orphanXml.match(/<FinalDraft[^>]*>/)?.[0], expectedRoot);
+  orphanDoc.ydoc.destroy();
+
+  // 2) Legacy paragraph-bound note promoted to a document-level range when the document has no stored FDX value.
+  const legacyDoc = ScreenplayDoc.fromScript({
+    titlePage: [],
+    paragraphs: [
+      { id: "a", type: "action", runs: [{ text: "Rain." }], fdx: { after: [{ name: "ScriptNote", attrs: [], children: [{ name: "Text", attrs: [], children: ["Legacy note"] }] }] } },
+      { id: "b", type: "action", runs: [{ text: "Wind." }] },
+    ],
+  });
+  const note = scriptNotes(legacyDoc)[0]!;
+  changeScriptNote(legacyDoc, note.key, { text: note.text, author: "", color: "" }, { from: { paragraphId: "b", offset: 0 }, to: { paragraphId: "b", offset: 4 } });
+  const promotedXml = writeFdx(legacyDoc.toScript());
+  assert.equal(promotedXml.match(/<FinalDraft[^>]*>/)?.[0], expectedRoot);
+  legacyDoc.ydoc.destroy();
+});

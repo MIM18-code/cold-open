@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { CHANNELS } from "../../../shared/api.ts";
 import { AI_CHANNELS, AI_SETTINGS, CHATGPT_USAGE_URL, judgesWholeScript, PROVIDER_LABELS, type AiStatus, WHOLE_SCRIPT_NEEDS } from "../../../shared/channels/ai.ts";
@@ -94,7 +94,10 @@ let questionDraft = "";
 export function AssistantPanel() {
   const current = useChat();
   const backlotPath = useApp((a) => a.setting<string>(AI_SETTINGS.backlotPath, ""));
-  const hasSelection = useApp((a) => selectionExists(a.editor?.getSelection()));
+  // Moving the selection does not update the app, so follow the editor's own selection events.
+  const editor = useApp((a) => a.editor);
+  const onSelection = useCallback((onChange: () => void) => editor?.onSelectionChange(onChange) ?? (() => undefined), [editor]);
+  const hasSelection = useSyncExternalStore(onSelection, () => selectionExists(editor?.getSelection()));
   const [text, setTextState] = useState(questionDraft);
   const setText = (value: string) => { questionDraft = value; setTextState(value); };
   const [useBacklot, setUseBacklot] = useState(true);

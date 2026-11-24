@@ -73,7 +73,7 @@ function Workspace({ r }: { r: Remote }) {
       close={() => { clearComposition(pair.invite.room); edit(null); }} send={(text, destination) => {
         r.submit(editor.kind, editor.row, text, destination); edit(null); setView("status");
       }} />}
-    {view === "status" && !editor && <Status pair={pair} status={r.status} takes={r.takes} sendToMac={r.sendToMac}
+    {view === "status" && !editor && <Status pair={pair} status={r.status} takes={r.takes} sendToMac={r.sendToMac} nextBatch={r.nextBatch}
       back={() => setView("script")} forget={async () => { await r.forget(); }} />}
   </>;
 }

@@ -326,3 +326,14 @@ test("closing the host refuses a start that was still waiting for the relay", as
   assert.equal(host.isHosting(2), false);
   assert.equal(await portOpen(Number(new URL(info.relay).port)), false);
 });
+
+test("the Mac's co-writing relay runs with connection, document and presence limits", async () => {
+  const seen: Parameters<typeof createRelay>[0][] = [];
+  const host = new Host("127.0.0.1", { createRelay: async (options) => { seen.push(options); return createRelay(options); } });
+  try {
+    await host.start(1);
+    const { maxConnections, maxDocBytes, maxAwarenessBytes, maxAwarenessClients, allowClaim } = seen[0]!;
+    assert.deepEqual({ maxConnections, maxDocBytes, maxAwarenessBytes, maxAwarenessClients, allowClaim },
+      { maxConnections: 32, maxDocBytes: 32 * 1024 * 1024, maxAwarenessBytes: 64 * 1024, maxAwarenessClients: 8, allowClaim: false });
+  } finally { await host.close(); }
+});
