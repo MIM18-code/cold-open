@@ -24,6 +24,11 @@ export interface ServiceContext {
   /** Run when the app quits, after every window has agreed to close. Async work is awaited, up to a few seconds. */
   onQuit(task: () => unknown): void;
   /**
+   * Run once, when the first window to draw its page has drawn it. For work that starts another program at launch,
+   * so that this app's own launch is over before the other program's begins.
+   */
+  onFirstWindow(task: () => void): void;
+  /**
    * Allow reads and writes of a path the user chose in a dialog or opened. Files outside the allow list (and
    * userData/autosave) cannot be read or written, and neither can a granted path that has since been swapped for a
    * link to somewhere else (grants.ts).
@@ -58,6 +63,17 @@ export function createContext(isTrusted: (sender: WebContents, frame: WebFrameMa
     settings,
     paths: { userData, appRoot, repoRoot: join(appRoot, "../..") },
     onQuit: (task) => void quitTasks.push(task),
+    onFirstWindow: (task) => {
+      // Every new window is watched until one draws: the first one made can be closed before it does.
+      let done = false;
+      const watch = (_event: unknown, window: BrowserWindow) => void window.once("ready-to-show", () => {
+        if (done) return;
+        done = true;
+        app.off("browser-window-created", watch);
+        task();
+      });
+      app.on("browser-window-created", watch);
+    },
     allowPath: (path) => grants.allow(path),
     allowReadPath: (path) => grants.allow(path, "read"),
     isReadablePath: (path) => {

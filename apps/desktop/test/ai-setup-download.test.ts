@@ -69,3 +69,32 @@ test("setup downloads use the saved endpoint, skip a second confirmation, pause 
   await pull(event, { fromAiSetup: true, setupOnMac: true });
   assert.ok(requests.every(url => url.endsWith("/api/tags")));
 });
+
+test("local AI set to start at launch waits for the first window", async () => {
+  const requests: string[] = [], waiting: (() => void)[] = [];
+  const result = await build({ entryPoints: [fileURLToPath(new URL("../src/main/services/model-manager.ts", import.meta.url))],
+    bundle: true, write: false, platform: "node", format: "cjs", plugins: [{ name: "native-dialog", setup(plugin) {
+      plugin.onResolve({ filter: /^electron$/ }, () => ({ path: "electron", namespace: "fixture" }));
+      plugin.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({ contents: "export const dialog = globalThis.dialog;" }));
+    } }],
+  });
+  // A server that answers: start() asks for the model list first and is done when it gets one, so nothing is spawned.
+  const transport = async (url: string) => { requests.push(url); return Response.json({ models: [] }); };
+  const module = { exports: {} as { register: (ctx: any) => void } };
+  runInNewContext(result.outputFiles[0]!.text, { module, exports: module.exports, require: createRequire(import.meta.url), fetch: transport, AbortController, AbortSignal,
+    TextDecoder, TextEncoder, dialog: {} });
+  module.exports.register({ paths: { userData: "/unused" }, handle: () => {}, onQuit: () => {}, onFirstWindow: (task: () => void) => void waiting.push(task),
+    settings: new Map<string, unknown>([["grants.startLocalAI", true]]), broadcast: () => {}, windowOf: () => ({}) });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(requests, [], "local AI was started before any window had drawn");
+  assert.equal(waiting.length, 1);
+  waiting[0]!();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(requests, ["http://127.0.0.1:11434/api/tags"]);
+
+  // With the setting off, nothing waits and nothing starts.
+  const idle: (() => void)[] = [];
+  module.exports.register({ paths: { userData: "/unused" }, handle: () => {}, onQuit: () => {}, onFirstWindow: (task: () => void) => void idle.push(task),
+    settings: new Map<string, unknown>(), broadcast: () => {}, windowOf: () => ({}) });
+  assert.equal(idle.length, 0);
+});

@@ -66,6 +66,9 @@ export async function pickRuntime(candidates: string[]): Promise<string | undefi
   for (const candidate of candidates.filter(existsSync)) {
     const binary = await trustedOllama(candidate);
     if (binary) return binary;
+    // A signed release turned this one down. Said once per start: it tells a writer reading Console why their own
+    // Ollama was not used, and it is how the release check knows the planted program was looked at and refused.
+    console.error(`Local AI: skipped ${candidate}, which is not signed by Ollama.`);
   }
   return undefined;
 }

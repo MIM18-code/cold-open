@@ -205,7 +205,7 @@
   },
   {
     "path": "apps/desktop/package.json",
-    "sha256": "fedb0f6a0b5e4da8ca0c1e5825755ce5fce395b1b3a50a30543c02d606eac6fc"
+    "sha256": "62d479ae24b5272864adb9824ea1f829c768ab8342e969b2789cdb21d94c818c"
   },
   {
     "path": "apps/desktop/playwright.config.ts",
@@ -277,7 +277,7 @@
   },
   {
     "path": "apps/desktop/scripts/test-packaged-basic.mjs",
-    "sha256": "30d5d7d4c00342b700f72e8e850b475267f1d451124202ecb6ed5b38c9b0af50"
+    "sha256": "7fe8ff5506ee9d968b6d6f265bf36e58e1fdb423a534949626aeb15ff0c4df5c"
   },
   {
     "path": "apps/desktop/src/main/ai/backlot.ts",
@@ -325,7 +325,7 @@
   },
   {
     "path": "apps/desktop/src/main/context.ts",
-    "sha256": "dbc0259f86e4741a0889d66e3f2114d543839c464a2fe98e912b717e6c0b4e49"
+    "sha256": "90e39ce4dd8f35e561e8a67ec092902e518148ae84fd8696b51e9e356f7cee32"
   },
   {
     "path": "apps/desktop/src/main/dictation/commands.ts",
@@ -373,7 +373,7 @@
   },
   {
     "path": "apps/desktop/src/main/models/local-runtime.ts",
-    "sha256": "8926b6d9d490502239cb2fc700eb4267445c7c0c8e4a9372f53fba54789010e3"
+    "sha256": "3a9877ffbe1467be3249fae58834d167d3ce3ec4f785dd6bafd202f67453aa08"
   },
   {
     "path": "apps/desktop/src/main/models/ollama.ts",
@@ -489,7 +489,7 @@
   },
   {
     "path": "apps/desktop/src/main/services/model-manager.ts",
-    "sha256": "b44ea9d4fd4fb7a59d07104e8bef6c0fadf1f60bba35861fa5d3fddf513a3809"
+    "sha256": "4f73a56cee515f13e297b50e055b1ed62e4c8fc273683ef6f126b7d17c3cb58f"
   },
   {
     "path": "apps/desktop/src/main/services/phone.ts",
@@ -1549,7 +1549,7 @@
   },
   {
     "path": "apps/desktop/test/ai-setup-download.test.ts",
-    "sha256": "5bb70464801e461da846f5ad74e8a55e44ef8bdb802627d7b37a66ce49d2b5b0"
+    "sha256": "6a077859a45aaf3c78e8f37dc79c103d903a0d1a1905f222110a1103c35316d8"
   },
   {
     "path": "apps/desktop/test/ai-tool-providers.test.ts",
@@ -1933,7 +1933,7 @@
   },
   {
     "path": "apps/desktop/test/trusted-program.test.ts",
-    "sha256": "99d3bf8fb53a7786c5122a52aa0954e1ccd11d2562107cd9d5db6e5598c69e91"
+    "sha256": "e72f07bea2b1b55324490e84bea4849015f0e833c628668e6469f78dcf7d4bb1"
   },
   {
     "path": "apps/desktop/test/tts-loudness.test.ts",
@@ -2785,7 +2785,7 @@
   },
   {
     "path": "package-lock.json",
-    "sha256": "5c8a88a47d5ee3ef6aa506b065f712cb3b795d01ccf4bb9b558caf295fcdc0e2"
+    "sha256": "20217362836eca8551056891aade737306cbb45240558b2be0fa5768d550a170"
   },
   {
     "path": "package.json",

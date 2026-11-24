@@ -10,8 +10,11 @@ export function register(ctx: ServiceContext): void {
     const runtime = new LocalRuntime(ctx.paths.userData);
     const startup = new AbortController();
     const manageRuntime = "grants.startLocalAI";
+    // Not before the first window. In the beta 18 build, two launches that overlapped the first run of an Ollama
+    // that had not run for a while took most of a minute to show a window. Why was not pinned down; starting it
+    // after the window keeps this app's launch clear of it.
     if (ctx.settings.get(manageRuntime) === true)
-        void runtime.start(startup.signal, () => {}, false).catch(() => {});
+        ctx.onFirstWindow(() => void runtime.start(startup.signal, () => {}, false).catch(() => {}));
     let job: {
         owner: number;
         abort: AbortController;

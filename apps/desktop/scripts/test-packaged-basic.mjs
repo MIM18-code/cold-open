@@ -208,20 +208,41 @@ async function sealedChecks() {
   }
   console.log('PASS sealed app quits before a helper-program switch can make it run a planted program');
 
+  // The app refuses the planted script and then starts a signed Ollama from /Applications when the Mac has one. It
+  // stops that server when it quits, but a launch this check has to kill cannot, and the server left behind would
+  // answer on port 11434 and make the next run skip this check. So any server a launch started is stopped here.
+  const children = run => spawnSync('/bin/ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' }).stdout.split('\n')
+    .map(line => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line)).filter(row => row && row[2] === String(run.child.pid))
+    .map(row => ({ pid: Number(row[1]), command: row[3] }));
+  const ollamaServers = run => children(run).filter(child => /\/ollama serve$/.test(child.command)).map(child => child.pid);
+  const serving = pid => /\/ollama serve$/.test(spawnSync('/bin/ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).stdout.trim());
+  // The app starts local AI once its window has drawn, and says so on stderr when it turns a program down. That
+  // line, which stays in the log, is the sign that the app got as far as the planted file and refused it.
+  const refusedPlanted = run => run.log.includes(`local-ai/ollama-${ollamaVersion}/ollama, which is not signed by Ollama.`);
   if (await ollamaAnswers()) console.log(OLLAMA_SKIP);
   else {
     for (const [profile, link] of [['ollama-profile', false], ['ollama-link-profile', true]]) {
       const marker = plantOllama(profile, link);
+      // A server the launch before this one started may still be closing, and while one answers the app starts none.
+      for (let i = 0; i < 40 && await ollamaAnswers(); i++) await sleep(250);
       const planted = start(profile, []);
+      let servers = [];
       try {
-        for (let i = 0; i < 120 && !planted.exit && !rendering(planted); i++) await sleep(250);
+        for (let i = 0; i < 120 && !planted.exit && !(rendering(planted) && refusedPlanted(planted)); i++) await sleep(250);
         check(!planted.exit && rendering(planted), `The sealed app did not open its window with local AI set to start: ${planted.describe()}`);
+        check(refusedPlanted(planted), `The sealed app did not say it refused the Ollama planted in its profile, so the marker staying absent proves nothing: ${planted.describe()}`);
         await sleep(5000);
         check(!existsSync(marker), `The sealed app ran an unsigned program planted at local-ai/ollama-*/ollama in its profile${link ? ' through a symlink' : ''}`);
+        servers = ollamaServers(planted);
         planted.child.kill('SIGTERM');
         await Promise.race([planted.exited, sleep(15000)]);
         check(planted.exit?.code === 0, `The sealed app did not quit cleanly with local AI set to start: ${planted.describe()}`);
-      } finally { if (!planted.exit) planted.child.kill('SIGKILL'); }
+        for (let i = 0; i < 40 && servers.some(serving); i++) await sleep(250);
+        check(!servers.some(serving), 'The sealed app quit and left the Ollama it started running');
+      } finally {
+        if (!planted.exit) { servers = [...servers, ...ollamaServers(planted)]; planted.child.kill('SIGKILL'); }
+        for (const pid of new Set(servers)) if (serving(pid)) process.kill(pid, 'SIGTERM');
+      }
     }
     console.log('PASS sealed app skips an unsigned Ollama planted in its profile, directly or through a symlink');
   }

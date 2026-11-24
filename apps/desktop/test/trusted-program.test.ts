@@ -190,7 +190,7 @@ test("a sealed build refuses a granted speech helper that is missing, so a file 
   await runtime.close();
 });
 
-test("Ollama candidates without Ollama's signature are skipped, and so is a binary beside an unsigned runner", async () => {
+test("Ollama candidates without Ollama's signature are skipped, and so is a binary beside an unsigned runner", async (t) => {
   const folder = realpathSync(mkdtempSync(join(tmpdir(), "trusted-ollama-")));
   for (const name of ["own", "app", "brew"]) mkdirSync(join(folder, name));
   const own = program(join(folder, "own"), "ollama"), app = program(join(folder, "app"), "ollama");
@@ -200,7 +200,11 @@ test("Ollama candidates without Ollama's signature are skipped, and so is a bina
   seal(signed);
   assert.equal(await pickRuntime([own, join(folder, "missing"), app, brew]), app);
   assert.equal(await trustedOllama(own), null, "the app's own download must pass too");
+  // Each program a sealed build turns down is named on stderr; the release check reads that line.
+  const said: string[] = [];
+  t.mock.method(console, "error", (line: string) => void said.push(line));
   assert.equal(await pickRuntime([own, brew]), undefined);
+  assert.deepEqual(said, [`Local AI: skipped ${own}, which is not signed by Ollama.`, `Local AI: skipped ${brew}, which is not signed by Ollama.`]);
   seal({ [app]: meets(OLLAMA_SIGNER) });
   assert.equal(await pickRuntime([app]), undefined, "llama-server beside it is not Ollama's");
   configurePackagedApp(null);
